@@ -69,7 +69,7 @@ codex plugin add kirby@kirby
 
 无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
 
-对话框的语言跟随 Claude Code 的 `language` 设置（例如 `"zh-CN"`、`"简体中文"`），未设置时看 `LC_ALL` 或 `LANG`。支持英文、繁体中文、简体中文，其他语言显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
 
 ### 安装与 prompt cache
 
@@ -79,7 +79,7 @@ codex plugin add kirby@kirby
 - **MCP**：`claude mcp add` 要重启 session 才会生效，当前 session 的 cache 不受影响。
 - **plugin**：需要用 `/reload-plugins` 加载。plugin 中的 skill、hook 等不影响 cache。如果 plugin 带有 MCP server，并且 session 的 tool search 是关闭的（默认开启），加载后 cache 会重建一次。遇到这种情况，Claude Code 会先警告，要加 `--force` 才会应用（实测）。
 
-对话框的 scope 那一层会附上相应的提醒。
+plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给模型：skill 要求它写在第一层对话框。
 
 ## Codex
 
@@ -88,7 +88,7 @@ codex plugin add kirby@kirby
 和 Claude Code 版的差异：
 
 - **搜索走 MCP tool。** server 的 `stars`、`public`、`detect`、`readme` 会在 Codex 的 sandbox 外运行同一批脚本，所以每次搜索不会请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
-- **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，语言跟随你使用的语言（由模型传入），没有时看 `LC_ALL` 或 `LANG`。
+- **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
 
@@ -102,7 +102,7 @@ codex plugin add kirby@kirby
 
 装完后，开新的 Codex session 才能使用。
 
-Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marketplace 时，对话框会提醒：只为 Claude Code 写的部分（例如 hooks）可能无法运行。
+Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marketplace 时，对话框的事实会列出 marketplace 文件，skill 也要求模型提醒：只为 Claude Code 写的部分（例如 hooks）可能无法运行。
 
 如果只说「安装 owner/repo」，Codex 可能改用它内置的 `skill-installer` 安装，不会经过 kirby 的对话框（实测遇到过）。它请求运行那个安装程序时，可以拒绝，再请它改用 kirby 安装。
 

@@ -1,18 +1,17 @@
 // The install step of inhale: one tool that asks the user what to do next and, to install,
 // which scope, then runs the install. Searching and recommending stay in the skill's scripts.
-// The dialogs speak the user's language; what the tool answers is for the model, in English.
+// The dialogs show the facts the tool found and the model's wording in the user's language (see
+// dialog.ts); what the tool answers is for the model, in English.
 
 import type { EngineInterface, Register } from 'claude-code'
 
-import { pickLang, TEXT } from './i18n'
-import type { Kind, Scope } from './i18n'
+import { CANCEL, readDialog, SCOPES } from './dialog'
+import type { Kind, Scope } from './dialog'
 
 type $ = EngineInterface
 type Input = Record<string, unknown>
-type Text = (typeof TEXT)['en']
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-const SCOPES: readonly Scope[] = ['local', 'project', 'user']
 const TIMEOUT_MS = 120_000
 
 const TOOL = {
@@ -23,7 +22,8 @@ const TOOL = {
     'the result says what they chose. kind=skill needs folder (from detect.py); kind=plugin needs plugin (the ' +
     "marketplace plugin's name; repo is the marketplace); kind=mcp needs mcp_args, everything that follows " +
     '`claude mcp add --scope <scope>`, e.g. ["github", "--", "npx", "-y", "@modelcontextprotocol/server-github"]. ' +
-    'force replaces an existing skill folder of the same name.',
+    'force replaces an existing skill folder of the same name. dialog is the wording of both dialogs in the ' +
+    "user's language, in the format the inhale skill gives; without it they are in English.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -33,6 +33,15 @@ const TOOL = {
       plugin: { type: 'string' },
       mcp_args: { type: 'array', items: { type: 'string' } },
       force: { type: 'boolean' },
+      dialog: {
+        type: 'object',
+        properties: {
+          about: { type: 'string' },
+          next: { type: 'string' },
+          options: { type: 'array', items: { type: 'string' } },
+          scope: { type: 'string' },
+        },
+      },
     },
     required: ['repo', 'kind'],
   },
@@ -58,8 +67,17 @@ async function repoHeader($: $, repo: string): Promise<string> {
   return `${repo} ★${stars} · pushed ${(pushed ?? '?').slice(0, 10)}${archived ? ' · ARCHIVED' : ''}`
 }
 
-// What the install would do, and the prompt-cache note for the scope dialog.
-async function preview($: $, t: Text, kind: Kind, input: Input): Promise<{ lines: string; cache: string }> {
+function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
+  return (
+    (sure ? 'prompt cache: this plugin brings an MCP server; ' : 'prompt cache: this plugin may bring an MCP server (its source is in another repo); ') +
+    (toolSearchOff
+      ? 'ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.'
+      : 'if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.')
+  )
+}
+
+// The facts about what the install would do, and the prompt-cache note for the scope dialog.
+async function preview($: $, kind: Kind, input: Input): Promise<{ lines: string; cache: string }> {
   const repo = String(input.repo)
   const scripts = `${$.plugin.root}/skills/inhale/scripts`
   if (kind === 'skill') {
@@ -68,9 +86,11 @@ async function preview($: $, t: Text, kind: Kind, input: Input): Promise<{ lines
     const r = await run($, ['python3', '-I', `${scripts}/install_skill.py`, repo, folder, '--scope', 'project', '--check', '--json'])
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as { name: string; commit: string; files: number; scripts: string[]; exists: boolean }
-    const lines = [t.kind(`skill (${c.name})`), t.commit(c.commit), t.files(c.files)]
-    if (c.scripts.length) lines.push(t.scripts(c.scripts.length, c.scripts.slice(0, 2).join(', ')))
-    if (c.exists) lines.push(t.exists(c.name, input.force === true))
+    const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
+    if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
+    if (c.exists) {
+      lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
+    }
     return { lines: lines.join('\n'), cache: '' }
   }
   if (kind === 'plugin') {
@@ -84,9 +104,9 @@ async function preview($: $, t: Text, kind: Kind, input: Input): Promise<{ lines
     // Tool search is off in more cases than this variable (an old model, a gateway, a HIPAA session), so
     // the note is conditional unless the variable settles it.
     const toolSearchOff = (await $.env.get('ENABLE_TOOL_SEARCH')) === 'false'
-    const cache = unit.mcpServers === false ? '' : t.pluginMcp(unit.mcpServers === true, toolSearchOff)
-    const lines = [t.kind(`plugin (${name})`)]
-    if (unit.description) lines.push(t.about(unit.description.slice(0, 160)))
+    const cache = unit.mcpServers === false ? '' : pluginCacheNote(unit.mcpServers === true, toolSearchOff)
+    const lines = [`plugin: ${name}`]
+    if (unit.description) lines.push(`description: ${unit.description.slice(0, 160)}`)
     return { lines: lines.join('\n'), cache }
   }
   const args = Array.isArray(input.mcp_args) ? input.mcp_args.filter((a): a is string => typeof a === 'string') : []
@@ -94,10 +114,7 @@ async function preview($: $, t: Text, kind: Kind, input: Input): Promise<{ lines
   if (args.some(a => a === '--scope' || a === '-s' || a.startsWith('--scope='))) {
     throw new Refusal('mcp_args must not set the scope; the user picks it')
   }
-  return {
-    lines: [t.kind('MCP server'), t.command(`claude mcp add --scope <scope> ${args.join(' ')}`)].join('\n'),
-    cache: t.mcpNote,
-  }
+  return { lines: `MCP server: claude mcp add --scope <scope> ${args.join(' ')}`, cache: '' }
 }
 
 function command($: $, kind: Kind, input: Input, scope: Scope): string[] {
@@ -120,42 +137,43 @@ async function install($: $, input: Input): Promise<string> {
   if (!REPO_RE.test(repo)) return `not installed: not an owner/repo: ${JSON.stringify(input.repo)}`
   if (!kind) return `not installed: kind must be skill, plugin or mcp`
 
-  const lang = pickLang(await $.settings.read({ key: 'language' }), (await $.env.get('LC_ALL')) || (await $.env.get('LANG')))
-  const t = TEXT[lang]
-  const o = t.options
+  const { dialog: d, problem } = readDialog(input.dialog)
+  const [cancel, readme, other, go] = d.options
+  // Tells the model why its wording was not used, so the next call can fix it.
+  const note = problem ? `\nnote: the dialogs were in English because ${problem}; pass dialog as the inhale skill describes.` : ''
 
   let header: string
   let plan: { lines: string; cache: string }
   try {
     header = await repoHeader($, repo)
-    plan = await preview($, t, kind, input)
+    plan = await preview($, kind, input)
   } catch (err) {
-    if (err instanceof Refusal) return `not installed: ${err.message}`
+    if (err instanceof Refusal) return `not installed: ${err.message}${note}`
     throw err
   }
 
   // Cancel comes first so a stray Enter already queued when the dialog opens cancels.
-  const next = await ask($, `${header}\n\n${plan.lines}\n\n${t.next}`, [o.cancel, o.readme, o.other, o.install])
-  $.ui.log(`install ${repo} (${kind}, ${lang}): next step ${JSON.stringify(next)}`, { to: 'debug' })
-  if (next === o.readme) {
-    return `not installed: the user wants to read the README first. Summarise it (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw'), then call this tool again if they still want it.`
+  const about = d.about ? `\n\n${d.about}` : ''
+  const next = await ask($, `${header}\n${plan.lines}${about}\n\n${d.next}`, [cancel, readme, other, go])
+  $.ui.log(`install ${repo} (${kind}): next step ${JSON.stringify(next)}${problem ? ` (English: ${problem})` : ''}`, { to: 'debug' })
+  if (next === readme) {
+    return `not installed: the user wants to read the README first. Summarise it for them (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.${note}`
   }
-  if (next === o.other) return 'not installed: the user wants a different one. Ask which of the other recommendations to look at.'
-  if (next !== o.install) {
-    return `not installed: the user ${next === null ? 'dismissed the dialog' : next === o.cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.`
+  if (next === other) return `not installed: the user wants a different one. Ask which of the other recommendations to look at.${note}`
+  if (next !== go) {
+    return `not installed: the user ${next === null ? 'dismissed the dialog' : next === cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.${note}`
   }
 
-  const where = SCOPES.map(s => `${s.padEnd(8)}${t.where[kind][s]}`).join('\n')
-  const picked = await ask($, `${t.scope}\n\n${where}${plan.cache ? `\n\n${plan.cache}` : ''}`, [o.cancel, ...SCOPES])
+  const picked = await ask($, `${d.scope}${plan.cache ? `\n\n${plan.cache}` : ''}`, [CANCEL, ...SCOPES])
   $.ui.log(`install ${repo} (${kind}): scope ${JSON.stringify(picked)}`, { to: 'debug' })
   const scope = SCOPES.find(s => s === picked)
-  if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.`
+  if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${note}`
 
   const argv = command($, kind, input, scope)
   const r = await run($, argv)
   const shown = argv.map(a => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')
-  if (!r.ok) return `install failed (scope ${scope}): ${shown}\n${r.out}`
-  return `installed (scope ${scope}): ${shown}\n${r.out}\nnext: ${AFTER[kind]}`
+  if (!r.ok) return `install failed (scope ${scope}): ${shown}\n${r.out}${note}`
+  return `installed (scope ${scope}): ${shown}\n${r.out}\nnext: ${AFTER[kind]}${note}`
 }
 
 export const register: Register = on => {

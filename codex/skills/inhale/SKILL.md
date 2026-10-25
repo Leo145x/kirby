@@ -59,11 +59,28 @@ For `[public]` results say plainly that the user has not vetted this repo; sugge
 
 ## 4. Install through the `install` tool
 
-When the user picks a recommendation, call `install`. If the user names a repo to install without a search, call `detect` on it first for the kind and folder, then `install`. Never run `codex plugin add`, `codex mcp add` or copy skill files yourself: the tool shows the user two dialogs: first the next step (install / read the README first / pick another / cancel) and then the scope, and installs only after both. Always pass `lang`, the language the user writes in (e.g. `"zh-TW"`, `"zh-CN"`, `"en"`), so the dialogs speak it.
+When the user picks a recommendation, call `install`. If the user names a repo to install without a search, call `detect` on it first for the kind and folder, then `install`. Never run `codex plugin add`, `codex mcp add` or copy skill files yourself: the tool shows the user two dialogs, first the next step and then the scope, and installs only after both. Above your wording the tool puts the facts it found (repo, stars, commit, files, scripts, an existing folder, the marketplace format) in English.
+
+Always pass `dialog`, the wording of both dialogs in the language the user writes in:
+
+```json
+"dialog": {
+  "about": "<optional: a line or two on what this install brings and anything worth noticing>",
+  "next": "<the question for the next step>",
+  "options": ["<cancel>", "<read the README first>", "<pick another>", "<install>"],
+  "scope": "<the question for the scope>"
+}
+```
+
+- For a plugin whose `marketplaceFile` is `.claude-plugin/marketplace.json`, say in `about` that parts made only for Claude Code (such as hooks) may not work in Codex.
+- The tool reads the answer by position, so `options` is always in that order and each label plainly says that action in the user's language. The four options differ from each other.
+- The scope dialog's options are `cancel` and the scopes on offer, fixed by the tool. `scope` is only the question, e.g. `要安裝到哪個範圍？`: do not explain the scopes in it or in `about`. A plugin or an MCP server offers only `user`, and so does a skill when Codex does not say which project the session is in.
+- Limits: `next` 200 characters, `about` and `scope` 600, an option 40.
+- Without `dialog`, or when it is incomplete, the dialogs are in English and the result ends with a `note:` saying why; fix it on the next call.
 
 - **Skill**: `{ "repo": "owner/repo", "kind": "skill", "folder": "<folder from detect>" }`. Add `"force": true` only after the user agrees to replace an existing folder of the same name. Scopes: `local` and `project` install into this project's `.agents/skills/` (`local` also adds it to `.gitignore`), `user` into `~/.agents/skills/`.
-- **Plugin**: `{ "repo": "<marketplace owner/repo>", "kind": "plugin", "plugin": "<plugin name>" }`. Codex installs plugins for the user only.
-- **MCP server**: first read the README (`readme`) for the launch command and the env vars or API keys it needs; ask the user for any key. Then `{ "repo": "owner/repo", "kind": "mcp", "mcp_args": ["<name>", "--", "<command>", "<arg>", …] }`, everything that follows `codex mcp add` (`--env KEY=VALUE` goes before `--`; a remote server is `["<name>", "--url", "<url>"]`). Codex adds MCP servers for the user only.
+- **Plugin**: `{ "repo": "<marketplace owner/repo>", "kind": "plugin", "plugin": "<plugin name>" }`. Codex installs plugins for the user only (`~/.codex/config.toml`, all the user's projects).
+- **MCP server**: first read the README (`readme`) for the launch command and the env vars or API keys it needs; ask the user for any key. Then `{ "repo": "owner/repo", "kind": "mcp", "mcp_args": ["<name>", "--", "<command>", "<arg>", …] }`, everything that follows `codex mcp add` (`--env KEY=VALUE` goes before `--`; a remote server is `["<name>", "--url", "<url>"]`). Codex adds MCP servers for the user only (`~/.codex/config.toml`; `codex mcp add` has no project scope).
 
 Act on the result:
 

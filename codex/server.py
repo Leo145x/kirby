@@ -3,8 +3,9 @@
 
 Codex starts it from the plugin root, outside the sandbox, so the searches reach GitHub without
 an approval prompt each time. `install` asks the user through MCP elicitation, first the next
-step and then the scope, and installs only after both. The dialogs speak the user's language;
-what the tools answer is for the model, in English.
+step and then the scope, and installs only after both. The dialogs show the facts the server
+found and the model's wording in the user's language (see dialog.py); what the tools answer is
+for the model, in English.
 """
 import json
 import os
@@ -13,11 +14,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from i18n import TEXT, pick_lang
+from dialog import CANCEL, SCOPES, read_dialog
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-SCOPES = ("local", "project", "user")
 TIMEOUT = 120
 README_MAX = 20000
 
@@ -63,7 +63,8 @@ TOOLS = [
                        "plugin (the marketplace plugin's name; repo is the marketplace); kind=mcp needs mcp_args, "
                        "everything that follows `codex mcp add`, e.g. [\"github\", \"--\", \"npx\", \"-y\", "
                        "\"@modelcontextprotocol/server-github\"]. force replaces an existing skill folder of the same "
-                       "name. lang is the language the user writes in (e.g. \"zh-TW\"), for the dialogs.",
+                       "name. dialog is the wording of both dialogs in the user's language, in the format the "
+                       "inhale skill gives; without it they are in English.",
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"},
             "kind": {"type": "string", "enum": ["skill", "plugin", "mcp"]},
@@ -71,7 +72,12 @@ TOOLS = [
             "plugin": {"type": "string"},
             "mcp_args": STRINGS,
             "force": {"type": "boolean"},
-            "lang": {"type": "string"},
+            "dialog": {"type": "object", "properties": {
+                "about": {"type": "string"},
+                "next": {"type": "string"},
+                "options": STRINGS,
+                "scope": {"type": "string"},
+            }},
         }, "required": ["repo", "kind"]},
     },
 ]
@@ -215,8 +221,9 @@ def repo_header(repo):
     return f"{repo} ★{count} · pushed {(pushed or '?')[:10]}" + (" · ARCHIVED" if archived else "")
 
 
-def preview(t, kind, a, project):
-    """What the install would do: dialog lines, the scopes on offer, and anything the command needs."""
+def preview(kind, a, project):
+    """What the install would do: the facts for the dialog, the scopes on offer, and anything the
+    command needs."""
     repo = a["repo"]
     if kind == "skill":
         folder = a.get("folder")
@@ -227,11 +234,12 @@ def preview(t, kind, a, project):
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        lines = [t["kind"].format(f"skill ({c['name']})"), t["commit"].format(c["commit"]), t["files"].format(c["files"])]
+        lines = [f"skill: {c['name']} · commit {c['commit']} · {c['files']} files"]
         if c["scripts"]:
-            lines.append(t["scripts"].format(len(c["scripts"]), ", ".join(c["scripts"][:2])))
+            lines.append(f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}")
         if project and c["exists"]:
-            lines.append(t["exists"].format(c["name"], t["exists_force"][a.get("force") is True]))
+            result = "replaces it" if a.get("force") is True else "fails"
+            lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
         return {"lines": lines, "scopes": SCOPES if project else ("user",)}
     if kind == "plugin":
         name = a.get("plugin")
@@ -246,17 +254,17 @@ def preview(t, kind, a, project):
             raise Refusal(f"{repo} has no marketplace plugin named {name}")
         if not unit.get("marketplace"):
             raise Refusal(f"{repo}'s {unit.get('marketplaceFile')} has no name")
-        lines = [t["kind"].format(f"plugin ({name})")]
+        lines = [f"plugin: {name}"]
         if unit.get("description"):
-            lines.append(t["about"].format(unit["description"][:160]))
+            lines.append(f"description: {unit['description'][:160]}")
         if unit.get("marketplaceFile", "").startswith(".claude-plugin/"):
-            lines.append(t["claude_format"])
+            lines.append(f"marketplace: {unit['marketplaceFile']} (Claude Code format)")
         return {"lines": lines, "scopes": ("user",), "marketplace": unit["marketplace"]}
     args = a.get("mcp_args")
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
     if not args:
         raise Refusal("kind=mcp needs mcp_args")
-    return {"lines": [t["kind"].format("MCP server"), t["command"].format(f"codex mcp add {' '.join(args)}")],
+    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}"],
             "scopes": ("user",), "mcp_args": args}
 
 
@@ -281,35 +289,36 @@ def install(peer, a, meta):
     if not peer.can_elicit:
         return "not installed: this Codex client cannot show dialogs (no MCP elicitation), so the user cannot choose."
 
-    lang = pick_lang(a.get("lang"), os.environ.get("LC_ALL") or os.environ.get("LANG"))
-    t = TEXT[lang]
-    o = t["options"]
     project = project_dir(meta)
-
     try:
         header = repo_header(repo)
-        plan = preview(t, kind, a, project)
+        plan = preview(kind, a, project)
     except Refusal as e:
         return f"not installed: {e}"
 
-    # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
-    nxt = peer.ask(f"{header}\n\n" + "\n".join(plan["lines"]) + f"\n\n{t['next']}",
-                   [o["cancel"], o["readme"], o["other"], o["install"]])
-    log(f"install {repo} ({kind}, {lang}): next step {json.dumps(nxt, ensure_ascii=False)}")
-    if nxt == o["readme"]:
-        return ("not installed: the user wants to read the README first. Summarise it for them (the readme tool) "
-                "and end your turn. Call this tool again only after they reply that they still want it.")
-    if nxt == o["other"]:
-        return "not installed: the user wants a different one. Ask which of the other recommendations to look at."
-    if nxt != o["install"]:
-        return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}."
+    d, problem = read_dialog(a.get("dialog"))
+    cancel, readme_, other, go = d["options"]
+    # Tells the model why its wording was not used, so the next call can fix it.
+    note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
 
-    where = "\n".join(f"{s.ljust(8)}{t['where'][kind][s]}" for s in plan["scopes"])
-    note = f"\n\n{t['no_project']}" if kind == "skill" and not project else ""
-    picked = peer.ask(f"{t['scope']}\n\n{where}{note}", [o["cancel"], *plan["scopes"]])
+    # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
+    about = f"\n\n{d['about']}" if d["about"] else ""
+    nxt = peer.ask(f"{header}\n" + "\n".join(plan["lines"]) + f"{about}\n\n{d['next']}", [cancel, readme_, other, go])
+    log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
+    if nxt == readme_:
+        return ("not installed: the user wants to read the README first. Summarise it for them (the readme tool) "
+                "and end your turn. Call this tool again only after they reply that they still want it." + note)
+    if nxt == other:
+        return "not installed: the user wants a different one. Ask which of the other recommendations to look at." + note
+    if nxt != go:
+        return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}.{note}"
+
+    only = ("\n\nonly user: Codex did not say which project this session is in"
+            if kind == "skill" and not project else "")
+    picked = peer.ask(f"{d['scope']}{only}", [CANCEL, *plan["scopes"]])
     log(f"install {repo} ({kind}): scope {json.dumps(picked, ensure_ascii=False)}")
     if picked not in plan["scopes"]:
-        return f"not installed: the user {'dismissed the scope dialog' if picked is None else 'cancelled at the scope step'}."
+        return f"not installed: the user {'dismissed the scope dialog' if picked is None else 'cancelled at the scope step'}.{note}"
 
     shown, outs = [], []
     for argv in commands(kind, a, picked, plan):
@@ -317,9 +326,9 @@ def install(peer, a, meta):
         shown.append(" ".join(json.dumps(x) if " " in x else x for x in argv))
         outs.append(out)
         if not ok:
-            return f"install failed (scope {picked}): {shown[-1]}\n{out}"
+            return f"install failed (scope {picked}): {shown[-1]}\n{out}{note}"
     after = f"\nnext: {AFTER[kind]}" if kind in AFTER else ""
-    return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after
+    return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after + note
 
 
 # ---- dispatch ------------------------------------------------------------------------------------

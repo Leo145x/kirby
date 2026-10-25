@@ -69,7 +69,7 @@ Once you pick a repo, the mod shows two dialogs:
 
 Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
-The dialogs follow Claude Code's `language` setting (e.g. `"zh-TW"`, `"简体中文"`), or `LC_ALL` / `LANG` when it is unset. They are in English, Traditional Chinese or Simplified Chinese; any other language gets English.
+The model writes the dialogs' wording in the language you write in, in the format the skill gives. The facts above it (repo, stars, commit, files, scripts, an existing folder) and the prompt-cache note below the scope question come from the tool, in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing or incomplete, the dialogs are in English.
 
 ### Installs and the prompt cache
 
@@ -79,7 +79,7 @@ Per the [official docs](https://code.claude.com/docs/en/prompt-caching) and this
 - **MCP server**: `claude mcp add` takes effect after a restart; the current session's cache is not affected.
 - **Plugin**: loads with `/reload-plugins`. Its skills, hooks and the like don't affect the cache. If it brings an MCP server and tool search is off in the session (it is on by default), loading it rebuilds the cache once. Claude Code warns first and applies the reload only with `--force` (tested).
 
-The scope dialog shows the matching note.
+The plugin note is in the scope dialog, from the tool. The MCP note is up to the model: the skill asks it to mention it in the first dialog.
 
 ## Codex
 
@@ -88,7 +88,7 @@ The same repo is a Codex plugin. Codex reads `.codex-plugin/plugin.json`, which 
 What differs from Claude Code:
 
 - **Searches go through MCP tools.** The server's `stars`, `public`, `detect` and `readme` tools run the same scripts outside Codex's sandbox, so a search does not ask for network access each time. With Codex's default approval settings, Codex still asks whether kirby may run a tool; "Always allow" remembers the answer.
-- **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. They use the language you write in (the model passes it), or `LC_ALL` / `LANG` when it doesn't.
+- **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. As in Claude Code, the model writes their wording in your language, and the facts stay in English.
 - **No `default_source` setting.** The default is `stars`; say "public" or "both" in the prompt.
 - **Scopes:**
 
@@ -102,7 +102,7 @@ What differs from Claude Code:
 
 After installing, start a new Codex session to use what was added.
 
-Codex also reads Claude Code's marketplace format. When a plugin comes from one, the dialog notes that parts made only for Claude Code (such as hooks) may not work.
+Codex also reads Claude Code's marketplace format. When a plugin comes from one, the dialog's facts name the marketplace file, and the skill asks the model to note that parts made only for Claude Code (such as hooks) may not work.
 
 If you only say "install owner/repo", Codex may use its built-in `skill-installer` instead, which skips kirby's dialogs (seen in testing). If it asks to run that installer, decline and ask it to install through kirby.
 

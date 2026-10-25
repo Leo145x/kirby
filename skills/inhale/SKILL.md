@@ -62,7 +62,25 @@ For `[public]` results say plainly that the user has not vetted this repo; sugge
 
 ## 4. Install through the `install` tool
 
-When the user picks a recommendation, call `mcp__kirby__install` (load it with ToolSearch `select:mcp__kirby__install` if its schema is not loaded). Never run `install_skill.py`, `claude plugin install` or `claude mcp add` yourself: the tool shows the user two dialogs, in the user's language: first the next step (install / read the README first / pick another / cancel) and then the scope (local / project / user, with what each means and any prompt-cache note), and installs only after both.
+When the user picks a recommendation, call `mcp__kirby__install` (load it with ToolSearch `select:mcp__kirby__install` if its schema is not loaded). Never run `install_skill.py`, `claude plugin install` or `claude mcp add` yourself: the tool shows the user two dialogs, first the next step and then the scope, and installs only after both. Above your wording the tool puts the facts it found (repo, stars, commit, files, scripts, an existing folder, a prompt-cache note) in English.
+
+Always pass `dialog`, the wording of both dialogs in the language the user writes in:
+
+```json
+"dialog": {
+  "about": "<optional: a line or two on what this install brings and anything worth noticing>",
+  "next": "<the question for the next step>",
+  "options": ["<cancel>", "<read the README first>", "<pick another>", "<install>"],
+  "scope": "<the question for the scope>"
+}
+```
+
+- For an MCP server, say in `about` that it takes effect after a restart and does not affect this session's prompt cache.
+- The tool reads the answer by position, so `options` is always in that order and each label plainly says that action in the user's language. The four options differ from each other.
+- The scope dialog's options are `cancel`, `local`, `project` and `user`, fixed by the tool. `scope` is only the question, e.g. `要安裝到哪個範圍？`: do not explain the scopes in it or in `about`.
+- Limits: `next` 200 characters, `about` and `scope` 600, an option 40.
+- If the user asks what the scopes mean: a **skill** goes to this project's `.claude/skills/` at `local` (also added to `.gitignore`, kept out of git) and `project` (committed to git), or `~/.claude/skills/` at `user` (all the user's projects). A **plugin** is enabled for only the user in this project (`.claude/settings.local.json`), shared with the project (`.claude/settings.json`, committed) or for all the user's projects (`~/.claude/settings.json`). An **MCP server** is added for only the user in this project, shared with the project (`.mcp.json`, committed) or for all the user's projects.
+- Without `dialog`, or when it is incomplete, the dialogs are in English and the result ends with a `note:` saying why; fix it on the next call.
 
 - **Skill**: `{ "repo": "owner/repo", "kind": "skill", "folder": "<folder from detect.py>" }`. Add `"force": true` only after the user agrees to replace an existing folder of the same name.
 - **Claude Code plugin**: `{ "repo": "<marketplace owner/repo>", "kind": "plugin", "plugin": "<plugin name>" }`.
@@ -70,7 +88,7 @@ When the user picks a recommendation, call `mcp__kirby__install` (load it with T
 
 Act on the result:
 
-- `not installed: … read the README first`: summarise the README, then offer the install again.
+- `not installed: … read the README first`: summarise the README and end your turn. Call `mcp__kirby__install` again only after the user replies that they still want it.
 - `not installed: … a different one`: ask which other recommendation to look at.
 - `not installed: … cancelled` / `dismissed`: stop.
 - `installed (scope …)`: report exactly what was added and where, the `next:` line, and how to remove it (delete the skill folder; `claude plugin uninstall <plugin> --scope <scope>`; `claude mcp remove --scope <scope> <name>`). If a plugin install says a `userConfig` option is not set, tell the user to run `/plugin configure <plugin>@<marketplace>`.

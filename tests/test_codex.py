@@ -6,33 +6,43 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex"))
 
-from i18n import TEXT, pick_lang  # noqa: E402
+from dialog import CANCEL, SCOPES, english, read_dialog  # noqa: E402
 import server  # noqa: E402
 
+GOOD = {
+    "about": "把 archify 裝成 skill。",
+    "next": "下一步？",
+    "options": ["取消", "先讀 README", "換一個", "安裝"],
+    "scope": "裝在哪個範圍？",
+}
 
-class PickLang(unittest.TestCase):
-    def test_lang_picks_the_dialog_language(self):
-        for v in ("zh-TW", "zh_TW", "zh-Hant", "zh-HK", "繁體中文", "Traditional Chinese", "taiwanese"):
-            self.assertEqual(pick_lang(v, None), "zh-TW", v)
-        for v in ("zh-CN", "zh", "zh-Hans", "简体中文", "Simplified Chinese", "chinese", "中文"):
-            self.assertEqual(pick_lang(v, None), "zh-CN", v)
-        for v in ("english", "en", "japanese", "spanish"):
-            self.assertEqual(pick_lang(v, None), "en", v)
 
-    def test_with_no_lang_the_locale_decides_and_english_is_the_fallback(self):
-        self.assertEqual(pick_lang(None, "zh_TW.UTF-8"), "zh-TW")
-        self.assertEqual(pick_lang("", "zh_CN.UTF-8"), "zh-CN")
-        self.assertEqual(pick_lang(None, "en_US.UTF-8"), "en")
-        self.assertEqual(pick_lang(None, None), "en")
-        # An explicit lang wins over the locale.
-        self.assertEqual(pick_lang("japanese", "zh_TW.UTF-8"), "en")
+class Dialog(unittest.TestCase):
+    def test_the_models_wording_is_used_when_it_is_complete(self):
+        d, problem = read_dialog(GOOD)
+        self.assertIsNone(problem)
+        self.assertEqual(d, GOOD)
 
-    def test_every_language_has_distinct_option_labels_and_the_same_keys(self):
-        for t in TEXT.values():
-            self.assertEqual(len(set(t["options"].values())), 4)
-            self.assertEqual(t.keys(), TEXT["en"].keys())
-            for kind, scopes in TEXT["en"]["where"].items():
-                self.assertEqual(t["where"][kind].keys(), scopes.keys())
+    def test_the_scope_options_are_the_tools_own(self):
+        # Extra keys from an older skill, such as scopes, are ignored.
+        d, problem = read_dialog({**GOOD, "scopes": {"user": "你所有的專案"}})
+        self.assertIsNone(problem)
+        self.assertNotIn("scopes", d)
+        self.assertEqual(len({CANCEL, *SCOPES}), 4)
+
+    def test_missing_or_unusable_wording_falls_back_to_english_and_says_why(self):
+        self.assertEqual(read_dialog(None), (english(), "no dialog was given"))
+        bad = [
+            {**GOOD, "next": ""},
+            {**GOOD, "scope": "  "},
+            {**GOOD, "options": ["取消", "先讀 README", "安裝"]},
+            {**GOOD, "options": ["取消", "取消", "換一個", "安裝"]},
+            {**GOOD, "about": "x" * 601},
+        ]
+        for raw in bad:
+            d, problem = read_dialog(raw)
+            self.assertEqual(d, english())
+            self.assertIsInstance(problem, str)
 
 
 class Server(unittest.TestCase):
