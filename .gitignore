@@ -4,6 +4,9 @@
 # Mod API types the engine lays beside the mod at each load
 .claude-plugin/types/
 
+# Python bytecode
+__pycache__/
+
 # Editors / OS
 .vscode/
 .idea/

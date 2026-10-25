@@ -3,6 +3,7 @@
 
     detect.py owner/repo [owner/repo ...]
     detect.py --match review lint -- owner/repo [owner/repo ...]
+    detect.py --agent codex owner/repo     # Codex marketplaces and plugins instead
 
 Reads the repo's file tree (one API call per repo) plus marketplace.json and SKILL.md
 frontmatter where present. Nothing is installed. Descriptions are fetched for at most
@@ -16,6 +17,16 @@ import subprocess
 MCP_FILES = ("server.json", "smithery.yaml", ".mcp.json", "mcp.json")
 MCP_TOPICS = {"mcp", "mcp-server", "model-context-protocol", "mcp-servers"}
 MAX_SKILLS = 15
+# Where each agent looks for a marketplace and a bare plugin manifest, in order of preference.
+# Codex also reads Claude Code's marketplace file.
+MARKETPLACES = {
+    "claude": (".claude-plugin/marketplace.json",),
+    "codex": (".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json"),
+}
+PLUGINS = {
+    "claude": (".claude-plugin/plugin.json",),
+    "codex": ("plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json"),
+}
 
 
 def gh(*args):
@@ -58,7 +69,7 @@ def plugin_has_mcp(repo, entry, paths):
     return False
 
 
-def detect(repo, terms=()):
+def detect(repo, terms=(), agent="claude"):
     meta = gh(f"repos/{repo}")
     if meta is None:
         return {"repo": repo, "error": "not found or no access"}
@@ -73,10 +84,11 @@ def detect(repo, terms=()):
     if tree.get("truncated"):
         out["note"] = "file tree truncated by GitHub; some skills may be missing"
 
-    if ".claude-plugin/marketplace.json" in paths:
+    mk_file = next((f for f in MARKETPLACES[agent] if f in paths), None)
+    if mk_file:
         out["kinds"].append("marketplace")
         try:
-            mk = json.loads(raw(repo, ".claude-plugin/marketplace.json") or "{}")
+            mk = json.loads(raw(repo, mk_file) or "{}")
         except json.JSONDecodeError:
             mk = {}
         for p in mk.get("plugins", []):
@@ -85,8 +97,10 @@ def detect(repo, terms=()):
                 "name": p.get("name"),
                 "description": p.get("description", ""),
                 "mcpServers": plugin_has_mcp(repo, p, paths),
+                "marketplace": mk.get("name"),
+                "marketplaceFile": mk_file,
             })
-    elif ".claude-plugin/plugin.json" in paths:
+    elif any(f in paths for f in PLUGINS[agent]):
         out["kinds"].append("plugin-without-marketplace")
 
     skills = [p for p in paths if p == "SKILL.md" or p.endswith("/SKILL.md")]
@@ -133,9 +147,11 @@ def main():
     ap.add_argument("repos", nargs="+", metavar="owner/repo")
     ap.add_argument("--match", nargs="+", default=[], metavar="TERM",
                     help="fetch descriptions first for skills whose path contains a term")
+    ap.add_argument("--agent", choices=MARKETPLACES, default="claude",
+                    help="whose marketplace and plugin files to look for (default claude)")
     args = ap.parse_args()
     terms = [t.lower() for t in args.match]
-    print(json.dumps([detect(r, terms) for r in args.repos], ensure_ascii=False, indent=1))
+    print(json.dumps([detect(r, terms, args.agent) for r in args.repos], ensure_ascii=False, indent=1))
 
 
 if __name__ == "__main__":

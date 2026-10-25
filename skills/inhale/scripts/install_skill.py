@@ -3,9 +3,11 @@
 
     install_skill.py owner/repo path/to/skill-folder --scope project --check   # what would be installed
     install_skill.py owner/repo path/to/skill-folder --scope local|project|user [--force]
+    install_skill.py owner/repo path/to/skill-folder --scope user --agent codex
 
 Scopes: project and local install into this project's .claude/skills/ (local also adds the
-folder to .gitignore); user installs into ~/.claude/skills/. Use "." as the folder when
+folder to .gitignore); user installs into ~/.claude/skills/. With --agent codex the
+directories are .agents/skills/ and ~/.agents/skills/ instead. Use "." as the folder when
 SKILL.md is at the repo root. The installed folder is named after the skill's frontmatter
 `name` (falling back to the source folder's name). The source commit is recorded in
 <skills dir>/<name>/.kirby.json.
@@ -19,7 +21,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-DESTS = {"local": Path(".claude/skills"), "project": Path(".claude/skills"), "user": Path.home() / ".claude/skills"}
+DESTS = {
+    "claude": {"local": Path(".claude/skills"), "project": Path(".claude/skills"), "user": Path.home() / ".claude/skills"},
+    "codex": {"local": Path(".agents/skills"), "project": Path(".agents/skills"), "user": Path.home() / ".agents/skills"},
+}
+SCOPES = ("local", "project", "user")
+NEXT = {
+    "claude": "next: if it does not show up in the / menu, start a new session.",
+    "codex": "next: if Codex does not list it, start a new session.",
+}
 VALID_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VALID_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SCRIPT = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl", ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts")
@@ -69,7 +79,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("repo")
     ap.add_argument("folder")
-    ap.add_argument("--scope", choices=DESTS, required=True, help="local, project or user (see above)")
+    ap.add_argument("--scope", choices=SCOPES, required=True, help="local, project or user (see above)")
+    ap.add_argument("--agent", choices=DESTS, default="claude", help="whose skills directories to use (default claude)")
     ap.add_argument("--check", action="store_true", help="say what would be installed, write nothing")
     ap.add_argument("--force", action="store_true", help="replace an existing skill of the same name")
     ap.add_argument("--json", action="store_true", help="with --check, print the summary as JSON")
@@ -94,7 +105,7 @@ def main():
         declared = frontmatter_name(src / "SKILL.md")
         fallback = args.repo.split("/")[1] if folder == "." else folder.rsplit("/", 1)[-1]
         name = declared if declared and VALID_NAME.match(declared) else fallback
-        target = DESTS[args.scope] / name
+        target = DESTS[args.agent][args.scope] / name
         sha = git("rev-parse", "HEAD", cwd=tmp)
         files = listing(src)
         exists = target.exists()
@@ -124,7 +135,7 @@ def main():
         print(f"added /{target.as_posix()}/ to .gitignore")
     if declared and name != declared:
         print(f"note: frontmatter name {declared!r} is not a valid folder name; installed as {name!r}")
-    print("next: if it does not show up in the / menu, start a new session.")
+    print(NEXT[args.agent])
 
 
 if __name__ == "__main__":

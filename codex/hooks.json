@@ -1,0 +1,1 @@
+{ "description": "kirby has no Codex hooks. This file stops Codex from reading hooks/hooks.json, which is the Claude Code mod.", "hooks": {} }

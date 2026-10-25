@@ -4,12 +4,15 @@
 
 从你的 GitHub star 和 star list，或公开的 GitHub 搜索中，找出合适的 skill、plugin 或 MCP server，经你确认后安装到你选择的 scope。
 
-内容分为两部分：
+内容分为三部分：
 
 - **`inhale` skill**：搜索你的 star 和 star list（也可以搜索公开的 GitHub），判断并推荐合适的 skill、plugin 或 MCP server。
-- **mod**（`hooks/register.ts`）：提供安装用的 tool `mcp__kirby__install`。通过这个 tool 安装时，会先弹出两层对话框等你决定。skill 会要求模型只用这个 tool 安装，但这只是指示，不是硬性拦截：模型仍然可以用 Bash 直接执行 `claude mcp add` 之类的安装命令。
+- **mod**（`hooks/register.ts`，Claude Code 用）：提供安装用的 tool `mcp__kirby__install`。通过这个 tool 安装时，会先弹出两层对话框等你决定。
+- **MCP server**（`codex/server.py`，Codex 用）：提供搜索用的 tool，以及同样会弹出两层对话框的 `install` tool。
 
-只支持 Claude Code。
+skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬性拦截：模型仍然可以自己执行 `claude mcp add`、`codex mcp add` 之类的安装命令。
+
+支持 Claude Code 和 Codex，Codex 版的差异见 [Codex](#codex)。
 
 ## 依赖
 
@@ -19,9 +22,18 @@
 
 ## 安装
 
+Claude Code：
+
 ```
 claude plugin marketplace add Leo145x/kirby
 claude plugin install kirby@kirby
+```
+
+Codex：
+
+```
+codex plugin marketplace add Leo145x/kirby
+codex plugin add kirby@kirby
 ```
 
 ## 使用
@@ -32,7 +44,7 @@ claude plugin install kirby@kirby
 - “从我的 AI Tools list 找 code review 的工具”
 - “从公开的 GitHub 找能查 postgres 的 MCP”
 
-也可以用 `/kirby:inhale` 直接调用。模型也可能在任务需要时自行使用这个 skill，但不保证每次都会。
+在 Claude Code 也可以用 `/kirby:inhale` 直接调用。模型也可能在任务需要时自行使用这个 skill，但不保证每次都会。
 
 每个 repo 都会附上 star 数和最后 push 的日期，格式是 `owner/repo ★N · pushed DATE`。
 
@@ -69,6 +81,31 @@ claude plugin install kirby@kirby
 
 对话框的 scope 那一层会附上相应的提醒。
 
+## Codex
+
+同一个 repo 也是 Codex plugin。Codex 读取 `.codex-plugin/plugin.json`，加载 Codex 版的 skill（`codex/skills/inhale/`）和一个 MCP server（`codex/server.py`，只用 Python 标准库，配置在 `mcp.json`）。Claude Code 的 mod 在 Codex 中不会用到。
+
+和 Claude Code 版的差异：
+
+- **搜索走 MCP tool。** server 的 `stars`、`public`、`detect`、`readme` 会在 Codex 的 sandbox 外运行同一批脚本，所以每次搜索不会请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
+- **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，语言跟随你使用的语言（由模型传入），没有时看 `LC_ALL` 或 `LANG`。
+- **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
+- **scope：**
+
+| scope | skill | plugin | MCP |
+| --- | --- | --- | --- |
+| `local` | 项目的 `.agents/skills/`，并自动加入 `.gitignore` | — | — |
+| `project` | 项目的 `.agents/skills/`，会进 git | — | — |
+| `user` | `~/.agents/skills/` | `codex plugin add`（`~/.codex/config.toml`） | `codex mcp add`（`~/.codex/config.toml`） |
+
+`codex plugin add` 和 `codex mcp add` 没有 scope 参数，所以 plugin 和 MCP 只能装在 user。如果 Codex 没有提供 session 所在的项目，skill 也只能选 `user`。
+
+装完后，开新的 Codex session 才能使用。
+
+Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marketplace 时，对话框会提醒：只为 Claude Code 写的部分（例如 hooks）可能无法运行。
+
+如果只说「安装 owner/repo」，Codex 可能改用它内置的 `skill-installer` 安装，不会经过 kirby 的对话框（实测遇到过）。它请求运行那个安装程序时，可以拒绝，再请它改用 kirby 安装。
+
 ## 脚本
 
 都在 `skills/inhale/scripts/`。前三个是只读的，skill 执行时不会询问你：
@@ -78,13 +115,16 @@ claude plugin install kirby@kirby
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容，不会写入。由 mod 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容，不会写入。由 mod 和 Codex 的 MCP server 调用 |
+
+`detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。
 
 ## 开发
 
 ```
 claude plugin validate .
 claude plugin test .
+python3 -B -m unittest discover -s tests
 ```
 
 ## License

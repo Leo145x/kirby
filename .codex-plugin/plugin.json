@@ -1,0 +1,12 @@
+{
+  "name": "kirby",
+  "version": "0.1.0",
+  "description": "Find skills, plugins and MCP servers in your GitHub stars and star lists or through a public GitHub search, and install the one you pick at the scope you choose.",
+  "author": {
+    "name": "Leo145x"
+  },
+  "license": "MIT",
+  "skills": "./codex/skills/",
+  "hooks": "./codex/hooks.json",
+  "mcpServers": "./mcp.json"
+}
