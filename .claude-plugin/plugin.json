@@ -1,0 +1,22 @@
+{
+  "name": "kirby",
+  "version": "0.1.0",
+  "description": "Find skills, plugins and MCP servers in your GitHub stars and star lists or through a public GitHub search, and install the one you pick at the scope you choose.",
+  "license": "MIT",
+  "author": {
+    "name": "Leo145x"
+  },
+  "userConfig": {
+    "default_source": {
+      "type": "string",
+      "title": "Default search source",
+      "description": "Where inhale looks when you don't say: your GitHub stars, public GitHub search, or both. You can still override it in a prompt.",
+      "options": [
+        "stars",
+        "public",
+        "both"
+      ],
+      "default": "stars"
+    }
+  }
+}

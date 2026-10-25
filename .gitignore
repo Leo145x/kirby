@@ -1,0 +1,12 @@
+# Claude Code: per-user local settings (local-scope plugins, MCP, permissions)
+.claude/
+
+# Mod API types the engine lays beside the mod at each load
+.claude-plugin/types/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

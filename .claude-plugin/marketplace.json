@@ -1,0 +1,13 @@
+{
+  "name": "kirby",
+  "owner": {
+    "name": "Leo145x"
+  },
+  "plugins": [
+    {
+      "name": "kirby",
+      "source": "./",
+      "description": "Find skills, plugins and MCP servers in your GitHub stars and star lists or through a public GitHub search, and install the one you pick at the scope you choose."
+    }
+  ]
+}
