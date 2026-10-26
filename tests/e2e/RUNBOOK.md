@@ -144,7 +144,7 @@ before anything else; it lists every place a case can leave something behind.
 | --- | --- | --- | --- |
 | A1 | both | `python3 -m unittest discover -s tests` in `$KIRBY` | ends with `OK` |
 | A2 | Claude Code | `claude plugin test $KIRBY` | `0 fail` |
-| A3 | Claude Code | `claude plugin validate $KIRBY` | `✔ Validation passed with warnings`; the warnings are only `ICON_MISSING` and the marketplace's missing `description` |
+| A3 | Claude Code | `claude plugin validate $KIRBY` | `✔ Validation passed with warnings`; the warnings are only `ICON_MISSING`, the marketplace's missing `description`, and `CLAUDE.md at the plugin root is not loaded as project context` (that file is for working on kirby, not for those who install it) |
 | A4 | Codex | from `$KIRBY`: `printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{}}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \| python3 -B ./codex/server.py` (not `-I`: the server imports `dialog` from its folder) | id 1: `serverInfo` `{"name": "kirby", "version": "0.1.0"}`; id 2: tool names exactly `stars, public, detect, readme, file, install` |
 | A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
 | A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
