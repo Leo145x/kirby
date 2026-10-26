@@ -260,6 +260,8 @@ Answer Install, then `local`.
   - `next: if it does not show up in the / menu, start a new session.`
   - `next: If it does not show up in the / menu, the user starts a new session.`
   - `SCAN_NOTE`; no `note:` line
+- Screen: the call's row is one line, `● kirby install cloudflare/security-audit-skill (skill security-audit)`, and its
+  result one line, `⎿  installed (scope local) -> .claude/skills/security-audit (<N> files)`; ctrl+o shows the input and result in full.
 - Files: `<P>/.claude/skills/security-audit/.kirby.json` has `"commit": "<SHA>"`; `<P>/.gitignore` has
   the line `/.claude/skills/security-audit/`.
 - Reply: says what was added and where, the `next:` line, and that removing it means deleting the folder.

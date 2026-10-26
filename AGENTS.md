@@ -13,7 +13,7 @@ claude plugin test .
 python3 -B -m unittest discover -s tests
 ```
 
-`claude plugin test .` runs `tests/dialog.test.ts`; unittest runs `tests/test_codex.py` and `tests/test_install_skill.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
+`claude plugin test .` runs `tests/dialog.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py` and `tests/test_install_skill.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
 
 ## Tool Change Checklist
 
@@ -37,6 +37,7 @@ The strings the install tool returns to the model (`not installed: …`, `instal
 | # | File | What to update |
 |---|------|---------|
 | 1 | `hooks/register.ts` ↔ `codex/server.py` | result strings, notes such as `*_NOT_SCANNED` |
+| 1a | `hooks/rows.ts`, `tests/rows.test.ts` | the result line shown in Claude Code's transcript, which reads the start of each result |
 | 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` length limits, the rules in `readDialog` / `read_dialog` |
 | 3 | `tests/dialog.test.ts` ↔ `tests/test_codex.py` | tests of the dialog rules |
 | 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the `dialog` format, Limits, and each result under Act on the result |

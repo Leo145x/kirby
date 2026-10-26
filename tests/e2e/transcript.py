@@ -46,7 +46,9 @@ def codex_file(project):
     for f in files:
         with f.open() as fh:
             first = json.loads(fh.readline() or "{}")
-        if (first.get("payload") or {}).get("cwd") == want:
+        meta = first.get("payload") or {}
+        # Codex runs subagents (such as the approval reviewer) in the same cwd; skip them.
+        if meta.get("cwd") == want and not meta.get("parent_thread_id"):
             return f
     sys.exit(f"no Codex session for {project}")
 
