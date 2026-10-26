@@ -13,11 +13,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from dialog import CANCEL, SCOPES, read_dialog
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 TIMEOUT = 120
 README_MAX = 20000
 
@@ -56,6 +58,14 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]},
     },
     {
+        "name": "file",
+        "description": "One file of a repo at a commit, raw: for reading a hit the install tool's scan reported. "
+                       "ref is the full commit sha the scan names.",
+        "inputSchema": {"type": "object", "properties": {
+            "repo": {"type": "string"}, "path": {"type": "string"}, "ref": {"type": "string"},
+        }, "required": ["repo", "path", "ref"]},
+    },
+    {
         "name": "install",
         "description": "Install a recommended skill, plugin or MCP server for Codex. The user picks the next step in a "
                        "dialog (install / read the README first / pick another / cancel) and, to install, the scope; "
@@ -81,6 +91,10 @@ TOOLS = [
         }, "required": ["repo", "kind"]},
     },
 ]
+
+PLUGIN_NOT_SCANNED = ("scan: not scanned; a plugin installs from its marketplace as it is when the install runs, "
+                      "not pinned to a commit")
+MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
 
 # install_skill.py prints its own next: line.
 AFTER = {
@@ -204,6 +218,20 @@ def readme(a):
     return ok, out
 
 
+def file(a):
+    repo, path, ref = a.get("repo"), a.get("path"), a.get("ref")
+    if not isinstance(repo, str) or not REPO_RE.match(repo):
+        return False, f"not an owner/repo: {json.dumps(repo)}"
+    if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+        return False, f"not a path inside the repo: {json.dumps(path)}"
+    if not isinstance(ref, str) or not SHA_RE.match(ref):
+        return False, "ref must be the full 40-character commit sha"
+    ok, out = run(["gh", "api", f"repos/{repo}/contents/{quote(path)}?ref={ref}", "-H", "Accept: application/vnd.github.raw"])
+    if ok and len(out) > README_MAX:
+        out = out[:README_MAX] + f"\n\n[truncated at {README_MAX} characters]"
+    return ok, out
+
+
 # ---- install -----------------------------------------------------------------------------------------
 
 def project_dir(meta):
@@ -240,8 +268,9 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
+        lines += c["scan_lines"]
         # The commit shown is the one installed.
-        return {"lines": lines, "scopes": SCOPES if project else ("user",), "commit": c["sha"]}
+        return {"lines": lines, "scopes": SCOPES if project else ("user",), "scan": c["scan_note"], "commit": c["sha"]}
     if kind == "plugin":
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
@@ -260,13 +289,14 @@ def preview(kind, a, project):
             lines.append(f"description: {unit['description'][:160]}")
         if unit.get("marketplaceFile", "").startswith(".claude-plugin/"):
             lines.append(f"marketplace: {unit['marketplaceFile']} (Claude Code format)")
-        return {"lines": lines, "scopes": ("user",), "marketplace": unit["marketplace"]}
+        lines.append(PLUGIN_NOT_SCANNED)
+        return {"lines": lines, "scopes": ("user",), "scan": PLUGIN_NOT_SCANNED, "marketplace": unit["marketplace"]}
     args = a.get("mcp_args")
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
     if not args:
         raise Refusal("kind=mcp needs mcp_args")
-    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}"],
-            "scopes": ("user",), "mcp_args": args}
+    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}", MCP_NOT_SCANNED],
+            "scopes": ("user",), "scan": MCP_NOT_SCANNED, "mcp_args": args}
 
 
 def commands(kind, a, scope, plan):
@@ -302,24 +332,27 @@ def install(peer, a, meta):
     # Tells the model why its wording was not used, so the next call can fix it.
     note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
 
+    # Every answer from here on also tells the model what the scan showed the user.
+    tail = f"\n{plan['scan']}{note}"
+
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
     nxt = peer.ask(f"{header}\n" + "\n".join(plan["lines"]) + f"{about}\n\n{d['next']}", [cancel, readme_, other, go])
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:
         return ("not installed: the user wants to read the README first. Summarise it for them (the readme tool) "
-                "and end your turn. Call this tool again only after they reply that they still want it." + note)
+                "and end your turn. Call this tool again only after they reply that they still want it." + tail)
     if nxt == other:
-        return "not installed: the user wants a different one. Ask which of the other recommendations to look at." + note
+        return "not installed: the user wants a different one. Ask which of the other recommendations to look at." + tail
     if nxt != go:
-        return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}.{note}"
+        return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}.{tail}"
 
     only = ("\n\nonly user: Codex did not say which project this session is in"
             if kind == "skill" and not project else "")
     picked = peer.ask(f"{d['scope']}{only}", [CANCEL, *plan["scopes"]])
     log(f"install {repo} ({kind}): scope {json.dumps(picked, ensure_ascii=False)}")
     if picked not in plan["scopes"]:
-        return f"not installed: the user {'dismissed the scope dialog' if picked is None else 'cancelled at the scope step'}.{note}"
+        return f"not installed: the user {'dismissed the scope dialog' if picked is None else 'cancelled at the scope step'}.{tail}"
 
     shown, outs = [], []
     for argv in commands(kind, a, picked, plan):
@@ -327,14 +360,14 @@ def install(peer, a, meta):
         shown.append(" ".join(json.dumps(x) if " " in x else x for x in argv))
         outs.append(out)
         if not ok:
-            return f"install failed (scope {picked}): {shown[-1]}\n{out}{note}"
+            return f"install failed (scope {picked}): {shown[-1]}\n{out}{tail}"
     after = f"\nnext: {AFTER[kind]}" if kind in AFTER else ""
-    return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after + note
+    return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after + tail
 
 
 # ---- dispatch ------------------------------------------------------------------------------------
 
-SEARCHES = {"stars": stars, "public": public, "detect": detect, "readme": readme}
+SEARCHES = {"stars": stars, "public": public, "detect": detect, "readme": readme, "file": file}
 
 
 def call(peer, params):

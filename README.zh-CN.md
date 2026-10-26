@@ -58,7 +58,7 @@ codex plugin add kirby@kirby
 
 你选定要安装的 repo 后，mod 会弹出两层对话框：
 
-1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数和包含的脚本。
+1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和扫描结果。
 2. **scope**（选择“安装”后才会出现）：
 
 | scope | skill | plugin | MCP |
@@ -69,9 +69,11 @@ codex plugin add kirby@kirby
 
 无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
 
+在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全。plugin 和 MCP server 不会扫描，对话框会注明。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。
+
 skill 只会安装对话框显示的那个 commit。如果在实际安装前 repo 有了新的 commit，就不会安装；模型会告诉你，你仍然想装的话，它会重新弹出对话框，显示新的 commit。plugin 和 MCP server 没有锁定版本：plugin 安装的是安装时 marketplace 里的版本，MCP server 则是每次启动时运行它的命令所获取的代码，例如 `npx -y <package>`。
 
-对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、扫描结果），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
 
 ### 安装与 prompt cache
 
@@ -89,7 +91,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 
 和 Claude Code 版的差异：
 
-- **搜索走 MCP tool。** server 的 `stars`、`public`、`detect`、`readme` 会在 Codex 的 sandbox 外运行同一批脚本，所以每次搜索不会请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
+- **搜索走 MCP tool。** server 的 `stars`、`public`、`detect`、`readme`、`file` 会在 Codex 的 sandbox 外运行同一批脚本，所以每次搜索不会请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
 - **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
@@ -117,7 +119,7 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容，不会写入；`--commit` 只安装对话框显示的那个 commit。由 mod 和 Codex 的 MCP server 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容和扫描结果，不会写入；`--commit` 只安装对话框显示的那个 commit。由 mod 和 Codex 的 MCP server 调用 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。
 

@@ -76,9 +76,13 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
   )
 }
 
-// The facts about what the install would do, the prompt-cache note for the scope dialog, and for a
-// skill the commit shown, which is the one installed.
-type Plan = { lines: string; cache: string; commit?: string }
+// The facts about what the install would do, the prompt-cache note for the scope dialog, the scan as
+// the model reads it in every result (so it can explain a hit), and for a skill the commit shown, which
+// is the one installed.
+type Plan = { lines: string; cache: string; scan: string; commit?: string }
+
+const PLUGIN_NOT_SCANNED = 'scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit'
+const MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
 
 async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   const repo = String(input.repo)
@@ -88,13 +92,17 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!folder) throw new Refusal('kind=skill needs folder')
     const r = await run($, ['python3', '-I', `${scripts}/install_skill.py`, repo, folder, '--scope', 'project', '--check', '--json'])
     if (!r.ok) throw new Refusal(r.out)
-    const c = JSON.parse(r.out) as { name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean }
+    const c = JSON.parse(r.out) as {
+      name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
+      scan_lines: string[]; scan_note: string
+    }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    return { lines: lines.join('\n'), cache: '', commit: c.sha }
+    lines.push(...c.scan_lines)
+    return { lines: lines.join('\n'), cache: '', scan: c.scan_note, commit: c.sha }
   }
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
@@ -110,14 +118,15 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const cache = unit.mcpServers === false ? '' : pluginCacheNote(unit.mcpServers === true, toolSearchOff)
     const lines = [`plugin: ${name}`]
     if (unit.description) lines.push(`description: ${unit.description.slice(0, 160)}`)
-    return { lines: lines.join('\n'), cache }
+    lines.push(PLUGIN_NOT_SCANNED)
+    return { lines: lines.join('\n'), cache, scan: PLUGIN_NOT_SCANNED }
   }
   const args = Array.isArray(input.mcp_args) ? input.mcp_args.filter((a): a is string => typeof a === 'string') : []
   if (args.length === 0) throw new Refusal('kind=mcp needs mcp_args')
   if (args.some(a => a === '--scope' || a === '-s' || a.startsWith('--scope='))) {
     throw new Refusal('mcp_args must not set the scope; the user picks it')
   }
-  return { lines: `MCP server: claude mcp add --scope <scope> ${args.join(' ')}`, cache: '' }
+  return { lines: `MCP server: claude mcp add --scope <scope> ${args.join(' ')}\n${MCP_NOT_SCANNED}`, cache: '', scan: MCP_NOT_SCANNED }
 }
 
 function command($: $, kind: Kind, input: Input, scope: Scope, plan: Plan): string[] {
@@ -155,28 +164,31 @@ async function install($: $, input: Input): Promise<string> {
     throw err
   }
 
+  // Every answer from here on also tells the model what the scan showed the user.
+  const tail = `\n${plan.scan}${note}`
+
   // Cancel comes first so a stray Enter already queued when the dialog opens cancels.
   const about = d.about ? `\n\n${d.about}` : ''
   const next = await ask($, `${header}\n${plan.lines}${about}\n\n${d.next}`, [cancel, readme, other, go])
   $.ui.log(`install ${repo} (${kind}): next step ${JSON.stringify(next)}${problem ? ` (English: ${problem})` : ''}`, { to: 'debug' })
   if (next === readme) {
-    return `not installed: the user wants to read the README first. Summarise it for them (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.${note}`
+    return `not installed: the user wants to read the README first. Summarise it for them (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.${tail}`
   }
-  if (next === other) return `not installed: the user wants a different one. Ask which of the other recommendations to look at.${note}`
+  if (next === other) return `not installed: the user wants a different one. Ask which of the other recommendations to look at.${tail}`
   if (next !== go) {
-    return `not installed: the user ${next === null ? 'dismissed the dialog' : next === cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.${note}`
+    return `not installed: the user ${next === null ? 'dismissed the dialog' : next === cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.${tail}`
   }
 
   const picked = await ask($, `${d.scope}${plan.cache ? `\n\n${plan.cache}` : ''}`, [CANCEL, ...SCOPES])
   $.ui.log(`install ${repo} (${kind}): scope ${JSON.stringify(picked)}`, { to: 'debug' })
   const scope = SCOPES.find(s => s === picked)
-  if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${note}`
+  if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${tail}`
 
   const argv = command($, kind, input, scope, plan)
   const r = await run($, argv)
   const shown = argv.map(a => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')
-  if (!r.ok) return `install failed (scope ${scope}): ${shown}\n${r.out}${note}`
-  return `installed (scope ${scope}): ${shown}\n${r.out}\nnext: ${AFTER[kind]}${note}`
+  if (!r.ok) return `install failed (scope ${scope}): ${shown}\n${r.out}${tail}`
+  return `installed (scope ${scope}): ${shown}\n${r.out}\nnext: ${AFTER[kind]}${tail}`
 }
 
 export const register: Register = on => {

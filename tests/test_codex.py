@@ -63,6 +63,11 @@ class Server(unittest.TestCase):
         self.assertFalse(server.detect({"repos": [f"o/r{i}" for i in range(6)]})[0])
         self.assertFalse(server.public({"query": "  "})[0])
         self.assertFalse(server.readme({"repo": "../etc"})[0])
+        sha = "a" * 40
+        self.assertFalse(server.file({"repo": "o/r", "path": "../x", "ref": sha})[0])
+        self.assertFalse(server.file({"repo": "o/r", "path": "/etc/passwd", "ref": sha})[0])
+        self.assertFalse(server.file({"repo": "o/r", "path": "a.sh", "ref": "main"})[0])
+        self.assertFalse(server.file({"repo": "o/r/x", "path": "a.sh", "ref": sha})[0])
 
 
 if __name__ == "__main__":
