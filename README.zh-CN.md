@@ -69,7 +69,7 @@ codex plugin add kirby@kirby
 
 无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
 
-在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全。plugin 和 MCP server 不会扫描，对话框会注明。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。
+在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全。plugin 和 MCP server 不会扫描，对话框会注明。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。在 Claude Code 里，模型用 `gh api` 读取那个文件，skill 没有预先允许这个命令，所以除非你的权限模式允许，Claude Code 会先询问你。
 
 skill 只会安装对话框显示的那个 commit。如果在实际安装前 repo 有了新的 commit，就不会安装；模型会告诉你，你仍然想装的话，它会重新弹出对话框，显示新的 commit。plugin 和 MCP server 没有锁定版本：plugin 安装的是安装时 marketplace 里的版本，MCP server 则是每次启动时运行它的命令所获取的代码，例如 `npx -y <package>`。
 
@@ -91,7 +91,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 
 和 Claude Code 版的差异：
 
-- **搜索走 MCP tool。** server 的 `stars`、`public`、`detect`、`readme`、`file` 会在 Codex 的 sandbox 外运行同一批脚本，所以每次搜索不会请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
+- **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 则从 GitHub 读取 README 或某个 commit 的单个文件，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
 - **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
