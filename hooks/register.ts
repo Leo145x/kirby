@@ -3,10 +3,11 @@
 // The dialogs show the facts the tool found and the model's wording in the user's language (see
 // dialog.ts); what the tool answers is for the model, in English.
 
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import { CANCEL, readDialog, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
+import { callLine, resultLine } from './rows'
 
 type $ = EngineInterface
 type Input = Record<string, unknown>
@@ -198,4 +199,19 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__kirby__install' }, async ($, e: Input) => ({ result: await install($, e) }))
+
+  // One short line each for the call and its result; expanded (ctrl+o) and errors draw as usual.
+  // The terminal's own rows lead with these marks, so ours do too.
+  on('ui.render', { component: 'ToolUse', props: { tool: 'mcp__kirby__install' } }, ($, e, next) => {
+    if (e.props.isExpanded) return next(e)
+    const { Text } = $.ui.resolve(e)
+    const mark = e.surface === 'terminal' ? '● ' : ''
+    return h(Text, null, mark + callLine(e.props.input)) as RenderElement
+  })
+  on('ui.render', { component: 'ToolResult', props: { tool: 'mcp__kirby__install' } }, ($, e, next) => {
+    if (e.props.isExpanded || e.props.isErrored) return next(e)
+    const { Text } = $.ui.resolve(e)
+    const mark = e.surface === 'terminal' ? '  ⎿  ' : ''
+    return h(Text, { dimColor: true }, mark + resultLine(e.props.output)) as RenderElement
+  })
 }
