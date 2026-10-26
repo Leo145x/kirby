@@ -70,5 +70,55 @@ class Server(unittest.TestCase):
         self.assertFalse(server.file({"repo": "o/r/x", "path": "a.sh", "ref": sha})[0])
 
 
+class OneScope(unittest.TestCase):
+    """An MCP server goes to user only: the first dialog says so, and the scope dialog's install option,
+    in the server's words, says it again, so a first dialog with its options out of order cannot install
+    unseen."""
+
+    class Peer:
+        can_elicit = True
+
+        def __init__(self, *answers):
+            self.answers, self.asked = list(answers), []
+
+        def ask(self, question, options):
+            self.asked.append((question, options))
+            return self.answers.pop(0)
+
+    def install(self, *answers, dialog=GOOD):
+        ran, run = [], server.run
+
+        def fake(argv, cwd=None):
+            ran.append(argv)
+            return True, '[1, "2026-01-01T00:00:00Z", false]' if argv[0] == "gh" else "added"
+
+        server.run = fake
+        try:
+            peer = self.Peer(*answers)
+            args = ["probe", "--", "npx", "-y", "probe"]
+            r = server.install(peer, {"repo": "o/r", "kind": "mcp", "mcp_args": args, "dialog": dialog}, None)
+        finally:
+            server.run = run
+        return peer, [a for a in ran if a[0] == "codex"], r
+
+    def test_the_scope_dialog_says_where_in_the_servers_words(self):
+        peer, ran, r = self.install("安裝", server.USER_OPTION)
+        self.assertIn(f"{server.MCP_NOT_SCANNED}\n{server.USER_ONLY}", peer.asked[0][0])
+        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, server.USER_OPTION]))
+        self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe"]])
+        self.assertTrue(r.startswith("installed (scope user): codex mcp add probe -- npx -y probe\nadded\n"))
+
+    def test_cancel_at_the_scope_dialog_runs_nothing(self):
+        peer, ran, r = self.install("安裝", CANCEL)
+        self.assertEqual((len(peer.asked), ran), (2, []))
+        self.assertEqual(r, f"not installed: the user cancelled at the scope step.\n{server.MCP_NOT_SCANNED}")
+
+    def test_options_out_of_order_still_meet_the_scope_dialog(self):
+        # The model put cancel last, so the user's cancel reads as install; the scope dialog still stops it.
+        swapped = {**GOOD, "options": ["安裝", "先讀 README", "換一個", "取消"]}
+        peer, ran, r = self.install("取消", CANCEL, dialog=swapped)
+        self.assertEqual((len(peer.asked), ran), (2, []))
+        self.assertTrue(r.startswith("not installed: the user cancelled at the scope step."))
+
 if __name__ == "__main__":
     unittest.main()

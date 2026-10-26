@@ -50,6 +50,8 @@ Helpers in this folder:
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
 | `NOT_SCANNED_PLUGIN` | `scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit` |
 | `NOT_SCANNED_MCP` | `scan: not scanned; the server runs what this command fetches when it starts, not this repo's files` |
+| `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)` |
+| `USER_OPTION` | `install at user (~/.codex/config.toml, every project)` |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
 
 `PLUGIN` and the MCP name `kirby-e2e` are chosen so the run does not touch anything the user already
@@ -163,13 +165,15 @@ What A9 covers, against the Codex server with scripted answers: H1 the dialog's 
 English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
 H2 the model's wording and the README / pick another / dismiss results; H3 unusable wording falls
 back to English with the reason; H4 cancel and dismiss at the scope step; H5 no project from Codex
-offers only `user`, with the reason; H6 a commit pushed while the scope dialog is open installs
+offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open installs
 nothing; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
 `exists:` line, failure without `force`, replacement with it, `project` leaving `.gitignore` alone;
-H9 a plugin's facts and `NOT_SCANNED_PLUGIN`; H10 an MCP server's command and `NOT_SCANNED_MCP`;
+H9 a plugin's facts, `NOT_SCANNED_PLUGIN` and `USER_ONLY`, the scope dialog's `USER_OPTION` running
+both commands, `cancel` there running none, also when dialog 1's options are out of order; H10 an MCP
+server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
 flagged line at the scanned commit and refusing `..`, an absolute path and a branch name. It
-installs nothing outside `$E2E/codex/h`: its plugin and MCP cases cancel at the scope step.
+installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run.
 
 FLAGGED, the scan lines for the fixture (the dialog shows these; the `exec` hits in `validate-*` follow
 the upstream files at the fixed commit):
@@ -373,7 +377,8 @@ as `mcp__kirby__<tool>`.
 
 Differences from Claude Code to expect: searches and reads are MCP calls (`mcp__kirby__stars`,
 `…public`, `…detect`, `…readme`, `…file`), not shell; skills go to `.agents/skills/`; plugins and MCP
-servers offer only `user`; dialog 1 for a plugin from a Claude Code marketplace adds
+servers install at `user` only, so their dialog 1 ends its facts with `USER_ONLY` and dialog 2's options
+are `cancel`, `USER_OPTION`; dialog 1 for a plugin from a Claude Code marketplace adds
 `marketplace: .claude-plugin/marketplace.json (Claude Code format)`; the install command is run with
 the server's own Python (`<PY>`, e.g. `/usr/bin/python3`) from the plugin cache (`<CACHE>` =
 `~/.codex/plugins/cache/kirby/kirby/0.1.0`); a refusal before any dialog (`not installed: <reason>`)
@@ -413,18 +418,18 @@ Install then `esc` → `not installed: the user dismissed the scope dialog.`
 Each followed by `SCAN_NOTE`; nothing written.
 
 **C8 Plugin (opt-in).** Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
-- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, `plugin: agent-sdk-dev`, `description: <PLUGIN_DESC>`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, `NOT_SCANNED_PLUGIN`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `user`.
+- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, `plugin: agent-sdk-dev`, `description: <PLUGIN_DESC>`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, `NOT_SCANNED_PLUGIN`, `USER_ONLY`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_PLUGIN`; `~/.codex/config.toml` unchanged.
-- Opted in: answer Install, `user`. Result starts
+- Opted in: answer Install, `USER_OPTION`. Result starts
   `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_PLUGIN`.
   `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]`.
   Cleanup at once: `codex plugin remove agent-sdk-dev@claude-plugins-official`; `codex plugin marketplace remove claude-plugins-official` (only if Setup found no such marketplace).
 
 **C9 MCP server (opt-in).** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: `mcp__kirby__readme` first; install with `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]`.
-- Dialog 1 facts: header, `MCP server: codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, `NOT_SCANNED_MCP`. Dialog 2 options `cancel`, `user`.
+- Dialog 1 facts: header, `MCP server: codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, `NOT_SCANNED_MCP`, `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_MCP`; `codex mcp list` unchanged.
-- Opted in: answer Install, `user`. Result first line exactly `installed (scope user): codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, then output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_MCP`.
+- Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, then output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_MCP`.
   `codex mcp get kirby-e2e` shows it. Cleanup at once: `codex mcp remove kirby-e2e`.
 
 **C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1 ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.

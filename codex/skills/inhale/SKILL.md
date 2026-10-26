@@ -74,7 +74,7 @@ Always pass `dialog`, the wording of both dialogs in the language the user write
 
 - For a plugin whose `marketplaceFile` is `.claude-plugin/marketplace.json`, say in `about` that parts made only for Claude Code (such as hooks) may not work in Codex.
 - The tool reads the answer by position, so `options` is always in that order and each label plainly says that action in the user's language. The four options differ from each other.
-- The scope dialog's options are `cancel` and the scopes on offer, fixed by the tool. `scope` is only the question, e.g. `要安裝到哪個範圍？`: do not explain the scopes in it or in `about`. A plugin or an MCP server offers only `user`, and so does a skill when Codex does not say which project the session is in.
+- The scope dialog's options are `cancel` and the scopes on offer, fixed by the tool. `scope` is only the question, e.g. `要安裝到哪個範圍？`: do not explain the scopes in it or in `about`. A plugin or an MCP server offers only `user`, and so does a skill when Codex does not say which project the session is in; then the tool adds an `installs at:` line to the first dialog's facts, and the scope dialog's options are `cancel` and one saying where it installs (e.g. `install at user (~/.codex/config.toml, every project)`), so `scope` asks the user to confirm, e.g. `確認要安裝嗎？`.
 - Limits: `next` 200 characters, `about` and `scope` 600, an option 40.
 - Without `dialog`, or when it is incomplete, the dialogs are in English and the result ends with a `note:` saying why; fix it on the next call.
 

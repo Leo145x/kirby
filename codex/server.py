@@ -3,9 +3,10 @@
 
 Codex starts it from the plugin root, outside the sandbox, so the searches reach GitHub without
 an approval prompt each time. `install` asks the user through MCP elicitation, first the next
-step and then the scope, and installs only after both. The dialogs show the facts the server
-found and the model's wording in the user's language (see dialog.py); what the tools answer is
-for the model, in English.
+step and then the scope, and installs only after both. Where `user` is the only scope (plugins and
+MCP servers), the first dialog says where it installs and the scope dialog's install option says it
+again in the server's words. The dialogs show the facts the server found and the model's wording in
+the user's language (see dialog.py); what the tools answer is for the model, in English.
 """
 import json
 import os
@@ -95,6 +96,12 @@ TOOLS = [
 PLUGIN_NOT_SCANNED = ("scan: not scanned; a plugin installs from its marketplace as it is when the install runs, "
                       "not pinned to a commit")
 MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
+# Where user is the only scope, the first dialog says where it goes, and the scope dialog's install option
+# says it again in the server's own words: a mislabelled first dialog cannot install without the user seeing it.
+USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
+SKILL_USER_ONLY = "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"
+USER_OPTION = "install at user (~/.codex/config.toml, every project)"
+SKILL_USER_OPTION = "install at user (~/.agents/skills/)"
 
 # install_skill.py prints its own next: line.
 AFTER = {
@@ -269,6 +276,8 @@ def preview(kind, a, project):
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
         lines += c["scan_lines"]
+        if not project:
+            lines.append(SKILL_USER_ONLY)
         # The commit shown is the one installed.
         return {"lines": lines, "scopes": SCOPES if project else ("user",), "scan": c["scan_note"], "commit": c["sha"]}
     if kind == "plugin":
@@ -289,13 +298,13 @@ def preview(kind, a, project):
             lines.append(f"description: {unit['description'][:160]}")
         if unit.get("marketplaceFile", "").startswith(".claude-plugin/"):
             lines.append(f"marketplace: {unit['marketplaceFile']} (Claude Code format)")
-        lines.append(PLUGIN_NOT_SCANNED)
+        lines += [PLUGIN_NOT_SCANNED, USER_ONLY]
         return {"lines": lines, "scopes": ("user",), "scan": PLUGIN_NOT_SCANNED, "marketplace": unit["marketplace"]}
     args = a.get("mcp_args")
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
     if not args:
         raise Refusal("kind=mcp needs mcp_args")
-    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}", MCP_NOT_SCANNED],
+    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}", MCP_NOT_SCANNED, USER_ONLY],
             "scopes": ("user",), "scan": MCP_NOT_SCANNED, "mcp_args": args}
 
 
@@ -347,12 +356,16 @@ def install(peer, a, meta):
     if nxt != go:
         return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}.{tail}"
 
-    only = ("\n\nonly user: Codex did not say which project this session is in"
-            if kind == "skill" and not project else "")
-    picked = peer.ask(f"{d['scope']}{only}", [CANCEL, *plan["scopes"]])
-    log(f"install {repo} ({kind}): scope {json.dumps(picked, ensure_ascii=False)}")
-    if picked not in plan["scopes"]:
-        return f"not installed: the user {'dismissed the scope dialog' if picked is None else 'cancelled at the scope step'}.{tail}"
+    # The scope dialog's options are the server's own, whatever the model wrote above.
+    if plan["scopes"] == ("user",):
+        labels = {"user": SKILL_USER_OPTION if kind == "skill" else USER_OPTION}
+    else:
+        labels = {s: s for s in plan["scopes"]}
+    answer = peer.ask(d["scope"], [CANCEL, *labels.values()])
+    picked = next((s for s, label in labels.items() if label == answer), None)
+    log(f"install {repo} ({kind}): scope {json.dumps(answer, ensure_ascii=False)}")
+    if picked is None:
+        return f"not installed: the user {'dismissed the scope dialog' if answer is None else 'cancelled at the scope step'}.{tail}"
 
     shown, outs = [], []
     for argv in commands(kind, a, picked, plan):
