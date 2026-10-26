@@ -5,9 +5,10 @@
 
 FIXTURE_DIR is a fresh `fixture.py init` directory; this script points git at it itself, because Codex
 does not pass a GIT_CONFIG_* redirect on to kirby's MCP server. PROJECT_DIR is an empty git repo the
-skill installs land in. Plugin and MCP cases stop at the scope dialog, so nothing outside PROJECT_DIR
-changes. Needs a logged-in gh (the repo header and the plugin lookup still go to GitHub). Prints PASS
-or FAIL per case and exits 1 if any case failed.
+skill installs land in. Commands that would install at user scope (plugins, MCP servers, a skill with
+no project) are recorded instead of run (see Held), so nothing outside PROJECT_DIR changes. Needs a
+logged-in gh (the repo header and the plugin lookup still go to GitHub). Prints PASS or FAIL per case
+and exits 1 if any case failed.
 """
 import json
 import os
@@ -39,6 +40,28 @@ class Peer:
         self.asked.append((question, list(options)))
         a = self.answers.pop(0)
         return a(options) if callable(a) else a
+
+
+class Held:
+    """In place of server.run: records the commands that would install at user scope (codex plugin/mcp,
+    install_skill.py --scope user) and runs the rest."""
+
+    def __init__(self):
+        self.argv, self.run = [], server.run
+
+    def __enter__(self):
+        server.run = self
+        return self
+
+    def __exit__(self, *_):
+        server.run = self.run
+
+    def __call__(self, argv, cwd=None):
+        if argv[0] == "codex" or ("--scope" in argv and argv[argv.index("--scope") + 1] == "user"
+                                  and "--check" not in argv):
+            self.argv.append(list(argv))
+            return True, "(held)"
+        return self.run(argv, cwd=cwd)
 
 
 def check(case, ok, detail: object = ""):
@@ -102,12 +125,15 @@ def main():
         check(f"H4 scope {answer!r}", p.asked[1] == ("裝在哪個範圍？", ["cancel", "local", "project", "user"])
               and r == f"not installed: the user {end}\n" + c["scan_note"], f"{p.asked[1]}\n      {r}")
 
-    # H5: no project from Codex -> only user, and the dialog says why.
-    p = Peer("安裝", "cancel")
-    server.install(p, {**skill, "dialog": ZH}, None)
-    check("H5 no project -> only user", p.asked[1] == (
-        "裝在哪個範圍？\n\nonly user: Codex did not say which project this session is in", ["cancel", "user"]),
-        p.asked[1])
+    # H5: no project from Codex -> only user: the first dialog says so and why, the scope dialog's one
+    # install option says where, and picking it installs there.
+    p = Peer("安裝", server.SKILL_USER_OPTION)
+    with Held() as held:
+        r = server.install(p, {**skill, "dialog": ZH}, None)
+    check("H5 no project -> only user", server.SKILL_USER_ONLY in p.asked[0][0]
+          and p.asked[1] == ("裝在哪個範圍？", ["cancel", server.SKILL_USER_OPTION])
+          and r.startswith("installed (scope user): ") and len(held.argv) == 1
+          and held.argv[0][-6:] == ["--scope", "user", "--agent", "codex", "--commit", c["sha"]], f"{p.asked}\n      {r}")
 
     # H6: a commit pushed while the scope dialog is open -> nothing installed.
     shown = c["sha"]
@@ -143,24 +169,45 @@ def main():
     check("H8 project scope leaves .gitignore alone",
           (project / ".gitignore").read_text().splitlines().count("/.agents/skills/security-audit/") == 1)
 
-    # H9: a plugin: facts, not-scanned line, user-only scope (cancelled there, so nothing is installed).
-    p = Peer("安裝", "cancel")
-    r = server.install(p, {"repo": "anthropics/claude-plugins-official", "kind": "plugin", "plugin": "agent-sdk-dev",
-                           "dialog": ZH}, meta)
+    # H9: a plugin: facts, not-scanned line, where it installs; the scope dialog's install option, in the
+    # server's words, runs the two commands; cancel there runs none, even when dialog 1's options are out of order.
+    plugin = {"repo": "anthropics/claude-plugins-official", "kind": "plugin", "plugin": "agent-sdk-dev", "dialog": ZH}
+    p = Peer("安裝", server.USER_OPTION)
+    with Held() as held:
+        r = server.install(p, plugin, meta)
     q = p.asked[0][0]
     check("H9 plugin facts", "plugin: agent-sdk-dev" in q
           and "description: Development kit for working with the Claude Agent SDK" in q
           and "marketplace: .claude-plugin/marketplace.json (Claude Code format)" in q
-          and server.PLUGIN_NOT_SCANNED in q, q)
-    check("H9 plugin scope + result", p.asked[1][1] == ["cancel", "user"]
-          and r == "not installed: the user cancelled at the scope step.\n" + server.PLUGIN_NOT_SCANNED, r)
-
-    # H10: an MCP server: the command, not-scanned line, user-only scope.
-    args = ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]
+          and f"{server.PLUGIN_NOT_SCANNED}\n{server.USER_ONLY}" in q, q)
+    check("H9 plugin: scope dialog, then install", p.asked[1] == ("裝在哪個範圍？", ["cancel", server.USER_OPTION])
+          and held.argv == [
+        ["codex", "plugin", "marketplace", "add", "anthropics/claude-plugins-official"],
+        ["codex", "plugin", "add", "agent-sdk-dev@claude-plugins-official"]]
+          and r.startswith("installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official\n")
+          and r.endswith("\nnext: The user starts a new Codex session to use it.\n" + server.PLUGIN_NOT_SCANNED), r)
     p = Peer("安裝", "cancel")
-    r = server.install(p, {"repo": "modelcontextprotocol/servers", "kind": "mcp", "mcp_args": args, "dialog": ZH}, meta)
-    check("H10 mcp facts + scope", f"MCP server: codex mcp add {' '.join(args)}\n{server.MCP_NOT_SCANNED}" in p.asked[0][0]
-          and p.asked[1][1] == ["cancel", "user"] and r.endswith("\n" + server.MCP_NOT_SCANNED), r)
+    with Held() as held:
+        r = server.install(p, plugin, meta)
+    check("H9 plugin cancel at scope", not held.argv
+          and r == "not installed: the user cancelled at the scope step.\n" + server.PLUGIN_NOT_SCANNED, r)
+    # The model put cancel last, so the user's 取消 reads as install; the scope dialog still stops it.
+    p = Peer("取消", "cancel")
+    with Held() as held:
+        r = server.install(p, {**plugin, "dialog": {**ZH, "options": ["安裝", "先讀 README", "換一個", "取消"]}}, meta)
+    check("H9 options out of order -> scope dialog still asks", len(p.asked) == 2 and not held.argv
+          and r.startswith("not installed: the user cancelled at the scope step."), r)
+
+    # H10: an MCP server: the command, not-scanned line, where it installs.
+    args = ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]
+    p = Peer("安裝", server.USER_OPTION)
+    with Held() as held:
+        r = server.install(p, {"repo": "modelcontextprotocol/servers", "kind": "mcp", "mcp_args": args, "dialog": ZH}, meta)
+    check("H10 mcp facts, scope dialog, then install",
+          f"MCP server: codex mcp add {' '.join(args)}\n{server.MCP_NOT_SCANNED}\n{server.USER_ONLY}" in p.asked[0][0]
+          and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *args]]
+          and r == f"installed (scope user): codex mcp add {' '.join(args)}\n(held)\n"
+                   f"next: The user starts a new Codex session to use it.\n{server.MCP_NOT_SCANNED}", r)
 
     # H11: refusals before any dialog.
     for case, a, want in [

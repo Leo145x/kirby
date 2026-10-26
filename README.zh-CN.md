@@ -102,7 +102,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 | `project` | 项目的 `.agents/skills/`，会进 git | — | — |
 | `user` | `~/.agents/skills/` | `codex plugin add`（`~/.codex/config.toml`） | `codex mcp add`（`~/.codex/config.toml`） |
 
-`codex plugin add` 和 `codex mcp add` 没有 scope 参数，所以 plugin 和 MCP 只能装在 user。如果 Codex 没有提供 session 所在的项目，skill 也只能选 `user`。
+`codex plugin add` 和 `codex mcp add` 没有 scope 参数，所以 plugin 和 MCP 只能装在 user。如果 Codex 没有提供 session 所在的项目，skill 也只能选 `user`。这些情况下，第一层对话框会多一行说明装到哪里（`installs at: user …`）；scope 对话框的选项是 `cancel` 和 `install at user (…)`，相当于用 tool 自己写的文字再确认一次。
 
 装完后，开新的 Codex session 才能使用。
 
