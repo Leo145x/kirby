@@ -7,7 +7,7 @@ description: Recommend agent skills, plugins or MCP servers from the user's own 
 
 The user curates agent tooling by starring repos on GitHub and grouping them into star lists. Instead of installing everything up front, find the right repo when it is needed and install it where the user chooses.
 
-**Tools.** Everything goes through the tools of the `kirby` MCP server: `stars`, `public`, `detect`, `readme` and `install`. They run outside the sandbox, so do not call GitHub with shell commands, and do not run the Python scripts in this plugin yourself. If a tool fails with `Is \`gh auth login\` done?`, tell the user to run `gh auth login` in a terminal.
+**Tools.** Everything goes through the tools of the `kirby` MCP server: `stars`, `public`, `detect`, `readme`, `file` and `install`. They run outside the sandbox, so do not call GitHub with shell commands, and do not run the Python scripts in this plugin yourself. If a tool fails with `Is \`gh auth login\` done?`, tell the user to run `gh auth login` in a terminal.
 
 ## 0. Pick the source
 
