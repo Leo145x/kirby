@@ -240,7 +240,8 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
-        return {"lines": lines, "scopes": SCOPES if project else ("user",)}
+        # The commit shown is the one installed.
+        return {"lines": lines, "scopes": SCOPES if project else ("user",), "commit": c["sha"]}
     if kind == "plugin":
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
@@ -271,7 +272,7 @@ def preview(kind, a, project):
 def commands(kind, a, scope, plan):
     if kind == "skill":
         argv = [sys.executable, "-I", str(SCRIPTS / "install_skill.py"), a["repo"], a["folder"],
-                "--scope", scope, "--agent", "codex"]
+                "--scope", scope, "--agent", "codex", "--commit", plan["commit"]]
         return [argv + ["--force"] if a.get("force") is True else argv]
     if kind == "plugin":
         return [["codex", "plugin", "marketplace", "add", a["repo"]],

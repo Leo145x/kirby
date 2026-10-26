@@ -92,4 +92,5 @@ Act on the result:
 - `not installed: … a different one`: ask which other recommendation to look at.
 - `not installed: … cancelled` / `dismissed`: stop.
 - `installed (scope …)`: report exactly what was added and where, the `next:` line, and how to remove it (delete the skill folder; `claude plugin uninstall <plugin> --scope <scope>`; `claude mcp remove --scope <scope> <name>`). If a plugin install says a `userConfig` option is not set, tell the user to run `/plugin configure <plugin>@<marketplace>`.
+- `install failed` with `has moved on`: the repo got a new commit after the user saw the dialog, so nothing was installed. Say so; call the install tool again only if the user still wants it, so they see the new commit.
 - `install failed`: show the output; do not retry with other flags unasked.

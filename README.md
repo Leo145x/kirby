@@ -69,6 +69,8 @@ Once you pick a repo, the mod shows two dialogs:
 
 Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
+A skill installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing is installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. Plugins and MCP servers are not pinned: a plugin comes from its marketplace as it is when the install runs, and an MCP server runs whatever its command fetches when it starts, such as `npx -y <package>`.
+
 The model writes the dialogs' wording in the language you write in, in the format the skill gives. The facts above it (repo, stars, commit, files, scripts, an existing folder) and the prompt-cache note below the scope question come from the tool, in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing or incomplete, the dialogs are in English.
 
 ### Installs and the prompt cache
@@ -115,7 +117,7 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `stars.py` | Reads your stars and star lists (GraphQL), cached in `~/.cache/kirby/stars.json` for 24 hours |
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
-| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed. Called by the mod and the Codex MCP server |
+| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed; `--commit` installs only the commit the dialog showed. Called by the mod and the Codex MCP server |
 
 `detect.py --agent codex` looks for Codex marketplaces (`.agents/plugins/marketplace.json`) first; `install_skill.py --agent codex` installs into `.agents/skills/`.
 

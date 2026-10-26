@@ -2,7 +2,7 @@
 """Copy one skill folder from a GitHub repo into a skills directory.
 
     install_skill.py owner/repo path/to/skill-folder --scope project --check   # what would be installed
-    install_skill.py owner/repo path/to/skill-folder --scope local|project|user [--force]
+    install_skill.py owner/repo path/to/skill-folder --scope local|project|user [--commit SHA] [--force]
     install_skill.py owner/repo path/to/skill-folder --scope user --agent codex
 
 Scopes: project and local install into this project's .claude/skills/ (local also adds the
@@ -10,7 +10,8 @@ folder to .gitignore); user installs into ~/.claude/skills/. With --agent codex 
 directories are .agents/skills/ and ~/.agents/skills/ instead. Use "." as the folder when
 SKILL.md is at the repo root. The installed folder is named after the skill's frontmatter
 `name` (falling back to the source folder's name). The source commit is recorded in
-<skills dir>/<name>/.kirby.json.
+<skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) nothing is
+installed unless the repo's HEAD is still that commit, so the user gets what they were shown.
 """
 import argparse
 import json
@@ -32,6 +33,7 @@ NEXT = {
 }
 VALID_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 VALID_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+VALID_SHA = re.compile(r"^[0-9a-f]{40}$")
 SCRIPT = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl", ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts")
 
 
@@ -82,6 +84,7 @@ def main():
     ap.add_argument("--scope", choices=SCOPES, required=True, help="local, project or user (see above)")
     ap.add_argument("--agent", choices=DESTS, default="claude", help="whose skills directories to use (default claude)")
     ap.add_argument("--check", action="store_true", help="say what would be installed, write nothing")
+    ap.add_argument("--commit", metavar="SHA", help="install only if HEAD is still this commit (full sha)")
     ap.add_argument("--force", action="store_true", help="replace an existing skill of the same name")
     ap.add_argument("--json", action="store_true", help="with --check, print the summary as JSON")
     args = ap.parse_args()
@@ -90,6 +93,8 @@ def main():
     folder = args.folder.strip("/") or "."
     if ".." in folder.split("/"):
         sys.exit(f"folder may not leave the repo: {args.folder!r}")
+    if args.commit is not None and not VALID_SHA.match(args.commit):
+        sys.exit(f"--commit needs a full 40-character sha: {args.commit!r}")
 
     with tempfile.TemporaryDirectory() as tmp:
         # No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
@@ -107,12 +112,15 @@ def main():
         name = declared if declared and VALID_NAME.match(declared) else fallback
         target = DESTS[args.agent][args.scope] / name
         sha = git("rev-parse", "HEAD", cwd=tmp)
+        if args.commit and sha != args.commit:
+            sys.exit(f"{args.repo} has moved on: HEAD is now {sha[:7]}, not {args.commit[:7]} as shown to the user; "
+                     "nothing installed")
         files = listing(src)
         exists = target.exists()
 
         if args.check and args.json:
             print(json.dumps({
-                "repo": args.repo, "folder": folder, "name": name, "commit": sha[:7], "target": str(target),
+                "repo": args.repo, "folder": folder, "name": name, "commit": sha[:7], "sha": sha, "target": str(target),
                 "exists": exists, "files": len(files), "scripts": [f for f in files if f.endswith(SCRIPT)],
             }, ensure_ascii=False))
             return

@@ -76,8 +76,11 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
   )
 }
 
-// The facts about what the install would do, and the prompt-cache note for the scope dialog.
-async function preview($: $, kind: Kind, input: Input): Promise<{ lines: string; cache: string }> {
+// The facts about what the install would do, the prompt-cache note for the scope dialog, and for a
+// skill the commit shown, which is the one installed.
+type Plan = { lines: string; cache: string; commit?: string }
+
+async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   const repo = String(input.repo)
   const scripts = `${$.plugin.root}/skills/inhale/scripts`
   if (kind === 'skill') {
@@ -85,13 +88,13 @@ async function preview($: $, kind: Kind, input: Input): Promise<{ lines: string;
     if (!folder) throw new Refusal('kind=skill needs folder')
     const r = await run($, ['python3', '-I', `${scripts}/install_skill.py`, repo, folder, '--scope', 'project', '--check', '--json'])
     if (!r.ok) throw new Refusal(r.out)
-    const c = JSON.parse(r.out) as { name: string; commit: string; files: number; scripts: string[]; exists: boolean }
+    const c = JSON.parse(r.out) as { name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    return { lines: lines.join('\n'), cache: '' }
+    return { lines: lines.join('\n'), cache: '', commit: c.sha }
   }
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
@@ -117,10 +120,10 @@ async function preview($: $, kind: Kind, input: Input): Promise<{ lines: string;
   return { lines: `MCP server: claude mcp add --scope <scope> ${args.join(' ')}`, cache: '' }
 }
 
-function command($: $, kind: Kind, input: Input, scope: Scope): string[] {
+function command($: $, kind: Kind, input: Input, scope: Scope, plan: Plan): string[] {
   const repo = String(input.repo)
   if (kind === 'skill') {
-    const argv = ['python3', '-I', `${$.plugin.root}/skills/inhale/scripts/install_skill.py`, repo, String(input.folder), '--scope', scope]
+    const argv = ['python3', '-I', `${$.plugin.root}/skills/inhale/scripts/install_skill.py`, repo, String(input.folder), '--scope', scope, '--commit', String(plan.commit)]
     return input.force === true ? [...argv, '--force'] : argv
   }
   if (kind === 'plugin') return ['claude', 'plugin', 'install', String(input.plugin), '--marketplace', repo, '--scope', scope]
@@ -143,7 +146,7 @@ async function install($: $, input: Input): Promise<string> {
   const note = problem ? `\nnote: the dialogs were in English because ${problem}; pass dialog as the inhale skill describes.` : ''
 
   let header: string
-  let plan: { lines: string; cache: string }
+  let plan: Plan
   try {
     header = await repoHeader($, repo)
     plan = await preview($, kind, input)
@@ -169,7 +172,7 @@ async function install($: $, input: Input): Promise<string> {
   const scope = SCOPES.find(s => s === picked)
   if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${note}`
 
-  const argv = command($, kind, input, scope)
+  const argv = command($, kind, input, scope, plan)
   const r = await run($, argv)
   const shown = argv.map(a => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')
   if (!r.ok) return `install failed (scope ${scope}): ${shown}\n${r.out}${note}`

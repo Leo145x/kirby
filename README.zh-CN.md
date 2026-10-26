@@ -69,6 +69,8 @@ codex plugin add kirby@kirby
 
 无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
 
+skill 只会安装对话框显示的那个 commit。如果在实际安装前 repo 有了新的 commit，就不会安装；模型会告诉你，你仍然想装的话，它会重新弹出对话框，显示新的 commit。plugin 和 MCP server 没有锁定版本：plugin 安装的是安装时 marketplace 里的版本，MCP server 则是每次启动时运行它的命令所获取的代码，例如 `npx -y <package>`。
+
 对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
 
 ### 安装与 prompt cache
@@ -115,7 +117,7 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容，不会写入。由 mod 和 Codex 的 MCP server 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容，不会写入；`--commit` 只安装对话框显示的那个 commit。由 mod 和 Codex 的 MCP server 调用 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。
 
