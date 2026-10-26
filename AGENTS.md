@@ -15,6 +15,19 @@ python3 -B -m unittest discover -s tests
 
 `claude plugin test .` runs `tests/dialog.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py` and `tests/test_install_skill.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
 
+## Before Every Commit
+
+1. **Run the tests for every supported agent CLI.** kirby currently supports Claude Code and Codex; a commit is made only after the tests of both pass. Always run the unit tests of both. Then run the end-to-end cases in `tests/e2e/RUNBOOK.md` that exercise what the commit changes, on every agent CLI the change reaches. How many cases that takes depends on the change, not on a fixed level: pick the cases that would fail if the change were wrong.
+
+   | Agent CLI | Unit tests (always) | End-to-end cases to pick from (`tests/e2e/RUNBOOK.md`) |
+   |-----------|-------|------------|
+   | Claude Code | `claude plugin validate .`, `claude plugin test .` | section A + section B |
+   | Codex | `python3 -B -m unittest discover -s tests` (`tests/test_codex.py`, plus `tests/test_install_skill.py` for the shared scripts) | section A + section C |
+
+   When kirby adds support for another agent CLI, add a row for it here, its tests to the Tests section, and its section to `tests/e2e/RUNBOOK.md` (see Adding an agent CLI there).
+
+2. **Then check the READMEs.** Read `README.md`, `README.zh-TW.md` and `README.zh-CN.md` for any new feature in the commit that they do not mention yet, and add it to all three. A bug fix does not get its own entry; add only what other people need to know about it (for example, a changed behaviour or a step they now have to take).
+
 ## Tool Change Checklist
 
 kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__install`, and the Codex MCP server provides `stars`, `public`, `detect`, `readme`, `file` and `install`. Whenever a tool is added, removed or renamed, or its parameters change, update all of these files together:

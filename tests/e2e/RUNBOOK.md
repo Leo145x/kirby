@@ -1,9 +1,19 @@
 # kirby end-to-end runbook (herdr)
 
-A Claude Code session running inside herdr follows this file to drive Claude Code and Codex in panes
-beside it, exercise every kirby feature, and check each output against what the code produces. The
-unit tests (`python3 -m unittest discover -s tests`, `claude plugin test .`) cover the pure parts;
-this covers the dialogs, the installs and what the model does with the results.
+A Claude Code session running inside herdr follows this file to drive each supported agent CLI in a
+pane beside it, exercise every kirby feature, and check each output against what the code produces.
+The unit tests (`python3 -m unittest discover -s tests`, `claude plugin test .`) cover the pure
+parts; this covers the dialogs, the installs and what the model does with the results.
+
+The agent CLIs, one section each:
+
+| Section | Agent CLI | Pane |
+| --- | --- | --- |
+| B | Claude Code | `C` |
+| C | Codex | `X` |
+
+Section A needs no pane. Which cases to run for a change: `AGENTS.md`, Before Every Commit. Open a
+pane only for the agent CLIs whose cases you run.
 
 Helpers in this folder:
 
@@ -14,16 +24,21 @@ Helpers in this folder:
 | `codex_server.py` | Drives the Codex MCP server's `install()` and `file()` with scripted dialog answers and checks each result exactly (H1–H12), for what the Codex UI cannot reach. |
 | `scripts_check.py` | Checks the output format of `stars.py`, `public.py` and `detect.py` against live GitHub (S1–S6). |
 
+## Adding an agent CLI
+
+Give it a section after the last one, with the same parts in the same order: **Setup** (version
+command, what its run writes outside `$E2E`, the starting state to record, what must be absent,
+how kirby is loaded, its projects), **Driving** (start, trust prompt, sending a prompt, exit,
+dialogs), the cases, and **Cleanup**. Add it to the table above and to `AGENTS.md`, Before Every
+Commit. The shared parts below stay as they are.
+
 ## Ground rules
 
 - Run only inside herdr (`test "$HERDR_ENV" = 1`). Work only in a fresh scratch directory, called
   `$E2E` below; never in a real project.
-- **This run changes the user's real Claude Code and Codex setup.** Skills at `local` and
-  `project` scope land in `$E2E`, but a Claude Code MCP server at `local` scope is recorded in
-  `~/.claude.json`, kirby itself is added to Codex as a marketplace and plugin, and Codex installs
-  every plugin and MCP server at user scope, in `~/.codex/config.toml`. So record the
-  starting state (Setup, step 2) before anything else, and compare with it at the end (Cleanup)
-  even when the run stops early.
+- **This run changes the user's real agent CLI setup.** Each CLI's Setup says what its run writes
+  outside `$E2E`. So record the starting state (Setup, step 2) before anything else, and compare
+  with it at the end (Cleanup) even when the run stops early.
 - **Cases marked (opt-in) install at user scope.** Ask the user once, before starting, whether to
   run them. Without a yes, take the case's default path: it checks the same dialogs and ends at the
   scope step with `cancel`, so nothing is installed.
@@ -50,9 +65,9 @@ Helpers in this folder:
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
 | `NOT_SCANNED_PLUGIN` | `scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit` |
 | `NOT_SCANNED_MCP` | `scan: not scanned; the server runs what this command fetches when it starts, not this repo's files` |
-| `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)` |
-| `USER_OPTION` | `install at user (~/.codex/config.toml, every project)` |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
+
+Constants only one agent CLI uses are in its section.
 
 `PLUGIN` and the MCP name `kirby-e2e` are chosen so the run does not touch anything the user already
 has: check in Setup that neither is installed. Also check that `detect.py` still reports `PLUGIN`
@@ -82,36 +97,20 @@ flagged: exec ×2 (validate-coverage-ledger.test.cjs:5, validate-findings.test.c
 
 ## Driving the panes
 
-These came out of running this by hand; each one cost a retest.
+These came out of running this by hand; each one cost a retest. Each CLI's Driving adds what is
+particular to it: how to start, answer the trust prompt, send a prompt, exit, and read its dialogs.
 
-- **Layout.** Split once to the right for Claude Code (pane `C`), then split `C` down for Codex
-  (pane `X`): `herdr pane split --current --direction right --cwd <dir> --no-focus`, then
-  `herdr pane split <C> --direction down --cwd <dir> --no-focus`. Read the IDs from
-  `.result.pane.pane_id`. Wait for the shell prompt before the first `pane run`.
-- **Start Claude Code** with the kirby under test, from the case's project directory:
-  `herdr pane run <C> "cd <P> && claude --plugin-dir $KIRBY"`. **With the fixture**, start it in a
-  subshell so the git redirect does not stay in that pane's shell:
-  `herdr pane run <C> "cd <P> && (. $E2E/fx/env.sh && claude --plugin-dir $KIRBY)"`.
-- **Start Codex**: `herdr pane run <X> "cd <P> && codex"`. Codex loads kirby from the plugin cache
-  (see Setup), not from `$KIRBY`.
+- **Layout.** One pane per agent CLI under test. Split the first one to the right
+  (`herdr pane split --current --direction right --cwd <dir> --no-focus`) and each further one
+  down from the one before (`herdr pane split <previous> --direction down --cwd <dir> --no-focus`).
+  Read the IDs from `.result.pane.pane_id`. Wait for the shell prompt before the first `pane run`.
 - **Trust prompts** come for every new directory and can appear a few seconds after the input box
-  looked ready. Claude Code: wait for `trust this folder`, send `down`, wait until the screen shows
-  `❯ Yes, I trust this folder`, then `enter`. Codex: wait for `Trust and continue`, then `enter`.
-  Before typing a prompt, wait about 8 seconds and read the screen again.
-- **Sending a prompt.** Claude Code: `herdr agent prompt <C> "<text>" --wait --timeout 300000`.
-  Codex: `herdr pane send-text <X> "<text>"`, wait until the end of the text shows on screen, then
-  `herdr pane send-keys <X> enter` on its own (an Enter sent with the text is swallowed). Confirm
-  the agent went `working`.
-- **Never `pane run` while an agent is in the foreground**: the text becomes a prompt. Exit Claude
-  Code with `/exit` (send-text, wait for it to show, Enter; `ctrl+c` does not exit it) and Codex
-  with `ctrl+c ctrl+c`; wait for `claude --resume` or `Token usage` before the next `pane run`.
-- **Claude Code's input box can show a suggested reply** (greyed, e.g. `好，繼續安裝`). It is not
-  typed; never press Enter on an input box you did not fill.
-- **Dialogs.** Claude Code numbers the options with `❯` on the selected one; Codex with `›`. The
-  first option (cancel) is selected when a dialog opens. Move with `down`, then read the screen and
-  check the marker is on the intended option before `enter`. `esc` dismisses. Claude Code adds
-  `Type something.` and `Chat about this` below kirby's options; they are not kirby's.
-- **Reading a dialog.** Panes are narrow and wrap. Zoom (`herdr pane zoom <C>`), read
+  looked ready. Before typing a prompt, wait about 8 seconds and read the screen again.
+- **Never `pane run` while an agent is in the foreground**: the text becomes a prompt. Exit the
+  agent as its Driving says and wait for its exit text before the next `pane run`.
+- **Dialogs.** The first option (cancel) is selected when a dialog opens. Move with `down`, then read
+  the screen and check the marker is on the intended option before `enter`. `esc` dismisses.
+- **Reading a dialog.** Panes are narrow and wrap. Zoom (`herdr pane zoom <pane>`), read
   `--source visible`, zoom again to restore. Strip the leading `│ ` and join wrapped lines before
   comparing.
 - **herdr's agent status** can lag or read `blocked` on a trust prompt or a dialog; trust the screen.
@@ -119,28 +118,19 @@ These came out of running this by hand; each one cost a retest.
 
 ## Setup
 
-1. `test "$HERDR_ENV" = 1`; `gh auth status`; record `claude --version`, `codex --version`,
-   `herdr --version` and `git -C $KIRBY rev-parse HEAD`.
+1. `test "$HERDR_ENV" = 1`; `gh auth status`; record `herdr --version`,
+   `git -C $KIRBY rev-parse HEAD` and the version of each agent CLI under test (its Setup).
 2. **Record the starting state** in `$E2E/before/` (save command output with a file tool; copy
-   files with `cp`). Run the commands from `$E2E`:
-   - `claude plugin list`, `claude plugin marketplace list`, `claude mcp list`
-   - `codex mcp list`, `codex plugin marketplace list`
-   - `ls -A ~/.claude/skills ~/.agents/skills`
-   - `cp ~/.claude/settings.json $E2E/before/claude-settings.json`;
-     `cp ~/.codex/config.toml $E2E/before/codex-config.toml`
-
-   Then check nothing the run would add is already there: no `security-audit` in either skills
-   folder; no `agent-sdk-dev`, `context7` or `kirby-e2e` in the lists; no `kirby` marketplace in
-   Codex. Anything present: note it and skip the cases that would install or remove it.
-3. Make the projects, each its own git repo: `$E2E/claude/p`, `$E2E/codex/p`, `$E2E/codex/h`, and
+   files with `cp`). Run the commands from `$E2E`: those in each CLI's Setup. Then check nothing
+   the run would add is already there (each CLI's Setup lists it). Anything present: note it and
+   skip the cases that would install or remove it.
+3. Make the projects, each its own git repo: `$E2E/codex/h` for A9, those in each CLI's Setup, and
    later ones as the cases say (`git init -q <dir>`).
 4. Build the fixture: `python3 -I $KIRBY/tests/e2e/fixture.py init $E2E/fx`. Record `FX_SHA`.
-5. Load kirby into Codex: `codex plugin marketplace add $KIRBY`, `codex plugin add kirby@kirby`.
-   Check the cache has this checkout: `diff -rq $KIRBY/codex ~/.codex/plugins/cache/kirby/kirby/0.1.0/codex`
-   (only `__pycache__` may differ). After any change to kirby, remove and add it again.
-6. Open the panes (Driving the panes).
+5. Load kirby into each agent CLI under test, as its Setup says.
+6. Open the panes (Driving the panes, and each CLI's Driving).
 
-To reset a project between cases: `git -C <P> clean -fdxq` (removes `.claude/`, `.agents/` and
+To reset a project between cases: `git -C <P> clean -fdxq` (removes the skill folders and
 `.gitignore` changes a case made).
 
 **If the run stops early** (an error, the user stops it, the session ends), go straight to Cleanup
@@ -148,18 +138,20 @@ before anything else; it lists every place a case can leave something behind.
 
 ## A. Without panes
 
-| ID | Run | Expect |
-| --- | --- | --- |
-| A1 | `python3 -m unittest discover -s tests` in `$KIRBY` | ends with `OK` |
-| A2 | `claude plugin test $KIRBY` | `0 fail` |
-| A3 | `claude plugin validate $KIRBY` | `✔ Validation passed with warnings`; the warnings are only `ICON_MISSING` and the marketplace's missing `description` |
-| A4 | from `$KIRBY`: `printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{}}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \| python3 -B ./codex/server.py` (not `-I`: the server imports `dialog` from its folder) | id 1: `serverInfo` `{"name": "kirby", "version": "0.1.0"}`; id 2: tool names exactly `stars, public, detect, readme, file, install` |
-| A5 | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
-| A6 | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
-| A7 | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
-| A8 | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below) |
-| A9 | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
-| A10 | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
+`For` names the agent CLI a case checks; `both` means the scripts both use.
+
+| ID | For | Run | Expect |
+| --- | --- | --- | --- |
+| A1 | both | `python3 -m unittest discover -s tests` in `$KIRBY` | ends with `OK` |
+| A2 | Claude Code | `claude plugin test $KIRBY` | `0 fail` |
+| A3 | Claude Code | `claude plugin validate $KIRBY` | `✔ Validation passed with warnings`; the warnings are only `ICON_MISSING` and the marketplace's missing `description` |
+| A4 | Codex | from `$KIRBY`: `printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{}}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \| python3 -B ./codex/server.py` (not `-I`: the server imports `dialog` from its folder) | id 1: `serverInfo` `{"name": "kirby", "version": "0.1.0"}`; id 2: tool names exactly `stars, public, detect, readme, file, install` |
+| A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
+| A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
+| A7 | both | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
+| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below) |
+| A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
+| A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
 
 What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and scan lines,
 English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
@@ -168,7 +160,7 @@ back to English with the reason; H4 cancel and dismiss at the scope step; H5 no 
 offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open installs
 nothing; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
 `exists:` line, failure without `force`, replacement with it, `project` leaving `.gitignore` alone;
-H9 a plugin's facts, `NOT_SCANNED_PLUGIN` and `USER_ONLY`, the scope dialog's `USER_OPTION` running
+H9 a plugin's facts, `NOT_SCANNED_PLUGIN` and `USER_ONLY` (section C), the scope dialog's `USER_OPTION` running
 both commands, `cancel` there running none, also when dialog 1's options are out of order; H10 an MCP
 server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
@@ -212,6 +204,38 @@ scan: the dialog showed the user these pattern hits in cloudflare/security-audit
 ```
 
 ## B. Claude Code (pane C)
+
+### Setup
+
+- Version: `claude --version`.
+- Writes outside `$E2E`: skills at `local` and `project` scope land in `$E2E`, but a Claude Code MCP
+  server at `local` scope is recorded in `~/.claude.json`, a plugin's marketplace in the user
+  settings (B17), and B7 (opt-in) installs into `~/.claude/skills`.
+- Starting state, from `$E2E`: `claude plugin list`, `claude plugin marketplace list`,
+  `claude mcp list`, `ls -A ~/.claude/skills`;
+  `cp ~/.claude/settings.json $E2E/before/claude-settings.json`.
+- Must be absent: `security-audit` in `~/.claude/skills`; `agent-sdk-dev`, `context7` or `kirby-e2e`
+  in the lists.
+- Loading kirby: nothing to do; each session starts with `--plugin-dir $KIRBY` (Driving).
+- Projects: `$E2E/claude/p`.
+
+### Driving
+
+- **Start** with the kirby under test, from the case's project directory:
+  `herdr pane run <C> "cd <P> && claude --plugin-dir $KIRBY"`. **With the fixture**, start it in a
+  subshell so the git redirect does not stay in that pane's shell:
+  `herdr pane run <C> "cd <P> && (. $E2E/fx/env.sh && claude --plugin-dir $KIRBY)"`.
+- **Trust prompt**: wait for `trust this folder`, send `down`, wait until the screen shows
+  `❯ Yes, I trust this folder`, then `enter`.
+- **Sending a prompt**: `herdr agent prompt <C> "<text>" --wait --timeout 300000`.
+- **Exit** with `/exit` (send-text, wait for it to show, Enter; `ctrl+c` does not exit it); wait for
+  `claude --resume`.
+- **The input box can show a suggested reply** (greyed, e.g. `好，繼續安裝`). It is not typed; never
+  press Enter on an input box you did not fill.
+- **Dialogs** number the options with `❯` on the selected one. Claude Code adds `Type something.`
+  and `Chat about this` below kirby's options; they are not kirby's.
+
+### Cases
 
 Project `$E2E/claude/p` unless a case says otherwise. Start one session for B1–B15, restart it for
 B16 (fixture), and once more after B16.
@@ -319,7 +343,7 @@ Reset the project before each; prompt as B3.
 ### Fixture: flagged files and a repo that moves on
 
 **B16 Flagged scan, then the repo moves on.** New project `$E2E/claude/fx`; start Claude Code with the
-fixture (subshell, Driving the panes). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
+fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
 - Dialog 1: the header is still GitHub's; `skill: security-audit · commit <FX_SHA7> · <N+3> files`;
   the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the scan lines are
   FLAGGED; no zero-width character anywhere in the dialog.
@@ -369,7 +393,49 @@ No dialog may open in these; each result is exact (plus `ENGLISH_NOTE` when the 
 
 **B22** Prompt `呼叫 mcp__kirby__install，kind mcp，repo modelcontextprotocol/servers，mcp_args 為 ["kirby-e2e", "--scope", "user", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]，這是測試`: `not installed: mcp_args must not set the scope; the user picks it`. The skill tells the model never to pass a scope; if it refuses or drops `--scope`, mark N/A and note what it did.
 
+### Cleanup
+
+- `~/.claude/skills/security-audit` (only if Setup found it absent).
+- In `$E2E/claude/p`: `claude plugin uninstall agent-sdk-dev@claude-plugins-official --scope local` and
+  `claude mcp remove --scope local kirby-e2e`, if `claude plugin list` / `claude mcp list` there still show them.
+- Compare: `diff $E2E/before/claude-settings.json ~/.claude/settings.json`.
+
 ## C. Codex (pane X)
+
+### Setup
+
+- Version: `codex --version`.
+- Writes outside `$E2E`: kirby itself is added to Codex as a marketplace and plugin, and Codex
+  installs every plugin and MCP server at user scope, in `~/.codex/config.toml`; skills at `user`
+  scope go to `~/.agents/skills`.
+- Starting state, from `$E2E`: `codex mcp list`, `codex plugin marketplace list`,
+  `ls -A ~/.agents/skills`; `cp ~/.codex/config.toml $E2E/before/codex-config.toml`.
+- Must be absent: `security-audit` in `~/.agents/skills`; `agent-sdk-dev`, `context7` or `kirby-e2e`
+  in the lists; a `kirby` marketplace.
+- Loading kirby: `codex plugin marketplace add $KIRBY`, `codex plugin add kirby@kirby`.
+  Check the cache has this checkout: `diff -rq $KIRBY/codex ~/.codex/plugins/cache/kirby/kirby/0.1.0/codex`
+  (only `__pycache__` may differ). After any change to kirby, remove and add it again.
+- Projects: `$E2E/codex/p`.
+
+Constants only Codex uses:
+
+| Name | Value |
+| --- | --- |
+| `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)` |
+| `USER_OPTION` | `install at user (~/.codex/config.toml, every project)` |
+
+### Driving
+
+- **Start**: `herdr pane run <X> "cd <P> && codex"`. Codex loads kirby from the plugin cache
+  (Setup), not from `$KIRBY`.
+- **Trust prompt**: wait for `Trust and continue`, then `enter`.
+- **Sending a prompt**: `herdr pane send-text <X> "<text>"`, wait until the end of the text shows on
+  screen, then `herdr pane send-keys <X> enter` on its own (an Enter sent with the text is
+  swallowed). Confirm the agent went `working`.
+- **Exit** with `ctrl+c ctrl+c`; wait for `Token usage`.
+- **Dialogs** number the options with `›` on the selected one.
+
+### Cases
 
 Project `$E2E/codex/p` unless a case says otherwise. Check results with
 `python3 -I $KIRBY/tests/e2e/transcript.py codex <P> --tool install --last 1`; Codex's MCP calls appear
@@ -440,23 +506,24 @@ A9 covers, through `codex_server.py`, what the Codex UI cannot: the fixture (Cod
 `GIT_CONFIG_*` to its MCP server), a commit pushed while a dialog is open, a session with no project,
 a client without elicitation, and unusable dialog wording.
 
+### Cleanup
+
+- `~/.agents/skills/security-audit` (only if Setup found it absent).
+- `codex plugin remove agent-sdk-dev@claude-plugins-official`, `codex mcp remove kirby-e2e`, and
+  `codex plugin marketplace remove claude-plugins-official` if Setup did not have it.
+- `codex plugin remove kirby@kirby`; `codex plugin marketplace remove kirby`; remove `~/.codex/plugins/cache/kirby` if left empty.
+- Compare: `diff $E2E/before/codex-config.toml ~/.codex/config.toml`. Codex adds a
+  `[projects."<dir>"]` trust entry for each test directory; remove only those.
+
 ## Cleanup
 
 Run all of it, also after a run that stopped early.
 
-1. Exit both agents; close panes `C` and `X` (`herdr pane close <id>`).
-2. Remove what the cases may have added, and check each is gone:
-   - `~/.claude/skills/security-audit`, `~/.agents/skills/security-audit` (only if Setup found them absent)
-   - in `$E2E/claude/p`: `claude plugin uninstall agent-sdk-dev@claude-plugins-official --scope local` and
-     `claude mcp remove --scope local kirby-e2e`, if `claude plugin list` / `claude mcp list` there still show them
-   - `codex plugin remove agent-sdk-dev@claude-plugins-official`, `codex mcp remove kirby-e2e`, and
-     `codex plugin marketplace remove claude-plugins-official` if Setup did not have it
-   - `codex plugin remove kirby@kirby`; `codex plugin marketplace remove kirby`; remove `~/.codex/plugins/cache/kirby` if left empty
-3. **Compare with the starting state**: run the commands of Setup step 2 again from `$E2E` and diff
-   each against `$E2E/before/`; `diff $E2E/before/claude-settings.json ~/.claude/settings.json`;
-   `diff $E2E/before/codex-config.toml ~/.codex/config.toml`. Codex adds a `[projects."<dir>"]`
-   trust entry for each test directory; remove only those. Anything else that differs: report it,
-   do not revert it.
+1. Exit each agent (its Driving); close its pane (`herdr pane close <id>`).
+2. Run each CLI's Cleanup: remove what the cases may have added, and check each is gone.
+3. **Compare with the starting state**: run the starting-state commands of each CLI's Setup again
+   from `$E2E`, diff each against `$E2E/before/`, and run the comparisons in each CLI's Cleanup.
+   Anything that differs beyond what a CLI's Cleanup allows: report it, do not revert it.
 4. `git -C $KIRBY status --short` is clean (the run must not touch the repo).
 
 ## Report
@@ -467,4 +534,5 @@ Run all of it, also after a run that stopped early.
 | … | | |
 
 Above the table: date, `git -C $KIRBY rev-parse HEAD`, the tool versions from Setup, `SHA`, `FX_SHA`,
-whether the opt-in cases ran, every deviation from this runbook, and the result of Cleanup step 3.
+which agent CLI sections ran, whether the opt-in cases ran, every deviation from this runbook, and
+the result of Cleanup step 3.
