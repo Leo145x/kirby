@@ -6,8 +6,9 @@
     install_skill.py owner/repo path/to/skill-folder --scope user --agent codex
 
 Scopes: project and local install into this project's .claude/skills/ (local also adds the
-folder to .gitignore); user installs into ~/.claude/skills/. With --agent codex the
-directories are .agents/skills/ and ~/.agents/skills/ instead. Use "." as the folder when
+folder to .gitignore); user installs into ~/.claude/skills/, or $CLAUDE_CONFIG_DIR/skills/ when
+that is set. With --agent codex the directories are .agents/skills/ and ~/.agents/skills/
+instead. Use "." as the folder when
 SKILL.md is at the repo root. The installed folder is named after the skill's frontmatter
 `name` (falling back to the source folder's name). The source commit is recorded in
 <skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) nothing is
@@ -15,6 +16,7 @@ installed unless the repo's HEAD is still that commit, so the user gets what the
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -23,8 +25,10 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
+# Claude Code reads user skills from $CLAUDE_CONFIG_DIR/skills when that is set; Codex has no such variable.
+CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 DESTS = {
-    "claude": {"local": Path(".claude/skills"), "project": Path(".claude/skills"), "user": Path.home() / ".claude/skills"},
+    "claude": {"local": Path(".claude/skills"), "project": Path(".claude/skills"), "user": CLAUDE_HOME / "skills"},
     "codex": {"local": Path(".agents/skills"), "project": Path(".agents/skills"), "user": Path.home() / ".agents/skills"},
 }
 SCOPES = ("local", "project", "user")

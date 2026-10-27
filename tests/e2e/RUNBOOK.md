@@ -27,21 +27,24 @@ Helpers in this folder:
 ## Adding an agent CLI
 
 Give it a section after the last one, with the same parts in the same order: **Setup** (version
-command, what its run writes outside `$E2E`, the starting state to record, what must be absent,
-how kirby is loaded, its projects), **Driving** (start, trust prompt, sending a prompt, exit,
-dialogs), the cases, and **Cleanup**. Add it to the table above and to `AGENTS.md`, Before Every
+command, its config directory under `$E2E/home` and how its login is copied there, what its run
+writes outside `$E2E`, the starting state to record, what must be absent, how kirby is loaded, its
+projects), **Driving** (start, first-start screens, trust prompt, sending a prompt, exit, dialogs),
+the cases, and **Cleanup**. Add it to the table above, to Isolation and to `AGENTS.md`, Before Every
 Commit. The shared parts below stay as they are.
 
 ## Ground rules
 
-- Run only inside herdr (`test "$HERDR_ENV" = 1`). Work only in a fresh scratch directory, called
-  `$E2E` below; never in a real project.
-- **This run changes the user's real agent CLI setup.** Each CLI's Setup says what its run writes
-  outside `$E2E`. So record the starting state (Setup, step 2) before anything else, and compare
-  with it at the end (Cleanup) even when the run stops early.
-- **Cases marked (opt-in) install at user scope.** Ask the user once, before starting, whether to
-  run them. Without a yes, take the case's default path: it checks the same dialogs and ends at the
-  scope step with `cancel`, so nothing is installed.
+- Run only inside herdr (`test "$HERDR_ENV" = 1`). Work only in a fresh scratch directory outside
+  `/tmp`, called `$E2E` below (e.g. `mktemp -d ~/.cache/kirby-e2e-XXXXXX`; Codex does not set up
+  its helper commands when its config directory is under `/tmp`); never in a real project.
+- **Each agent CLI runs in its own config directory under `$E2E/home`**, not in the user's real
+  setup (Isolation). A few things still land outside `$E2E`; each CLI's Setup lists them. So record
+  the starting state (Setup, step 2) before anything else, and compare with it at the end (Cleanup)
+  even when the run stops early.
+- **Cases marked (opt-in) install into the user's real setup** (C8, C9). Ask the user once, before
+  starting, whether to run them. Without a yes, take the case's default path: it checks the same
+  dialogs and ends at the scope step with `cancel`, so nothing is installed.
 - **Tool-written text is checked exactly; model-written text by criteria.** Facts in dialogs and the
   results the install tool returns come from code, so a case quotes them verbatim (with `<…>`
   placeholders). What the model writes (dialog wording, summaries) is checked against the rules the
@@ -69,8 +72,8 @@ Commit. The shared parts below stay as they are.
 
 Constants only one agent CLI uses are in its section.
 
-`PLUGIN` and the MCP name `kirby-e2e` are chosen so the run does not touch anything the user already
-has: check in Setup that neither is installed. Also check that `detect.py` still reports `PLUGIN`
+`PLUGIN` and the MCP name `kirby-e2e` are chosen so the opt-in cases, which install into the real
+setup, do not touch anything the user already has: check in Setup that neither is installed. Also check that `detect.py` still reports `PLUGIN`
 with `"mcpServers": false` and `PLUGIN_MCP` with `"mcpServers": true` (`python3 -I
 $KIRBY/skills/inhale/scripts/detect.py anthropics/claude-plugins-official`). If not, pick others that
 do and note it.
@@ -95,6 +98,47 @@ flagged: exec ×2 (validate-coverage-ledger.test.cjs:5, validate-findings.test.c
 
 `HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`.
 
+## Isolation
+
+Each agent CLI keeps its settings, installs, trust decisions and transcripts in a config directory
+that an environment variable can move. The run points them into `$E2E/home`, so deleting `$E2E` at
+the end removes what the run installed. Write `$E2E/iso.sh` with a file tool, with literal paths:
+
+```
+export CLAUDE_CONFIG_DIR=<E2E>/home/claude
+export CODEX_HOME=<E2E>/home/codex
+```
+
+Every `claude` and `codex` command in sections B and C, every `transcript.py` call, and every agent
+started in a pane runs after `. $E2E/iso.sh`, in a subshell when run from your own shell:
+`(. $E2E/iso.sh && claude mcp list)`. The exceptions are said where they occur: the starting state,
+the logins (below) and the comparisons in Setup and Cleanup, and the opt-in paths of C8 and C9, act
+on the real setup.
+
+What the two variables move and what they do not (tried on 2026-10-28 with Claude Code 2.1.311 and
+Codex 0.164.0) is in each CLI's Setup.
+
+### Logins
+
+Copy each CLI's login file in; never print one. A login file holds a refresh token, and when one
+copy renews its access token, the other copy's refresh token stops working. When this was tried,
+the copy renewed an expired token and the real Claude Code then failed with `OAuth session expired
+and could not be refreshed`. A copy renews only once its access token has expired, so copy a login
+only when its access token has at least 3 more hours to run:
+
+| CLI | Hours left (prints a number) | If under 3: renew it in the real setup, from `$E2E` | Copy |
+| --- | --- | --- | --- |
+| Claude Code | `python3 -I -c 'import json,os,time; c=json.load(open(os.path.expanduser("~/.claude/.credentials.json")))["claudeAiOauth"]; print(round((c["expiresAt"]/1000-time.time())/3600,1))'` | `claude -p ok` (a token lasts 8 hours) | `mkdir -p $E2E/home/claude && cp ~/.claude/.credentials.json $E2E/home/claude/` |
+| Codex | `python3 -I -c 'import base64,json,os,time; t=json.load(open(os.path.expanduser("~/.codex/auth.json")))["tokens"]["access_token"].split(".")[1]; print(round((json.loads(base64.urlsafe_b64decode(t+"="*(-len(t)%4)))["exp"]-time.time())/3600,1))'` (a `KeyError: 'tokens'` means an API key login, which has no token to renew: copy it as is) | `codex exec --skip-git-repo-check ok` (a token lasted 240 hours) | `mkdir -p $E2E/home/codex && cp ~/.codex/auth.json $E2E/home/codex/` |
+
+Check the hours again after renewing. The copies are secrets: Cleanup deletes them with `$E2E`.
+
+**If the real login breaks anyway** (the real CLI says its session expired or asks to log in), the
+copy renewed first and holds the only working token. Before deleting `$E2E`, copy it back
+(`cp $E2E/home/claude/.credentials.json ~/.claude/.credentials.json`, which restored the login
+when this was tried; for Codex, `auth.json` the same way, which was not tried), check the real CLI
+works, and report it.
+
 ## Driving the panes
 
 These came out of running this by hand; each one cost a retest. Each CLI's Driving adds what is
@@ -118,17 +162,19 @@ particular to it: how to start, answer the trust prompt, send a prompt, exit, an
 
 ## Setup
 
-1. `test "$HERDR_ENV" = 1`; `gh auth status`; record `herdr --version`,
-   `git -C $KIRBY rev-parse HEAD` and the version of each agent CLI under test (its Setup).
-2. **Record the starting state** in `$E2E/before/` (save command output with a file tool; copy
-   files with `cp`). Run the commands from `$E2E`: those in each CLI's Setup. Then check nothing
-   the run would add is already there (each CLI's Setup lists it). Anything present: note it and
-   skip the cases that would install or remove it.
-3. Make the projects, each its own git repo: `$E2E/codex/h` for A9, those in each CLI's Setup, and
+1. `test "$HERDR_ENV" = 1`; `gh auth status`; check `$E2E` is not under `/tmp`; record
+   `herdr --version`, `git -C $KIRBY rev-parse HEAD` and the version of each agent CLI under test
+   (its Setup).
+2. **Record the starting state of the real setup** in `$E2E/before/` (save command output with a
+   file tool; copy files with `cp`). Run the commands from `$E2E`, without `iso.sh`: those in each
+   CLI's Setup. Then check nothing the run would add is already there (each CLI's Setup lists it).
+   Anything present: note it and skip the cases that would install or remove it.
+3. **Isolate** (Isolation): write `$E2E/iso.sh`, and copy in the login of each agent CLI under test.
+4. Make the projects, each its own git repo: `$E2E/codex/h` for A9, those in each CLI's Setup, and
    later ones as the cases say (`git init -q <dir>`).
-4. Build the fixture: `python3 -I $KIRBY/tests/e2e/fixture.py init $E2E/fx`. Record `FX_SHA`.
-5. Load kirby into each agent CLI under test, as its Setup says.
-6. Open the panes (Driving the panes, and each CLI's Driving).
+5. Build the fixture: `python3 -I $KIRBY/tests/e2e/fixture.py init $E2E/fx`. Record `FX_SHA`.
+6. Load kirby into each agent CLI under test, as its Setup says.
+7. Open the panes (Driving the panes, and each CLI's Driving).
 
 To reset a project between cases: `git -C <P> clean -fdxq` (removes the skill folders and
 `.gitignore` changes a case made).
@@ -208,23 +254,31 @@ scan: the dialog showed the user these pattern hits in cloudflare/security-audit
 ### Setup
 
 - Version: `claude --version`.
-- Writes outside `$E2E`: skills at `local` and `project` scope land in `$E2E`, but a Claude Code MCP
-  server at `local` scope is recorded in `~/.claude.json`, a plugin's marketplace in the user
-  settings (B17), and B7 (opt-in) installs into `~/.claude/skills`.
-- Starting state, from `$E2E`: `claude plugin list`, `claude plugin marketplace list`,
-  `claude mcp list`, `ls -A ~/.claude/skills`;
+- Config directory: `CLAUDE_CONFIG_DIR=$E2E/home/claude`. It holds what would otherwise go to
+  `~/.claude` and `~/.claude.json`: the settings and the plugin marketplaces (B17), MCP servers at
+  `local` scope (B19), trust decisions, user skills (B7: `install_skill.py` installs into
+  `$CLAUDE_CONFIG_DIR/skills`), and the transcripts. The user's own `~/.claude/CLAUDE.md`, settings,
+  hooks and plugins are not loaded.
+- Writes outside `$E2E`: MCP logs in `~/.cache/claude-cli-nodejs/<project>/` for each project
+  directory a session starts in (`<project>` is its path with every character other than
+  `A-Za-z0-9` replaced by `-`); and the transcripts of `claude -p ok` run from `$E2E` in the real
+  setup (a renewal in Isolation, the login check in Cleanup) in `~/.claude/projects/<E2E>/`, named
+  the same way.
+- Starting state of the real setup, from `$E2E`: `claude mcp list`, `ls -A ~/.claude/skills`;
   `cp ~/.claude/settings.json $E2E/before/claude-settings.json`.
-- Must be absent: `security-audit` in `~/.claude/skills`; `agent-sdk-dev`, `context7` or `kirby-e2e`
-  in the lists.
+- Must be absent: nothing; `$E2E/home/claude` starts empty but for the login.
 - Loading kirby: nothing to do; each session starts with `--plugin-dir $KIRBY` (Driving).
 - Projects: `$E2E/claude/p`.
 
 ### Driving
 
-- **Start** with the kirby under test, from the case's project directory:
-  `herdr pane run <C> "cd <P> && claude --plugin-dir $KIRBY"`. **With the fixture**, start it in a
-  subshell so the git redirect does not stay in that pane's shell:
-  `herdr pane run <C> "cd <P> && (. $E2E/fx/env.sh && claude --plugin-dir $KIRBY)"`.
+- **Start** with the kirby under test, from the case's project directory, in a subshell so the
+  variables do not stay in that pane's shell:
+  `herdr pane run <C> "cd <P> && (. $E2E/iso.sh && claude --plugin-dir $KIRBY)"`. **With the
+  fixture**: `herdr pane run <C> "cd <P> && (. $E2E/iso.sh && . $E2E/fx/env.sh && claude --plugin-dir $KIRBY)"`.
+- **First start** in the fresh config directory: a theme picker (`Choose the text style`), then
+  `Security notes` (`Press Enter to continue…`); `enter` on each. Later starts skip them. A notice
+  such as `Auto mode is now Claude Code's default permission mode` needs no answer.
 - **Trust prompt**: wait for `trust this folder`, send `down`, wait until the screen shows
   `❯ Yes, I trust this folder`, then `enter`.
 - **Sending a prompt**: `herdr agent prompt <C> "<text>" --wait --timeout 300000`.
@@ -238,9 +292,9 @@ scan: the dialog showed the user these pattern hits in cloudflare/security-audit
 ### Cases
 
 Project `$E2E/claude/p` unless a case says otherwise. Start one session for B1–B15, restart it for
-B16 (fixture), and once more after B16.
+B16 (fixture), and once more after B16. Run every `claude` command below with `iso.sh` (Isolation).
 
-Check each install result with `python3 -I $KIRBY/tests/e2e/transcript.py claude <P> --tool install --last 1`
+Check each install result with `(. $E2E/iso.sh && python3 -I $KIRBY/tests/e2e/transcript.py claude <P> --tool install --last 1)`
 and what the model wrote with `--say --last 1`.
 
 ### Search
@@ -307,11 +361,9 @@ Answer Install, then `local`.
 **B6 Project scope.** Reset the project. Prompt as B3; answer Install, `project`.
 - Result `installed (scope project): …--scope project --commit <SHA>`; no `added … to .gitignore` line; `.gitignore` unchanged.
 
-**B7 User scope (opt-in).** Only if `~/.claude/skills/security-audit` is absent. Prompt as B3; answer Install.
-- Opted in: answer `user`. Result `installed (scope user): …` with `-> <HOME>/.claude/skills/security-audit (<N> files)`.
-  Then at once: `rm -rf ~/.claude/skills/security-audit` and check it is gone.
-- Not opted in: answer `cancel`. Result `not installed: the user cancelled at the scope step.` + `SCAN_NOTE`;
-  `~/.claude/skills/security-audit` still absent.
+**B7 User scope.** Prompt as B3; answer Install, `user`.
+- Result `installed (scope user): …--scope user --commit <SHA>` with `-> <E2E>/home/claude/skills/security-audit (<N> files)`.
+- Files: `$E2E/home/claude/skills/security-audit/.kirby.json` has `"commit": "<SHA>"`; `ls -A ~/.claude/skills` as in the starting state.
 
 ### The other answers
 
@@ -395,26 +447,35 @@ No dialog may open in these; each result is exact (plus `ENGLISH_NOTE` when the 
 
 ### Cleanup
 
-- `~/.claude/skills/security-audit` (only if Setup found it absent).
-- In `$E2E/claude/p`: `claude plugin uninstall agent-sdk-dev@claude-plugins-official --scope local` and
-  `claude mcp remove --scope local kirby-e2e`, if `claude plugin list` / `claude mcp list` there still show them.
-- Compare: `diff $E2E/before/claude-settings.json ~/.claude/settings.json`.
+What the run installed goes with `$E2E` (Cleanup, step 5). Before that:
+
+- Remove the folders named after `$E2E` or a directory under it (Setup says how they are named) in
+  `~/.cache/claude-cli-nodejs/` and `~/.claude/projects/`; `find ~/.cache/claude-cli-nodejs ~/.claude/projects -maxdepth 1 -name '<E2E>*'`
+  lists them.
+- Compare, without `iso.sh`: `diff $E2E/before/claude-settings.json ~/.claude/settings.json`.
 
 ## C. Codex (pane X)
 
 ### Setup
 
 - Version: `codex --version`.
-- Writes outside `$E2E`: kirby itself is added to Codex as a marketplace and plugin, and Codex
-  installs every plugin and MCP server at user scope, in `~/.codex/config.toml`; skills at `user`
-  scope go to `~/.agents/skills`.
-- Starting state, from `$E2E`: `codex mcp list`, `codex plugin marketplace list`,
-  `ls -A ~/.agents/skills`; `cp ~/.codex/config.toml $E2E/before/codex-config.toml`.
-- Must be absent: `security-audit` in `~/.agents/skills`; `agent-sdk-dev`, `context7` or `kirby-e2e`
-  in the lists; a `kirby` marketplace.
-- Loading kirby: `codex plugin marketplace add $KIRBY`, `codex plugin add kirby@kirby`.
-  Check the cache has this checkout: `diff -rq $KIRBY/codex ~/.codex/plugins/cache/kirby/kirby/0.1.0/codex`
-  (only `__pycache__` may differ). After any change to kirby, remove and add it again.
+- Config directory: `CODEX_HOME=$E2E/home/codex`. It holds what would otherwise go to `~/.codex`:
+  `config.toml` (kirby's own marketplace and plugin, trust entries), the plugin cache, the sessions,
+  and an app-server daemon that Codex starts from there and that stays after Codex exits.
+- Writes outside `$E2E`: Codex starts kirby's MCP server with only `HOME`, `LANG`, `LOGNAME`, `PATH`,
+  `SHELL`, `TERM` and `USER`, not `CODEX_HOME`. So the `codex plugin marketplace add`,
+  `codex plugin add` and `codex mcp add` that the server runs at user scope write the real
+  `~/.codex/config.toml`: C8 and C9 are opt-in for that reason. Skills at `user` scope go to
+  `~/.agents/skills`, which Codex reads whatever `CODEX_HOME` says (no case installs there). The
+  sessions of `codex exec` run from `$E2E` in the real setup (a renewal in Isolation, the login
+  check in Cleanup) are in `~/.codex/sessions/`.
+- Starting state of the real setup, from `$E2E`: `codex mcp list`, `codex plugin marketplace list`;
+  `cp ~/.codex/config.toml $E2E/before/codex-config.toml`.
+- Must be absent from the real lists: `agent-sdk-dev`, `context7` or `kirby-e2e`.
+- Loading kirby, with `iso.sh`: `codex plugin marketplace add $KIRBY`, `codex plugin add kirby@kirby`.
+  Check the cache has this checkout: `diff -rq $KIRBY/codex $E2E/home/codex/plugins/cache/kirby/kirby/0.1.0/codex`
+  (only `__pycache__` may differ). After any change to kirby, remove and add it again, and stop the
+  daemon (`codex app-server daemon stop`): it keeps running the MCP server it started with.
 - Projects: `$E2E/codex/p`.
 
 Constants only Codex uses:
@@ -426,9 +487,13 @@ Constants only Codex uses:
 
 ### Driving
 
-- **Start**: `herdr pane run <X> "cd <P> && codex"`. Codex loads kirby from the plugin cache
-  (Setup), not from `$KIRBY`.
-- **Trust prompt**: wait for `Trust and continue`, then `enter`.
+- **Start**: `herdr pane run <X> "cd <P> && (. $E2E/iso.sh && codex)"`. Codex loads kirby from the
+  plugin cache (Setup), not from `$KIRBY`.
+- **Trust prompt**: wait for `Trust and continue`, then `enter`. A fresh config directory shows no
+  other first-start screen.
+- **Tool approval**: the first call of each kirby tool in a session asks
+  `Allow the kirby MCP server to run tool "<tool>"?`; choose `2. Allow for this session`. It is
+  Codex's, not kirby's dialog.
 - **Sending a prompt**: `herdr pane send-text <X> "<text>"`, wait until the end of the text shows on
   screen, then `herdr pane send-keys <X> enter` on its own (an Enter sent with the text is
   swallowed). Confirm the agent went `working`.
@@ -437,9 +502,10 @@ Constants only Codex uses:
 
 ### Cases
 
-Project `$E2E/codex/p` unless a case says otherwise. Check results with
-`python3 -I $KIRBY/tests/e2e/transcript.py codex <P> --tool install --last 1`; Codex's MCP calls appear
-as `mcp__kirby__<tool>`.
+Project `$E2E/codex/p` unless a case says otherwise. Run every `codex` command below with `iso.sh`
+(Isolation), except in the opted-in paths of C8 and C9, which act on the real setup. Check results
+with `(. $E2E/iso.sh && python3 -I $KIRBY/tests/e2e/transcript.py codex <P> --tool install --last 1)`;
+Codex's MCP calls appear as `mcp__kirby__<tool>`.
 
 Differences from Claude Code to expect: searches and reads are MCP calls (`mcp__kirby__stars`,
 `…public`, `…detect`, `…readme`, `…file`), not shell; skills go to `.agents/skills/`; plugins and MCP
@@ -447,7 +513,7 @@ servers install at `user` only, so their dialog 1 ends its facts with `USER_ONLY
 are `cancel`, `USER_OPTION`; dialog 1 for a plugin from a Claude Code marketplace adds
 `marketplace: .claude-plugin/marketplace.json (Claude Code format)`; the install command is run with
 the server's own Python (`<PY>`, e.g. `/usr/bin/python3`) from the plugin cache (`<CACHE>` =
-`~/.codex/plugins/cache/kirby/kirby/0.1.0`); a refusal before any dialog (`not installed: <reason>`)
+`$E2E/home/codex/plugins/cache/kirby/kirby/0.1.0`); a refusal before any dialog (`not installed: <reason>`)
 carries no `note:` line, as Codex reads `dialog` only after the preview; and free text is not an
 answer Codex's dialogs offer, so there is no `answered "…"` result.
 
@@ -488,15 +554,15 @@ Each followed by `SCAN_NOTE`; nothing written.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_PLUGIN`; `~/.codex/config.toml` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result starts
   `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_PLUGIN`.
-  `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]`.
-  Cleanup at once: `codex plugin remove agent-sdk-dev@claude-plugins-official`; `codex plugin marketplace remove claude-plugins-official` (only if Setup found no such marketplace).
+  The real `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]`.
+  Cleanup at once, without `iso.sh`: `codex plugin remove agent-sdk-dev@claude-plugins-official`; `codex plugin marketplace remove claude-plugins-official` (only if Setup found no such marketplace).
 
 **C9 MCP server (opt-in).** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: `mcp__kirby__readme` first; install with `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]`.
 - Dialog 1 facts: header, `MCP server: codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, `NOT_SCANNED_MCP`, `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
-- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_MCP`; `codex mcp list` unchanged.
+- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_MCP`; the real `codex mcp list` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, then output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_MCP`.
-  `codex mcp get kirby-e2e` shows it. Cleanup at once: `codex mcp remove kirby-e2e`.
+  `codex mcp get kirby-e2e` without `iso.sh` shows it. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.
 
 **C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1 ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.
 
@@ -508,23 +574,32 @@ a client without elicitation, and unusable dialog wording.
 
 ### Cleanup
 
-- `~/.agents/skills/security-audit` (only if Setup found it absent).
-- `codex plugin remove agent-sdk-dev@claude-plugins-official`, `codex mcp remove kirby-e2e`, and
+What the run installed in `$E2E/home/codex` goes with `$E2E` (Cleanup, step 5). Before that:
+
+- Stop the daemon, which runs from `$E2E/home/codex`: `(. $E2E/iso.sh && codex app-server daemon stop)`,
+  then `pkill -f $E2E/home/codex` (a `pid-update-loop` process stays after the stop);
+  `pgrep -f $E2E/home/codex` prints nothing.
+- Remove the sessions of `codex exec` run from `$E2E`: the files that
+  `grep -l '"cwd":"<E2E>"' ~/.codex/sessions/*/*/*/rollout-*.jsonl` lists.
+- In the real setup, without `iso.sh`, if C8 or C9 ran opted in and their cleanup did not:
+  `codex plugin remove agent-sdk-dev@claude-plugins-official`, `codex mcp remove kirby-e2e`, and
   `codex plugin marketplace remove claude-plugins-official` if Setup did not have it.
-- `codex plugin remove kirby@kirby`; `codex plugin marketplace remove kirby`; remove `~/.codex/plugins/cache/kirby` if left empty.
-- Compare: `diff $E2E/before/codex-config.toml ~/.codex/config.toml`. Codex adds a
-  `[projects."<dir>"]` trust entry for each test directory; remove only those.
+- Compare: `diff $E2E/before/codex-config.toml ~/.codex/config.toml`.
 
 ## Cleanup
 
 Run all of it, also after a run that stopped early.
 
 1. Exit each agent (its Driving); close its pane (`herdr pane close <id>`).
-2. Run each CLI's Cleanup: remove what the cases may have added, and check each is gone.
-3. **Compare with the starting state**: run the starting-state commands of each CLI's Setup again
-   from `$E2E`, diff each against `$E2E/before/`, and run the comparisons in each CLI's Cleanup.
-   Anything that differs beyond what a CLI's Cleanup allows: report it, do not revert it.
-4. `git -C $KIRBY status --short` is clean (the run must not touch the repo).
+2. **Check the real logins**: from `$E2E`, without `iso.sh`, run `claude -p ok` and
+   `codex exec --skip-git-repo-check ok` (only for the CLIs under test). If one fails to log in,
+   restore it (Isolation, Logins).
+3. Run each CLI's Cleanup: remove what the run left outside `$E2E`, and check each is gone.
+4. **Compare with the starting state**: run the starting-state commands of each CLI's Setup again
+   from `$E2E`, without `iso.sh`, diff each against `$E2E/before/`, and run the comparisons in each
+   CLI's Cleanup. Anything that differs: report it, do not revert it.
+5. `rm -rf $E2E`: it holds the copies of the logins.
+6. `git -C $KIRBY status --short` is clean (the run must not touch the repo).
 
 ## Report
 
@@ -534,5 +609,5 @@ Run all of it, also after a run that stopped early.
 | … | | |
 
 Above the table: date, `git -C $KIRBY rev-parse HEAD`, the tool versions from Setup, `SHA`, `FX_SHA`,
-which agent CLI sections ran, whether the opt-in cases ran, every deviation from this runbook, and
-the result of Cleanup step 3.
+which agent CLI sections ran, whether the opt-in cases ran, whether a login was renewed before it
+was copied, every deviation from this runbook, and the results of Cleanup steps 2 and 4.

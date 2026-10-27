@@ -65,7 +65,7 @@ Once you pick a repo, the mod shows two dialogs:
 | --- | --- | --- | --- |
 | `local` | the project's `.claude/skills/`, added to `.gitignore` | `--scope local` (`.claude/settings.local.json`) | `--scope local` |
 | `project` | the project's `.claude/skills/`, committed to git | `--scope project` (`.claude/settings.json`) | `--scope project` (`.mcp.json`) |
-| `user` | `~/.claude/skills/` | `--scope user` | `--scope user` |
+| `user` | `~/.claude/skills/` (`$CLAUDE_CONFIG_DIR/skills/` when that is set) | `--scope user` | `--scope user` |
 
 Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
