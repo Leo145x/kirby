@@ -65,7 +65,7 @@ codex plugin add kirby@kirby
 | --- | --- | --- | --- |
 | `local` | 專案的 `.claude/skills/`，並自動加進 `.gitignore` | `--scope local`（`.claude/settings.local.json`） | `--scope local` |
 | `project` | 專案的 `.claude/skills/`，會進 git | `--scope project`（`.claude/settings.json`） | `--scope project`（`.mcp.json`） |
-| `user` | `~/.claude/skills/` | `--scope user` | `--scope user` |
+| `user` | `~/.claude/skills/`（有設 `CLAUDE_CONFIG_DIR` 時是 `$CLAUDE_CONFIG_DIR/skills/`） | `--scope user` | `--scope user` |
 
 plugin 不論裝在哪個 scope，它的 marketplace 都會記錄在 user settings。
 

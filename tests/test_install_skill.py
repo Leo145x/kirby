@@ -1,10 +1,12 @@
 """Tests for install_skill.py that need no network: python3 -m unittest discover -s tests"""
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent.parent / "skills/inhale/scripts/install_skill.py"
 spec = importlib.util.spec_from_file_location("install_skill", SCRIPT)
@@ -99,6 +101,24 @@ class Shown(unittest.TestCase):
             text = (root / skill).read_text()
             for name, _, _ in install_skill.RULES:
                 self.assertIn(f"`{name}`", text, f"{skill} does not explain {name}")
+
+
+class UserScope(unittest.TestCase):
+    def dests(self, env):
+        with mock.patch.dict(os.environ, env):
+            if not env:
+                os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        return module.DESTS
+
+    def test_claude_user_skills_follow_claude_config_dir(self):
+        self.assertEqual(self.dests({"CLAUDE_CONFIG_DIR": "/tmp/cfg"})["claude"]["user"], Path("/tmp/cfg/skills"))
+        self.assertEqual(self.dests({})["claude"]["user"], Path.home() / ".claude/skills")
+        self.assertEqual(self.dests({"CLAUDE_CONFIG_DIR": ""})["claude"]["user"], Path.home() / ".claude/skills")
+
+    def test_codex_user_skills_stay_in_home(self):
+        self.assertEqual(self.dests({"CLAUDE_CONFIG_DIR": "/tmp/cfg"})["codex"]["user"], Path.home() / ".agents/skills")
 
 
 class Commit(unittest.TestCase):

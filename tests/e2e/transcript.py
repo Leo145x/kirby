@@ -13,11 +13,13 @@ Each line is one of:
     {"t": "tool", "name": …, "input": …, "result": …}
 
 Claude Code tool names are as the model saw them (mcp__kirby__install, Bash, …); Codex MCP calls are
-named mcp__<server>__<tool> to match. Results are text.
+named mcp__<server>__<tool> to match. Results are text. Sessions are looked up under
+$CLAUDE_CONFIG_DIR and $CODEX_HOME when those are set, as the agent CLIs store them.
 """
 import argparse
 import ast
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -32,7 +34,8 @@ def text_of(content):
 
 
 def claude_file(project):
-    folder = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(Path(project).resolve()))
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    folder = config / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(Path(project).resolve()))
     files = sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
     if not files:
         sys.exit(f"no Claude Code session for {project} (looked in {folder})")
@@ -41,7 +44,7 @@ def claude_file(project):
 
 def codex_file(project):
     want = str(Path(project).resolve())
-    files = sorted((Path.home() / ".codex" / "sessions").glob("*/*/*/rollout-*.jsonl"),
+    files = sorted((Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions").glob("*/*/*/rollout-*.jsonl"),
                    key=lambda p: p.stat().st_mtime, reverse=True)
     for f in files:
         with f.open() as fh:
