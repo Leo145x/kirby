@@ -50,29 +50,39 @@ VALID_SHA = re.compile(r"^[0-9a-f]{40}$")
 SCRIPT = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl", ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts")
 
 
-def git(*args, cwd=None):
-    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
-    if res.returncode != 0:
-        sys.exit(f"git {' '.join(args)} failed: {res.stderr.strip()}")
-    return res.stdout.strip()
+class GitFailed(Exception):
+    """A git step that failed: step is what ran after `git`, err what git said."""
+
+    def __init__(self, step, err):
+        super().__init__(f"git {step} failed: {err}")
+        self.step, self.err = step, err
 
 
-def fetch(repo, folder, commit, dest):
-    """Check out folder of repo in dest, at commit (a full sha) or, without one, at the default branch as
-    it stands. Only that commit and only that folder: a sparse checkout of a depth-1 fetch."""
-    git("init", "-q", dest)
+def checkout(url, ref, dest, folder="."):
+    """A shallow checkout of url at ref (a full sha, a branch or a tag; None for the default branch as it stands)
+    in dest, of only folder; returns its commit. Only that commit and only that folder: a sparse checkout of a
+    depth-1 fetch. No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
+    clone's checkout fails there."""
+    dest = str(dest)
+    steps = [["init", "-q", dest]]
     if folder != ".":
-        git("sparse-checkout", "set", "--no-cone", f"/{folder}/", cwd=dest)
-    # No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
-    # clone's checkout fails there.
-    res = subprocess.run(["git", "fetch", "-q", "--depth", "1", f"https://github.com/{repo}.git", commit or "HEAD"],
-                         cwd=dest, capture_output=True, text=True)
-    if res.returncode != 0 and commit:
-        sys.exit(f"could not fetch {repo} at commit {commit[:7]}, the one shown to the user; nothing installed "
-                 f"(a force-push can remove a commit). git: {res.stderr.strip()}")
-    if res.returncode != 0:
-        sys.exit(f"git fetch https://github.com/{repo}.git failed: {res.stderr.strip()}")
-    git("checkout", "-q", "FETCH_HEAD", cwd=dest)
+        steps.append(["-C", dest, "sparse-checkout", "set", "--no-cone", f"/{folder}/"])
+    steps += [["-C", dest, "fetch", "-q", "--depth", "1", url, ref or "HEAD"], ["-C", dest, "checkout", "-q", "FETCH_HEAD"],
+              ["-C", dest, "rev-parse", "HEAD"]]
+    for args in steps:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise GitFailed(" ".join(args[2:] if args[0] == "-C" else args), r.stderr.strip())
+    return r.stdout.strip()
+
+
+def inside(path):
+    """A path inside a folder (a repo, an archive), normalised ("." for the folder itself), or None if it would
+    leave it: absolute, with a drive, a backslash or a .. part."""
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if path.startswith("/") or "\\" in path or ".." in parts or (parts and ":" in parts[0]):
+        return None
+    return "/".join(parts) or "."
 
 
 def frontmatter_name(skill_md):
@@ -218,6 +228,11 @@ def scan_note(repo, folder, sha, hits, place=None):
     return "\n".join(lines)
 
 
+UNCHECKED = "unchecked: pattern scan, advisory lookup and malware lookup"
+# A check that read no files gives the model review nothing to read.
+NO_REVIEW = {"needed": False, "files": []}
+
+
 def review(where, files, hits, looked, prefix=""):
     """What the model review needs (docs/adr/0002): whether it runs, which is only when another part of the check
     found a danger or warn finding, a combination finding included, and the install is not blocked (Install is not
@@ -260,7 +275,14 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         # The commit the dialog showed, even if the repo has moved on since (docs/adr/0005).
-        fetch(args.repo, folder, args.commit, tmp)
+        url = f"https://github.com/{args.repo}.git"
+        try:
+            sha = checkout(url, args.commit, tmp, folder)
+        except GitFailed as e:
+            if e.step.startswith("fetch") and args.commit:
+                sys.exit(f"could not fetch {args.repo} at commit {args.commit[:7]}, the one shown to the user; nothing "
+                         f"installed (a force-push can remove a commit). git: {e.err}")
+            sys.exit(f"git fetch {url} failed: {e.err}" if e.step.startswith("fetch") else str(e))
         src = Path(tmp) / folder
         if not (src / "SKILL.md").is_file():
             sys.exit(f"{args.repo}:{folder} has no SKILL.md")
@@ -268,7 +290,6 @@ def main():
         fallback = args.repo.split("/")[1] if folder == "." else folder.rsplit("/", 1)[-1]
         name = declared if declared and VALID_NAME.match(declared) else fallback
         target = DESTS[args.agent][args.scope] / name
-        sha = git("rev-parse", "HEAD", cwd=tmp)
         files = listing(src)
         exists = target.exists()
         hits, unread = scan(src, files)

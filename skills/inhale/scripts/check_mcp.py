@@ -48,8 +48,9 @@ from urllib.parse import quote, urlparse
 # -I leaves this folder off the import path; these are kirby's own, next to this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
-from install_skill import VALID_REPO, VALID_SHA, check_lines, listing, review, scan, scan_note  # noqa: E402
-from lookups import Failed, first_line, package_key, py_name, shown  # noqa: E402
+from install_skill import (NO_REVIEW, UNCHECKED, VALID_REPO, VALID_SHA, check_lines, inside, listing, review, scan,  # noqa: E402
+                           scan_note)
+from lookups import NPM_NAME, Failed, first_line, package_key, py_name, shown  # noqa: E402
 
 try:
     import tomllib
@@ -58,9 +59,9 @@ except ImportError:  # before Python 3.11: pyproject.toml cannot be read
 
 NPM_REGISTRY, PYPI = "https://registry.npmjs.org", "https://pypi.org/pypi"
 # The files that name a package, in the order the check prefers them, and how deep in the repo it looks.
-MANIFESTS = ("server.json", "package.json", "pyproject.toml")
+PACKAGE_FILES = ("server.json", "package.json", "pyproject.toml")
 DEPTH = 3
-MAX_MANIFESTS = 30
+MAX_PACKAGE_FILES = 30
 REGISTRY_TYPES = {"npm": "npm", "pypi": "PyPI"}
 # The commands that fetch a package from each registry and run it, and the subcommand that does it, for those
 # that need one.
@@ -73,7 +74,6 @@ PACKAGE_OPTIONS = {"npm": ("--package", "-p"), "PyPI": ("--from", "--spec")}
 VALUE_OPTIONS = {"npm": ("--registry", "--cache", "--userconfig", "--workspace", "-w", "--call", "-c"),
                  "PyPI": ("--python", "-p", "--with", "--index", "--index-url", "--default-index", "--extra-index-url")}
 CONTAINERS = ("docker", "podman")
-NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$", re.I)
 NPM_EXACT = re.compile(r"^v?\d+\.\d+\.\d+([-+][0-9A-Za-z.+-]*)?$")
 NPM_TAG = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 PY_WORD = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?(?:(==|@)(.+)|(.*))$")
@@ -81,8 +81,6 @@ PY_EXACT = re.compile(r"^[0-9][0-9A-Za-z.!+-]*$")
 MAX_ARCHIVE = 50_000_000
 MAX_UNPACKED = 200_000_000
 MAX_FILES = 10_000
-
-UNCHECKED = "unchecked: pattern scan, advisory lookup and malware lookup"
 
 
 class Net(lookups.Net):
@@ -128,9 +126,9 @@ def declarations(repo, net):
     tree = net.api(f"repos/{repo}/git/trees/{sha}?recursive=1") or {}
     paths = [t["path"] for t in tree.get("tree") or [] if isinstance(t, dict) and t.get("type") == "blob"
              and isinstance(t.get("path"), str)]
-    wanted = sorted((p for p in paths if p.rsplit("/", 1)[-1] in MANIFESTS and p.count("/") < DEPTH
+    wanted = sorted((p for p in paths if p.rsplit("/", 1)[-1] in PACKAGE_FILES and p.count("/") < DEPTH
                      and not any(s.startswith(".") or s == "node_modules" for s in p.split("/")[:-1])),
-                    key=lambda p: (MANIFESTS.index(p.rsplit("/", 1)[-1]), p.count("/"), p))[:MAX_MANIFESTS]
+                    key=lambda p: (PACKAGE_FILES.index(p.rsplit("/", 1)[-1]), p.count("/"), p))[:MAX_PACKAGE_FILES]
     with ThreadPoolExecutor(max_workers=8) as pool:
         texts = list(pool.map(lambda p: net.raw(repo, p, sha), wanted))
     found, seen = [], set()
@@ -506,14 +504,6 @@ def verified(data, hashed):
 
 # ---- unpacking --------------------------------------------------------------------------------------
 
-def inside(name):
-    """An archive member's path as a relative path, or None if it would leave the folder."""
-    parts = [p for p in name.split("/") if p not in ("", ".")]
-    if not parts or name.startswith("/") or "\\" in name or ".." in parts or ":" in parts[0]:
-        return None
-    return "/".join(parts)
-
-
 def unpack(data, filename, dest):
     """Unpack an archive into dest, an empty folder: regular files only (links, devices and paths that leave dest
     are left out), within MAX_FILES and MAX_UNPACKED. Returns the folder to scan: an archive's one top folder
@@ -536,7 +526,7 @@ def unpack(data, filename, dest):
     def write(rel, read, charged=False):
         """Write one member's body, read with read(limit); charged: its whole size already counts against the limit."""
         rel = inside(rel)
-        if rel is None:
+        if rel in (None, "."):
             return
         if charged:
             body = read()
@@ -590,7 +580,7 @@ def check(repo, args, net=None):
         out.update(lines=[f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")],
                    note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
                         f"server{', and that its command is not pinned' if pin else ''}: {why}",
-                   review={"needed": False, "files": []})
+                   review=dict(NO_REVIEW))
         return out
 
     _, words = command_of(args)
@@ -675,7 +665,7 @@ def read(want, net=None):
     nothing in it is installed or run. Returns the file's text."""
     net = net or Net()
     path = inside(want["path"])
-    if path is None:
+    if path in (None, "."):
         raise Failed(f"not a path inside the package: {shown(want['path'], 160)!r}")
     name, version = want["name"], want["version"]
     rel = release(want["ecosystem"], name, version, net)

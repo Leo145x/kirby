@@ -411,9 +411,11 @@ class Plugin(unittest.TestCase):
             if argv[0] == "gh":
                 return True, '[1, "2026-01-01T00:00:00Z", false]'
             if argv[:4] == ["codex", "plugin", "marketplace", "list"]:
-                return True, json.dumps({"marketplaces": listed.pop(0) if len(listed) > 1 else listed[0]})
+                got = listed.pop(0) if len(listed) > 1 else listed[0]
+                return (False, "boom") if got is None else (True, json.dumps({"marketplaces": got}))
             if argv[0] == "git":
-                return True, heads.pop(0)
+                head = heads.pop(0)
+                return (False, "fatal: not a git repository") if head is None else (True, head)
             return True, "ok"
 
         def fake_script(name, *args, cwd=None):
@@ -464,6 +466,28 @@ class Plugin(unittest.TestCase):
         self.assertEqual(scripts[0][-2:], ("o/mk", "p"))
         self.assertNotIn("--commit", scripts[0])
         self.assertEqual(ran[0][:4], ["codex", "plugin", "marketplace", "add"])
+
+    def test_a_marketplace_list_that_fails_is_one_unchecked_line_and_the_check_goes_ahead(self):
+        line = ("unchecked: whether this marketplace is already added (codex plugin marketplace list failed: boom); the check is "
+                "of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit")
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[None])
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
+        self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
+        # Still unable to tell which commit it came from after the install, kirby removes it again.
+        self.assertEqual(ran[-1], ["codex", "plugin", "remove", "p@mk"])
+        self.assertTrue(r.startswith("install failed (scope user): "), r)
+        self.assertTrue(r.endswith(f"{self.CHECK['note']}\n{line}"), r)
+
+    def test_an_added_marketplace_whose_commit_cannot_be_read_is_one_unchecked_line(self):
+        line = ("unchecked: which commit the marketplace mk, already added, is at (could not read it in "
+                "/home/u/.codex/.tmp/marketplaces/mk: fatal: not a git repository); the check is of its repo as it stands, and "
+                "the plugin is removed again if kirby cannot tell it installs from that commit")
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[self.added()]], heads=[None, self.SHA])
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
+        self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
+        # Readable after the install and the commit checked: the plugin stays.
+        self.assertEqual(ran, [["codex", "plugin", "add", "p@mk"]])
+        self.assertTrue(r.startswith("installed (scope user): codex plugin add p@mk\n"), r)
 
     def test_a_blocked_plugin_offers_no_install(self):
         peer, ran, _, r = self.install("取消", check={**self.CHECK, "blocked": True})

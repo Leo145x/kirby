@@ -5,6 +5,7 @@
 // of what the install will bring, and the dialog says so (docs/adr/0005). `run` is passed in, so the tests
 // can stand in for the CLI.
 
+import { SHA_RE } from './check'
 import type { Scope } from './dialog'
 
 export type Run = (argv: readonly string[]) => Promise<{ ok: boolean; out: string }>
@@ -12,7 +13,6 @@ export type Run = (argv: readonly string[]) => Promise<{ ok: boolean; out: strin
 export type Added = { name: string; location: string; ref?: string }
 
 const GITHUB_URL = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i
-const SHA_RE = /^[0-9a-f]{40}$/
 
 const short = (sha: string) => sha.slice(0, 7)
 
@@ -65,6 +65,14 @@ export function alreadyAdded(added: Added, head: string | null, latest: { sha: s
     commit: latest.sha,
     line: `marketplace: already added as ${added.name}, ${at}, behind its repo; installing refreshes it to ${short(latest.sha)}, the commit checked`,
   }
+}
+
+// The dialog's line when kirby cannot tell whether the marketplace is already added (docs/adr/0005): the check
+// goes ahead on the repo as it stands, and installPlugin keeps the plugin only if it can read the commit it came
+// from. codex/server.py says the same.
+export function notListed(why: string): string {
+  return `unchecked: whether this marketplace is already added (${why}); the check is of its repo as it stands, and the ` +
+    'plugin is removed again if kirby cannot tell it installs from that commit'
 }
 
 type Plan = { repo: string; plugin: string; scope: Scope; sha: string; marketplace: string; added: Added | null }

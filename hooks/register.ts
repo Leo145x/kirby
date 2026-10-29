@@ -9,18 +9,17 @@
 
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REVIEWER } from './check'
+import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REPO_RE, REVIEWER, SHA_RE } from './check'
 import type { ReviewOf } from './check'
 import { CANCEL, nextOptions, readDialog, readReview, reviewNote, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
-import { alreadyAdded, findAdded, headOf, installPlugin } from './plugin'
+import { alreadyAdded, findAdded, headOf, installPlugin, notListed } from './plugin'
 import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
 
 type $ = EngineInterface
 type Input = Record<string, unknown>
 
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const TIMEOUT_MS = 120_000
 
 const TOOL = {
@@ -178,13 +177,16 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const runner: Run = argv => run($, argv)
     // For a marketplace already added, the check is of what the install will bring: Claude Code's install
     // refreshes one that is behind its repo (plugin.ts).
-    const added = await findAdded(runner, repo).catch((e: Error) => { throw new Refusal(e.message) })
     let about: string[] = []
+    const added = await findAdded(runner, repo).catch((e: Error) => {
+      about = [notListed(e.message)]
+      return null
+    })
     let commit: string | null = null
     if (added) {
       const head = await headOf(runner, added)
       const r = await run($, ['gh', 'api', `repos/${repo}/commits/${added.ref ?? 'HEAD'}`, '--jq', '.sha'])
-      const latest = r.ok && /^[0-9a-f]{40}$/.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
+      const latest = r.ok && SHA_RE.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
       const a = alreadyAdded(added, head, latest)
       commit = a.commit
       about = [a.line]
