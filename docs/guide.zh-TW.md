@@ -93,6 +93,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 
 - 查詢失敗或逾時；
 - 算不出版本的相依套件的漏洞查詢（沒有 npm 或 uv、它們執行失敗，或有些套件不是來自 npm registry）；
+- 第十個之後的相依套件檔案的兩項查詢，kirby 不讀這些檔案；那行會寫出有幾個、是哪些；
 - 來源不在 GitHub 上的 plugin（掃描和兩項查詢）；
 - 用 container image（`docker run …`）執行或用 URL 連線的遠端 MCP server、沒寫任何 npm 或 PyPI 套件的 repo，以及指令執行的不是 repo 寫的任何套件：一行 `unchecked:` 說明原因，指令維持原樣；
 - kirby 無法確定會拿到哪個版本的 MCP server（registry 沒有回應、沒有版本符合指令指定的範圍，或 kirby 讀不懂那個範圍）：對話框會顯示 `not pinned:`，掃描是 unchecked，只用套件名稱做惡意套件查詢；

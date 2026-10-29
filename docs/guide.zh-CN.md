@@ -93,6 +93,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 - 查询失败或超时；
 - 算不出版本的依赖包的漏洞查询（没有 npm 或 uv、它们运行失败，或有些包不是来自 npm registry）；
+- 第十个之后的依赖文件的两项查询，kirby 不读这些文件；那行会写明有几个、是哪些；
 - 来源不在 GitHub 上的 plugin（扫描和两项查询）；
 - 用 container image（`docker run …`）运行或通过 URL 连接的远程 MCP server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包：一行 `unchecked:` 说明原因，命令保持原样；
 - kirby 无法确定会拿到哪个版本的 MCP server（registry 没有响应、没有版本符合命令指定的范围，或 kirby 读不懂那个范围）：对话框会显示 `not pinned:`，扫描是 unchecked，只用包名做恶意包查询；
