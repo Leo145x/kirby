@@ -26,7 +26,7 @@ python3 -B -m unittest discover -s tests
 
    When kirby adds support for another agent CLI, add a row for it here, its tests to the Tests section, and its section to `tests/e2e/RUNBOOK.md` (see Adding an agent CLI there).
 
-2. **Then check the READMEs.** Read `README.md`, `README.zh-TW.md` and `README.zh-CN.md` for any new feature in the commit that they do not mention yet, and add it to all three. A bug fix does not get its own entry; add only what other people need to know about it (for example, a changed behaviour or a step they now have to take).
+2. **Then check the READMEs and the guide.** Read `README.md`, `README.zh-TW.md` and `README.zh-CN.md` for any new feature in the commit that their Features list does not mention yet, and add it to all three in a line or two. Put how it works in `docs/guide.md`, `docs/guide.zh-TW.md` and `docs/guide.zh-CN.md`. A bug fix does not get its own entry; add only what other people need to know about it (for example, a changed behaviour or a step they now have to take).
 
 ## Tool Change Checklist
 
@@ -41,7 +41,7 @@ kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__inst
 | 5 | `tests/test_codex.py` | tests of the server's input checks |
 | 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H12 |
 | 7 | `tests/e2e/RUNBOOK.md` | the tool list in A4 + each case's calls and expected results |
-| 8 | `README.md`, `README.zh-TW.md`, `README.zh-CN.md` | the three parts at the top + the tool description in the Codex section |
+| 8 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the three parts under How it is built + the tool description in the Codex section |
 
 ## Install Results and Dialogs Checklist
 
@@ -55,7 +55,7 @@ The strings the install tool returns to the model (`not installed: …`, `instal
 | 3 | `tests/dialog.test.ts` ↔ `tests/test_codex.py` | tests of the dialog rules |
 | 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the `dialog` format, Limits, and each result under Act on the result |
 | 5 | `tests/e2e/codex_server.py`, `tests/e2e/RUNBOOK.md` | expected results checked word for word |
-| 6 | `README.md`, `README.zh-TW.md`, `README.zh-CN.md` | the Install flow section |
+| 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Install flow section (and the README Features list, if a feature it names changes) |
 
 ## Scan Rules Checklist
 
@@ -68,7 +68,7 @@ When a scan rule in `install_skill.py` is added, removed or renamed:
 | 3 | `tests/e2e/fixture.py` | the fixture's files, so they hit every rule |
 | 4 | `tests/e2e/RUNBOOK.md` | the rule count and the cases that use it |
 | 5 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the list of what each rule matches |
-| 6 | `README.md`, `README.zh-TW.md`, `README.zh-CN.md` | the paragraph on the scan |
+| 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Scan section (and the examples in the README Features list's scan line, if one of them changes) |
 
 ## Scripts Checklist
 
@@ -81,7 +81,7 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 | 3 | `codex/server.py` | the arguments it passes to each script, and how it parses the output |
 | 4 | `skills/inhale/SKILL.md` | usage and output in sections 1a, 1b and 2 |
 | 5 | `tests/test_install_skill.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
-| 6 | `README.md`, `README.zh-TW.md`, `README.zh-CN.md` | the Scripts table |
+| 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Scripts table |
 
 ## Plugin Metadata Checklist
 
@@ -91,8 +91,10 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 | 2 | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `codex/server.py` | version (`serverInfo` carries it too) |
 | 3 | `tests/e2e/RUNBOOK.md` | the `serverInfo` version in A4 + the version in the Codex plugin cache path |
 
-## README
+## README and guide
 
-`README.md`, `README.zh-TW.md` and `README.zh-CN.md` say the same thing; when one changes, update the other two.
+`README.md` is the quick start: what kirby is for, its features, requirements and install. It is not a manual; how things work goes in `docs/guide.md`.
+
+`README.md`, `README.zh-TW.md` and `README.zh-CN.md` say the same thing, and so do `docs/guide.md`, `docs/guide.zh-TW.md` and `docs/guide.zh-CN.md`; when one changes, update the other two.
 
 Missing any of these leaves the docs out of step with what the code does. Check each one before opening a PR.

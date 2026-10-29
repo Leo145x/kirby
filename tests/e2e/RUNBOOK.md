@@ -567,7 +567,7 @@ Each followed by `SCAN_NOTE`; nothing written.
 
 **C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1 ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.
 
-**C11 Built-in installer (observe only).** In a fresh project, prompt `install cloudflare/security-audit-skill` (no mention of kirby). Record whether Codex goes through `mcp__kirby__install` or offers its built-in `skill-installer`; decline the latter. This checks the README's warning still holds; neither outcome fails.
+**C11 Built-in installer (observe only).** In a fresh project, prompt `install cloudflare/security-audit-skill` (no mention of kirby). Record whether Codex goes through `mcp__kirby__install` or offers its built-in `skill-installer`; decline the latter. This checks the guide's warning (`docs/guide.md`, Codex section) still holds; neither outcome fails.
 
 A9 covers, through `codex_server.py`, what the Codex UI cannot: the fixture (Codex does not pass
 `GIT_CONFIG_*` to its MCP server), a commit pushed while a dialog is open, a session with no project,
