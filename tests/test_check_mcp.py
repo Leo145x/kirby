@@ -260,6 +260,16 @@ class Findings(unittest.TestCase):
         c = check(["srv", "--", "npx", "-y", "srv"], net)
         self.assertTrue(c["blocked"])
         self.assertIn("danger: the package srv@1.0.0 (npm) is listed as malicious (MAL-2026-7)", c["lines"])
+        # Install is not offered, so there is nothing to review for.
+        self.assertFalse(c["review"]["needed"])
+
+    def test_a_blocked_package_that_was_not_scanned_needs_no_review_either(self):
+        web = npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest")
+        web[f"{NPM}/srv/-/srv-1.0.0.tgz"] = tgz({"i.js": "eval(x)\n"})
+        net = Net(repo=self.REPO, web=web, resolve={"npm": lock(("srv", "1.0.0"))}, vulns={("npm", "srv", "1.0.0"): ["MAL-2026-7"]})
+        c = check(["srv", "--", "npx", "-y", "srv"], net)
+        self.assertTrue(c["blocked"])
+        self.assertEqual(c["review"], {"needed": False, "files": []})
 
     def test_a_download_that_does_not_match_the_registrys_hash_is_not_scanned(self):
         web = npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest")

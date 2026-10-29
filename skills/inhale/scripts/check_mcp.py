@@ -414,7 +414,7 @@ def check(repo, args, net=None):
     else:
         lines += [f"unchecked: pattern scan ({why})", *looked["lines"]]
         scan_text = f"scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
-        out["review"] = {"needed": looked["found"], "files": []}
+        out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
            f"kirby could not pin it ({why}), so the command installs as given.")
     out.update(lines=lines, blocked=looked["blocked"], note="\n".join([

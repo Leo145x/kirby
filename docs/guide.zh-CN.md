@@ -9,7 +9,7 @@
 kirby 分为三部分：
 
 - **`inhale` skill**：搜索你的 star 和 star list（也可以搜索公开的 GitHub），判断并推荐合适的 skill、plugin 或 MCP server。
-- **mod**（`hooks/register.ts`，Claude Code 用）：提供安装用的 tool `mcp__kirby__install`，以及两个供模型审查用的只读 tool：`mcp__kirby__check` 不弹对话框、只运行安装前检查，`mcp__kirby__file` 从检查读取的位置读取单个文件。通过安装 tool 安装时，会先弹出两层对话框等你决定。
+- **mod**（`hooks/register.ts`，Claude Code 用）：提供安装用的 tool `mcp__kirby__install`、两个供模型审查用的只读 tool（`mcp__kirby__check` 不弹对话框、只运行安装前检查，`mcp__kirby__file` 从检查读取的位置读取单个文件），以及只能使用这两个 tool 的审查 agent `kirby:reviewer`。kirby 让这两个只读 tool 不经权限询问就运行。通过安装 tool 安装时，会先弹出两层对话框等你决定。
 - **MCP server**（`codex/server.py`，Codex 用）：提供搜索用的 tool、同样的 `check` 和 `file` tool，以及同样会弹出两层对话框的 `install` tool。
 
 skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬性拦截：模型仍然可以自己执行 `claude mcp add`、`codex mcp add` 之类的安装命令。
@@ -58,9 +58,10 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 ### 模型审查
 
-扫描或查询找到 `danger` 或 `warn` 的发现（包括组合发现）时，还会由模型读取文件，报告看起来有害的地方（[ADR 0002](adr/0002-model-review-in-a-subagent.md)）。什么都没找到、或只有 `info` 命中的工具不做审查，所以不必多等，也不多花 token。
+扫描或查询找到 `danger` 或 `warn` 的发现（包括组合发现）时，还会由模型读取文件，报告看起来有害的地方（[ADR 0002](adr/0002-model-review-in-a-subagent.md)）。什么都没找到、或只有 `info` 命中的工具不做审查，所以不必多等，也不多花 token。被拦下的安装也不做：反正不会提供“安装”。
 
-- **流程。** 调用安装 tool 之前，模型先调用 `check` tool：它不弹对话框，运行同样的安装前检查，说明需不需要审查、文件在哪里（检查的那个 commit 的 repo，或 MCP server 的包）、是哪些文件。需要审查时，模型用 skill 里固定的提示启动一个 subagent（Claude Code 用 Agent tool，Codex 用它的多 agent tool）。subagent 只通过 `file` tool 读取那个 commit 或那个包里的文件，也不会被告知其他检查找到什么，所以是独立审查。接着模型调用安装 tool，传入审查结果和检查给出的 sha。
+- **流程。** 调用安装 tool 之前，模型先调用 `check` tool：它不弹对话框，运行同样的安装前检查，说明需不需要审查、文件在哪里（检查的那个 commit 的 repo，或 MCP server 的包）、是哪些文件。需要审查时，模型启动一个 subagent：Claude Code 用 Agent tool 启动 kirby 的审查 agent `kirby:reviewer`，Codex 用它的多 agent tool 启动 subagent，并给它 skill 里固定的提示。subagent 只通过 `file` tool 读取那个 commit 或那个包里的文件，也不会被告知其他检查找到什么，所以是独立审查。接着模型调用安装 tool，传入审查结果和检查给出的 sha。
+- **Claude Code 的审查 agent。** `kirby:reviewer` 只能使用 `check` 和 `file`，所以即使被审查的文件里有针对它的指令，它也没有 Bash 或写入的 tool 可以滥用。它的指示是它自己的；模型只告诉它文件在哪里、是哪些。kirby 的 hook 让 `check` 和 `file` 不经权限询问就运行，其他 tool 一律不放行：这两个 tool 只读取 GitHub 和包的内容，不会写入你的电脑。你的设置或组织设置里的 deny 规则仍然会拦下它们。在 Codex 里，这些 tool 声明自己只读取，所以 Codex 直接运行、不先询问。
 - **审查的对象。** 就是要安装的东西：skill 的文件、plugin 的来源（在另一个 repo 也一样），MCP server 则是检查时解开的已发布包。读取包时，`file` 会重新下载同一个归档文件，比对 registry 的哈希和检查给出的 sha256，再解开到临时文件夹；里面的东西都不会安装或运行。
 - **结果。** 最多 5 项发现，每项是检查列出的某个文件、行号，以及一句不超过 120 个字符、不引用文件内容的理由；或是附上理由的 `could_not_run`。安装 tool 会检查这个结构、去掉隐藏字符和控制字符；不符合的结果在任何对话框出现前就会被拒绝，让模型重新发送。
 - **在对话框里。** 每项发现是一行 `warn`，排在检查的各行之后，标上 `(model review, as reported by the model)`；没有发现时则用一行说明。审查的发现只会增加：不会移除或降低其他发现，也不会拦下安装。

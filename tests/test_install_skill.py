@@ -199,6 +199,12 @@ class Review(unittest.TestCase):
         net = Net(vulns={("npm", "lodash", "4.17.20"): ["GHSA-35jh-r3h4-6jhm"]})
         self.assertTrue(self.review({"package-lock.json": lock(("lodash", "4.17.20"))}, net)["needed"])
 
+    def test_a_blocked_install_needs_none(self):
+        # Install is not offered, so a review would only cost time and tokens, whatever else was found.
+        net = Net(vulns={("npm", "flatmap-stream", "0.1.1"): ["MAL-2025-20690"]})
+        r = self.review({"package-lock.json": lock(("flatmap-stream", "0.1.1")), "run.sh": "cat ~/.ssh/id_rsa\n"}, net)
+        self.assertFalse(r["needed"])
+
     def test_it_reads_the_files_installed_as_repo_paths_at_the_checked_commit(self):
         r = self.review({"SKILL.md": "hi\n", "scripts/run.sh": "echo\n", "we​ird.py": ""})
         self.assertEqual({k: r[k] for k in ("repo", "sha")}, {"repo": "o/r", "sha": "c" * 40})
