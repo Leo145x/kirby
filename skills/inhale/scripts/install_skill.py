@@ -170,10 +170,10 @@ def combinations(hits):
     return [(name, f"{name}: {what} ({' + '.join(pair)})") for name, _, pair, what in COMBINATIONS if set(pair) <= found]
 
 
-def scan_lines(hits, unread, scanned):
+def scan_lines(hits, unread, scanned, covered="the ones installed"):
     """The scan as dialog facts: what was covered, then the combination findings, then each flagged
     rule, led by its severity, with where it hit; warn rules first."""
-    lines = [f"scan: {scanned} files, the ones installed; a pattern match, not a safety review"
+    lines = [f"scan: {scanned} files, {covered}; a pattern match, not a safety review"
              + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
     if not hits:
         return lines + ["flagged: nothing"]
@@ -191,22 +191,24 @@ def scan_lines(hits, unread, scanned):
     return lines
 
 
-def check_lines(hits, unread, scanned, looked):
+def check_lines(hits, unread, scanned, looked, covered="the ones installed"):
     """The pre-install check as dialog facts: one line when the pattern scan and the lookups (looked,
     lookups.check's result) found nothing and nothing went unscanned or unchecked (docs/adr/0005);
-    otherwise the scan's lines, then the lookups'."""
+    otherwise the scan's lines, then the lookups'. covered says which files the scan read."""
     if hits or unread or not looked["nothing_found"]:
-        return scan_lines(hits, unread, scanned) + looked["lines"]
+        return scan_lines(hits, unread, scanned, covered) + looked["lines"]
     files = lookups.plural(scanned, "file", "files")
     return [f"check: nothing found ({files}, {looked['nothing_found']}, advisory and malware lookups)"]
 
 
-def scan_note(repo, folder, sha, hits):
-    """The scan for the model, so it can read and explain a hit: repo paths at the scanned commit."""
+def scan_note(repo, folder, sha, hits, place=None):
+    """The scan for the model, so it can read and explain a hit: repo paths at the scanned commit, or, with
+    place (an MCP server's package), paths inside it."""
+    where = place or f"{repo} at commit {sha}"
     if not hits:
-        return f"scan: the dialog showed the user no pattern hits in {repo} at commit {sha} (a pattern match, not a safety review)"
+        return f"scan: the dialog showed the user no pattern hits in {where} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
-    lines = [f"scan: the dialog showed the user these pattern hits in {repo} at commit {sha}:"]
+    lines = [f"scan: the dialog showed the user these pattern hits in {where}" + (", as paths inside it:" if place else ":")]
     lines += [f"  {SEVERITY[name]} {line}" for name, line in combinations(hits)]
     lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
               for h in by_severity(hits)[:NOTED_HITS]]

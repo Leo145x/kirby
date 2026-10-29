@@ -34,7 +34,7 @@ class Net:
         self.vulns, self.commit, self.advisories_, self.tools, self.resolve, self.fail = (
             vulns or {}, list(commit), list(advisories), tools, resolve or {}, fail)
         self.records = {r["id"]: r for r in records}
-        self.queries, self.ran = [], []
+        self.queries, self.ran, self.given = [], [], []
 
     def querybatch(self, queries):
         if "osv" in self.fail:
@@ -65,6 +65,7 @@ class Net:
     def run(self, argv, cwd=None):
         """npm writes a lockfile into cwd; uv prints the pins. resolve maps the tool to what it gives."""
         self.ran.append((list(argv), sorted(p.name for p in Path(cwd).iterdir()) if cwd else None))
+        self.given.append({p.name: p.read_text() for p in Path(cwd).iterdir()} if cwd else {})
         out = self.resolve.get(argv[0])
         if out is None:
             return False, f"{argv[0]} ERR! could not resolve"
@@ -243,6 +244,83 @@ class TheToolItself(unittest.TestCase):
         r = check({"SKILL.md": ""}, Net(fail=("gh",)))
         self.assertEqual(r["lines"][1:], ["unchecked: advisory lookup for this repo's advisories (gh api: HTTP 404)",
                                           "advisory lookup: nothing found in the rest", "malware lookup: nothing found"])
+
+
+class ThePackageOfAnMcpServer(unittest.TestCase):
+    """check_package: an MCP server's published package at the version the command is pinned to, and the
+    packages it depends on as its package manager would resolve them now."""
+
+    def package(self, ecosystem, name, version, net, direct=(), why=None):
+        return lookups.check_package("o/r", ecosystem, name, version, list(direct), net, why)
+
+    def test_npm_resolves_the_tree_of_the_package_itself_and_an_advisory_for_it_is_danger(self):
+        net = Net(resolve={"npm": lock(("srv", "1.2.3"), ("lodash", "4.17.20"))},
+                  vulns={("npm", "srv", "1.2.3"): ["GHSA-srv1-srv1-srv1"]},
+                  records=[{"id": "GHSA-srv1-srv1-srv1", "summary": "SSRF", "database_specific": {"severity": "LOW"}}])
+        r = self.package("npm", "srv", "1.2.3", net)
+        argv, files = net.ran[0]
+        self.assertEqual((argv[:4], files), (["npm", "install", "--package-lock-only", "--ignore-scripts"], ["package.json"]))
+        self.assertEqual(json.loads(net.given[0]["package.json"])["dependencies"], {"srv": "1.2.3"})
+        self.assertEqual(net.queries, [{"package": {"name": "srv", "ecosystem": "npm"}, "version": "1.2.3"},
+                                       {"package": {"name": "lodash", "ecosystem": "npm"}, "version": "4.17.20"}])
+        self.assertEqual(r["lines"], [
+            "dependencies: srv@1.2.3: 1 npm, versions resolved at check time",
+            "danger: the package srv@1.2.3 (npm) is affected by 1 published vulnerability (GHSA-srv1-srv1-srv1)",
+            "malware lookup: nothing found",
+        ])
+        self.assertIn("\n  danger advisory the package srv@1.2.3 (npm) GHSA-srv1-srv1-srv1 low: SSRF\n", r["note"])
+
+    def test_pypi_resolves_with_uv_and_the_package_is_not_its_own_dependency(self):
+        net = Net(resolve={"uv": "mcp-server-x==1.0\nrequests==2.19.0\n"})
+        r = self.package("PyPI", "MCP_Server.X", "1.0", net)
+        self.assertEqual(net.given[0], {"requirements.txt": "MCP_Server.X==1.0\n"})
+        self.assertEqual(r["nothing_found"], "1 PyPI dependency")
+        self.assertEqual(r["note"], "lookups: the dialog showed the user no findings from the advisory and malware lookups "
+                                    "for the package MCP_Server.X@1.0 (PyPI)\ndependencies: MCP_Server.X@1.0: 1 PyPI, "
+                                    "versions resolved at check time")
+
+    def test_without_npm_its_direct_dependencies_are_looked_up_by_name(self):
+        net = Net(tools=(), vulns={("npm", "evil", None): ["MAL-2026-9"]})
+        r = self.package("npm", "srv", "1.2.3", net, direct=["evil", "zod"])
+        self.assertTrue(r["blocked"])
+        self.assertEqual(r["lines"], [
+            "dependencies: srv@1.2.3: 2 npm, names only",
+            "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+            "danger: evil (npm) is listed as a malicious package (MAL-2026-9); matched by name, the version was not resolved",
+            "unchecked: advisory lookup for the dependencies of srv@1.2.3 (npm not found, so versions were not resolved)",
+            "advisory lookup: nothing found in the rest",
+        ])
+
+    def test_a_known_malicious_package_itself_blocks(self):
+        net = Net(resolve={"npm": lock(("srv", "1.2.3"))}, vulns={("npm", "srv", "1.2.3"): ["MAL-2026-1"]})
+        r = self.package("npm", "srv", "1.2.3", net)
+        self.assertTrue(r["blocked"])
+        self.assertIn("danger: the package srv@1.2.3 (npm) is listed as malicious (MAL-2026-1)", r["lines"])
+        self.assertIn("because the malware lookup lists the package srv@1.2.3 (npm) as known-malicious", r["note"])
+
+    def test_of_the_repos_advisories_only_those_for_this_package_count(self):
+        def advisory(ghsa, *packages):
+            return {"ghsa_id": ghsa, "severity": "medium", "state": "published", "withdrawn_at": None,
+                    "vulnerabilities": [{"package": {"ecosystem": e, "name": n}} for e, n in packages]}
+        advisories = [advisory("GHSA-1111-1111-1111", ("npm", "other-server")), advisory("GHSA-2222-2222-2222", ("pip", "my_srv")),
+                      advisory("GHSA-3333-3333-3333"), advisory("GHSA-4444-4444-4444", ("npm", "my-srv"))]
+        r = self.package("PyPI", "My-Srv", "1.0", Net(resolve={"uv": "my-srv==1.0\n"}, advisories=advisories))
+        self.assertIn("warn: this repo published 2 advisories (GHSA-2222-2222-2222 medium, GHSA-3333-3333-3333 medium); "
+                      "could not tell whether they affect the package My-Srv@1.0 (PyPI)", r["lines"])
+
+    def test_without_a_version_only_the_malware_lookup_of_the_package_runs(self):
+        net = Net(vulns={("npm", "srv", None): ["GHSA-aaaa-aaaa-aaaa"]})
+        r = self.package("npm", "srv", None, net, why="npm registry: HTTP 404")
+        self.assertEqual(net.queries, [{"package": {"name": "srv", "ecosystem": "npm"}}])
+        self.assertEqual(net.ran, [])
+        self.assertEqual(r["lines"], [
+            "dependencies: not known",
+            "unchecked: advisory lookup for the package srv (npm), the dependencies of srv; malware lookup for the "
+            "dependencies of srv (npm registry: HTTP 404)",
+            "advisory lookup: nothing found in the rest",
+            "malware lookup: nothing found in the rest",
+        ])
+        self.assertIsNone(r["nothing_found"])
 
 
 class Ratings(unittest.TestCase):
