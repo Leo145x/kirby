@@ -10,8 +10,9 @@ packages it names: those in a server.json, then the name in a package.json, then
 the root or up to two folders down. Nothing ties such a package to the repo (the MCP registry checks a
 package against a server name, not a repo), so the dialog says the repo names it and nobody verified that.
 
-When the command runs one of those packages (through npx, uvx and the like), the check takes the version the
-command asks for, else the one server.json gives, else the registry's latest; downloads that version's npm
+When the command runs one of those packages (through npx, uvx and the like: the package the runner itself runs,
+not a later word), the check takes the version the command asks for (for a range, the highest version the
+registry has that it matches), else the one server.json gives, else the registry's latest; downloads that version's npm
 tarball or PyPI wheel (or sdist), checks it against the registry's hash and unpacks it into a temporary
 folder, never installing, importing or running any of it; runs the pattern scan (install_skill.py's) on its
 files and the advisory and malware lookups (lookups.check_package) on it and its dependencies; and rewrites
@@ -46,7 +47,7 @@ from urllib.parse import quote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from install_skill import VALID_REPO, VALID_SHA, check_lines, listing, review, scan, scan_note  # noqa: E402
-from lookups import Failed, first_line, py_name, shown  # noqa: E402
+from lookups import Failed, first_line, package_key, py_name, shown  # noqa: E402
 
 try:
     import tomllib
@@ -59,9 +60,16 @@ MANIFESTS = ("server.json", "package.json", "pyproject.toml")
 DEPTH = 3
 MAX_MANIFESTS = 30
 REGISTRY_TYPES = {"npm": "npm", "pypi": "PyPI"}
-# The commands that fetch a package from each registry and run it.
+# The commands that fetch a package from each registry and run it, and the subcommand that does it, for those
+# that need one.
 RUNNERS = {"npx": "npm", "bunx": "npm", "pnpx": "npm", "pnpm": "npm", "yarn": "npm", "npm": "npm", "bun": "npm",
            "uvx": "PyPI", "uv": "PyPI", "pipx": "PyPI"}
+SUBCOMMANDS = {"pnpm": [["dlx"]], "yarn": [["dlx"]], "npm": [["exec"], ["x"]], "bun": [["x"]], "uv": [["tool", "run"]],
+               "pipx": [["run"]]}
+# The runners' options that name the package to run, and those that take a value of another kind.
+PACKAGE_OPTIONS = {"npm": ("--package", "-p"), "PyPI": ("--from", "--spec")}
+VALUE_OPTIONS = {"npm": ("--registry", "--cache", "--userconfig", "--workspace", "-w", "--call", "-c"),
+                 "PyPI": ("--python", "-p", "--with", "--index", "--index-url", "--default-index", "--extra-index-url")}
 CONTAINERS = ("docker", "podman")
 NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$", re.I)
 NPM_EXACT = re.compile(r"^v?\d+\.\d+\.\d+([-+][0-9A-Za-z.+-]*)?$")
@@ -126,7 +134,7 @@ def declarations(repo, net):
     found, seen = [], set()
     for path, text in zip(wanted, texts):
         for eco, name, version in named(path.rsplit("/", 1)[-1], text):
-            key = (eco, py_name(name) if eco == "PyPI" else name.lower())
+            key = (eco, package_key(eco, name))
             if key not in seen:
                 seen.add(key)
                 found.append({"ecosystem": eco, "name": name, "version": version, "file": path})
@@ -179,38 +187,75 @@ def runner(word):
 
 
 def split_word(eco, word):
-    """A command word as (name, how, spec): how is "exact", "latest", "tag" or "range"; None if the word is not
-    a package of that ecosystem."""
+    """A command word as (name, how, spec): how is "exact", "latest", "tag" or "range" (spec is then the range, as
+    the registry's package manager reads it); None if the word is not a package of that ecosystem."""
     if eco == "npm":
         at = word.find("@", 1)
         name, spec = (word[:at], word[at + 1:]) if at > 0 else (word, "")
         if not NPM_NAME.match(name):
             return None
-        how = ("latest" if spec in ("", "latest") else "exact" if NPM_EXACT.match(spec) else "tag" if NPM_TAG.match(spec)
-               else "range")
+        how = ("latest" if spec in ("", "latest") else "exact" if NPM_EXACT.match(spec)
+               else "tag" if NPM_TAG.match(spec) and spec not in ("x", "X") else "range")
         return name, how, spec
     m = PY_WORD.match(word)
     if not m:
         return None
+    if m.group(5):
+        return m.group(1), "range", m.group(5)
     spec = m.group(4) or ""
-    how = ("range" if m.group(5) else "latest" if spec in ("", "latest") else "exact" if PY_EXACT.match(spec) else "range")
-    return m.group(1), how, spec
+    if spec in ("", "latest"):
+        return m.group(1), "latest", ""
+    if PY_EXACT.match(spec):
+        return m.group(1), "exact", spec
+    return m.group(1), "range", f"=={spec}" if m.group(3) == "==" else spec
+
+
+def package_word(name, words):
+    """Where the package a runner (name) runs is among the words after it: (index, prefix, word), where prefix is
+    the option the word is joined to (`--from=`), or None. That is the value of the runner's package option, else
+    the first word that is not an option: the words after it are the server's own arguments."""
+    eco, i = RUNNERS[name], 0
+    if name in SUBCOMMANDS:
+        sub = next((s for s in SUBCOMMANDS[name] if words[:len(s)] == s), None)
+        if sub is None:  # `npm run`, `uv run` and the like run nothing from the registry
+            return None
+        i = len(sub)
+    found = None
+    while i < len(words):
+        word = words[i]
+        if word == "--":
+            return found or ((i + 1, "", words[i + 1]) if i + 1 < len(words) else None)
+        if not word.startswith("-"):
+            return found or (i, "", word)
+        option, eq, value = word.partition("=")
+        if option in PACKAGE_OPTIONS[eco]:
+            if found:  # two packages: which one runs is not clear
+                return None
+            found = (i, option + "=", value) if eq else (i + 1, "", words[i + 1]) if i + 1 < len(words) else None
+            i += 1 if eq else 2
+        else:
+            i += 2 if option in VALUE_OPTIONS[eco] and not eq else 1
+    return found
 
 
 def find(args, declared):
-    """The declared package the command runs: (package, index of its word in args, how, spec), or None."""
+    """The declared package the command runs: (package, index of its word in args, the option the word is joined
+    to, the word, how, spec), or None."""
     start, words = command_of(args)
-    eco = next((RUNNERS[runner(w)] for w in words[:3] if runner(w) in RUNNERS), None)
-    if eco is None:
+    at = next((i for i, w in enumerate(words[:3]) if runner(w) in RUNNERS), None)
+    if at is None:
         return None
-    by_key = {(d["ecosystem"], py_name(d["name"]) if d["ecosystem"] == "PyPI" else d["name"].lower()): d for d in declared}
-    for i, word in enumerate(words):
-        split = split_word(eco, word) if not word.startswith("-") else None
-        if split:
-            d = by_key.get((eco, py_name(split[0]) if eco == "PyPI" else split[0].lower()))
-            if d:
-                return d, start + i, split[1], split[2]
-    return None
+    name = runner(words[at])
+    found = package_word(name, words[at + 1:])
+    split = split_word(RUNNERS[name], found[2]) if found else None
+    if not split:
+        return None
+    eco = RUNNERS[name]
+    d = next((d for d in declared if (d["ecosystem"], package_key(d["ecosystem"], d["name"])) == (eco, package_key(eco, split[0]))), None)
+    if not d:
+        return None
+    index, prefix, word = found
+    return d, start + at + 1 + index, prefix, word, split[1], split[2]
 
 
 def pinned(eco, word, version):
@@ -262,6 +307,185 @@ def release(eco, name, spec, net):
     reqs = [r.split(";", 1)[0] for r in info.get("requires_dist") or [] if isinstance(r, str) and "extra ==" not in r]
     return {"version": info["version"], "url": f["url"], "file": f["filename"],
             "hash": ("sha256", (f.get("digests") or {}).get("sha256")), "direct": sorted(lookups.requirement_names(reqs))}
+
+
+def matching(eco, name, spec, net):
+    """The highest version of a package the registry has that the range spec matches."""
+    if eco == "npm":
+        versions = list((registry(net, f"{NPM_REGISTRY}/{quote(name, safe='@')}").get("versions") or {}))
+    else:
+        releases = registry(net, f"{PYPI}/{quote(py_name(name))}/json").get("releases") or {}
+        # A version with no files, or only yanked ones, is not one an installer picks.
+        versions = [v for v, files in releases.items() if isinstance(files, list)
+                    and any(isinstance(f, dict) and not f.get("yanked") for f in files)]
+    version = highest(eco, versions, spec)
+    if version is None:
+        raise Failed(f"no version of {shown(name, 80)} matches {shown(spec, 80)}")
+    return version
+
+
+# ---- version ranges ----------------------------------------------------------------------------------
+
+class Unreadable(Failed):
+    """A range written in a way kirby does not read."""
+
+
+def highest(eco, versions, spec):
+    """The highest of versions that the range spec matches, as npm (node-semver) or pip (PEP 440) reads it; None
+    if none does. A pre-release counts only where the range names one (npm: of the same version), as both do.
+    Unreadable if kirby does not read spec."""
+    if eco == "npm":
+        sets = [npm_set(s) for s in spec.split("||")]
+        parsed = [(v, semver(v)) for v in versions]
+        ok = [(order(key), v) for v, key in parsed if key and any(npm_matches(key, s) for s in sets)]
+    else:
+        specs = [pep440_spec(s) for s in spec.split(",")]
+        parsed = [(v, pep440(v)) for v in versions]
+        found = [(p, v) for v, p in parsed if p and all(pep440_matches(p, s) for s in specs)]
+        explicit = any(s[1]["pre"] for s in specs if s[0] in ("==", ">=", "<=", "~=", "==="))
+        finals = [(p, v) for p, v in found if not p["pre"]]
+        # pip takes a pre-release when the range names one, or when nothing else matches.
+        ok = [(p["key"], v) for p, v in (found if explicit or not finals else finals)]
+    return max(ok)[1] if ok else None
+
+
+SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
+PARTIAL = re.compile(r"^v?(\d+|[xX*])(?:\.(\d+|[xX*])(?:\.(\d+|[xX*])(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?)?)?$")
+NPM_OPERATOR = re.compile(r"^(<=|>=|<|>|=|~>|~|\^)?(.*)$")
+# The lowest pre-release of a version: npm's upper bounds stop before it, so they leave out its pre-releases too.
+LOWEST = ((0, 0, ""),)
+
+
+def pre_key(pre):
+    """npm's order of pre-release identifiers: numbers by value, before words; more of them come later."""
+    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")) if pre else None
+
+
+def semver(text):
+    """A version as (major, minor, patch) and its pre-release key (None for a release), or None."""
+    m = SEMVER.match(text)
+    return ((int(m.group(1)), int(m.group(2)), int(m.group(3))), pre_key(m.group(4))) if m else None
+
+
+def order(key):
+    release, pre = key
+    return (release, 1, ()) if pre is None else (release, 0, pre)
+
+
+def npm_set(text):
+    """One `||` part of a range as (the comparators every match meets, the versions whose pre-releases it names)."""
+    text = re.sub(r"(<=|>=|<|>|=|~>|~|\^)\s+", r"\1", text.strip())
+    hyphen = re.fullmatch(r"(\S+)\s+-\s+(\S+)", text)
+    parts = [(">=", hyphen.group(1)), ("<=", hyphen.group(2))] if hyphen else \
+        [NPM_OPERATOR.match(p).groups() for p in text.split()]
+    comparators, named = [], set()
+    for op, word in parts:
+        m = PARTIAL.match(word)
+        if not m:
+            raise Unreadable(f"not a range kirby reads: {word!r}")
+        major, minor, patch = (None if g in (None, "x", "X", "*") else int(g) for g in m.groups()[:3])
+        pre = pre_key(m.group(4)) if major is not None and minor is not None and patch is not None else None
+        if pre:
+            named.add((major, minor, patch))
+        comparators += desugar(op or "", major, minor, patch, pre)
+    return comparators, named
+
+
+def desugar(op, major, minor, patch, pre):
+    """A comparator as plain (operator, version key) bounds, as node-semver reads it."""
+    if major is None:
+        return [("<", ((0, 0, 0), LOWEST))] if op in ("<", ">") else []
+    full = minor is not None and patch is not None
+    low = ((major, minor or 0, patch or 0), pre)
+
+    def below(*release):
+        return ("<", (release, LOWEST))
+    if op in ("", "="):
+        if full:
+            return [("=", low)]
+        return [(">=", low), below(major + 1, 0, 0) if minor is None else below(major, minor + 1, 0)]
+    if op in ("~", "~>"):
+        return [(">=", low), below(major + 1, 0, 0) if minor is None else below(major, minor + 1, 0)]
+    if op == "^":
+        top = (below(major + 1, 0, 0) if major > 0 or minor is None else below(0, minor + 1, 0) if minor > 0 or patch is None
+               else below(0, 0, patch + 1))
+        return [(">=", low), top]
+    if op == ">":
+        return [(">", low)] if full else [(">=", ((major + 1, 0, 0) if minor is None else (major, minor + 1, 0), None))]
+    if op == ">=":
+        return [(">=", low)]
+    if op == "<":
+        return [("<", low)] if full else [below(major, minor or 0, 0)]
+    return [("<=", low)] if full else [below(major + 1, 0, 0) if minor is None else below(major, minor + 1, 0)]
+
+
+def npm_matches(key, comparator_set):
+    comparators, named = comparator_set
+    if key[1] is not None and key[0] not in named:
+        return False
+    k = order(key)
+    test = {"=": lambda b: k == b, "<": lambda b: k < b, "<=": lambda b: k <= b, ">": lambda b: k > b, ">=": lambda b: k >= b}
+    return all(test[op](order(bound)) for op, bound in comparators)
+
+
+PEP440 = re.compile(r"^v?(?:(\d+)!)?(\d+(?:\.\d+)*)(?:[-_.]?(a|b|c|rc|alpha|beta|pre|preview)[-_.]?(\d*))?"
+                    r"(?:-(\d+)|[-_.]?(?:post|rev|r)[-_.]?(\d*))?(?:[-_.]?dev[-_.]?(\d*))?(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?$", re.I)
+PRE_LETTERS = {"a": 0, "alpha": 0, "b": 1, "beta": 1, "c": 2, "rc": 2, "pre": 2, "preview": 2}
+PY_OPERATOR = re.compile(r"^\s*(~=|===|==|!=|<=|>=|<|>)\s*(\S+?)\s*$")
+
+
+def pep440(text):
+    """A version as PEP 440 orders it: {key, base: (epoch, release), pre: whether it is a pre-release, post}, or None."""
+    m = PEP440.match(text.strip())
+    if not m:
+        return None
+    epoch, release, letter, pre_n, post_dash, post_n, dev_n = m.groups()
+    parts = [int(p) for p in release.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    # A part that is there with no number (`1.0.post`, `1.0.dev`) matches as "", one that is not as None.
+    post, dev = post_dash if post_dash is not None else post_n, dev_n
+    pre = (PRE_LETTERS[letter.lower()], int(pre_n or 0)) if letter else None
+    # Infinities as (0,) below and (2,) above any value, as the packaging library orders them.
+    pre_order = (0,) if pre is None and post is None and dev is not None else (2,) if pre is None else (1, *pre)
+    key = (int(epoch or 0), tuple(parts), pre_order, (0,) if post is None else (1, int(post or 0)),
+           (2,) if dev is None else (1, int(dev or 0)))
+    return {"key": key, "base": (int(epoch or 0), tuple(parts)), "release": [int(p) for p in release.split(".")],
+            "pre": pre is not None or dev is not None, "post": post is not None, "plain": pre is None and post is None and dev is None}
+
+
+def pep440_spec(text):
+    m = PY_OPERATOR.match(text)
+    if not m:
+        raise Unreadable(f"not a range kirby reads: {text!r}")
+    op, word = m.groups()
+    wildcard = op in ("==", "!=") and word.endswith(".*")
+    v = pep440(word[:-2] if wildcard else word)
+    if v is None or (wildcard and not v["plain"]) or (op == "~=" and len(v["release"]) < 2):
+        raise Unreadable(f"not a range kirby reads: {text!r}")
+    return op, v, wildcard, word
+
+
+def pep440_matches(p, spec):
+    op, v, wildcard, word = spec
+    if op == "===":
+        return False  # arbitrary equality compares text; a release on PyPI is never written that way here
+    if wildcard or op == "~=":
+        prefix = v["release"][:-1] if op == "~=" else v["release"]
+        padded = list(p["base"][1]) + [0] * len(prefix)
+        same = p["base"][0] == v["base"][0] and padded[:len(prefix)] == prefix
+        if op == "~=":
+            return same and p["key"] >= v["key"]
+        return same if op == "==" else not same
+    if op in ("==", "!="):
+        return (p["key"] == v["key"]) == (op == "==")
+    if op == ">=":
+        return p["key"] >= v["key"]
+    if op == "<=":
+        return p["key"] <= v["key"]
+    if op == ">":
+        return p["key"] > v["key"] and not (p["post"] and not v["post"] and p["base"] == v["base"])
+    return p["key"] < v["key"] and not (p["pre"] and not v["pre"] and p["base"] == v["base"])
 
 
 def verified(data, hashed):
@@ -367,26 +591,27 @@ def check(repo, args, net=None):
         names = ", ".join(shown(d["name"], 60) for d in declared[:3]) + (f", … (+{len(declared) - 3})" if len(declared) > 3 else "")
         return unchecked(f"the command runs none of the packages this repo names: {names}")
 
-    pkg, index, how, spec = found
+    pkg, index, prefix, word, how, spec = found
     eco, name = pkg["ecosystem"], pkg["name"]
-    # The version the command asks for, else the one server.json gives, else (None) the registry's latest.
-    asked = {"exact": spec, "tag": spec, "latest": pkg["version"]}
     rel, why = None, None
-    if how == "range":
-        why = f"the command asks for {shown(args[index], 80)}, a range kirby does not resolve"
-    else:
-        try:
-            rel = release(eco, name, asked[how], net)
-        except Failed as e:
-            why = str(e)
+    try:
+        # The version the command asks for (the highest a range matches), else the one server.json gives, else
+        # (None) the registry's latest.
+        asked = matching(eco, name, spec, net) if how == "range" else spec if how in ("exact", "tag") else pkg["version"]
+        rel = release(eco, name, asked, net)
+    except Unreadable:
+        why = f"the command asks for {shown(word, 80)}, a range kirby does not resolve"
+    except Failed as e:
+        why = str(e)
     version = rel["version"] if rel else None
     out["package"] = {"ecosystem": eco, "name": name, "version": version, "declared_in": pkg["file"]}
     what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
     lines = [f"package: {what} ({eco}), named by this repo's {shown(pkg['file'])}; not verified to come from this repo"]
     if rel:
-        out["mcp_args"][index] = pinned(eco, args[index], version)
-        lines.append(f"pinned: only {shown(name, 80)}, to {shown(version, 40)}; its dependencies are not pinned, so they "
-                     "may differ from those checked when the server starts")
+        out["mcp_args"][index] = prefix + pinned(eco, word, version)
+        ranged = f", the highest version matching {shown(spec, 80)}" if how == "range" else ""
+        lines.append(f"pinned: only {shown(name, 80)}, to {shown(version, 40)}{ranged}; its dependencies are not pinned, "
+                     "so they may differ from those checked when the server starts")
     else:
         lines.append(f"not pinned: kirby could not tell which version of {shown(name, 80)} the command installs ({why}); "
                      "it installs as given")

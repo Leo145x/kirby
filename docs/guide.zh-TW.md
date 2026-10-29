@@ -51,7 +51,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 
 **MCP server。** MCP server 每次啟動時執行的是它的指令抓到的套件（`npx -y <package>`、`uvx <package>`），所以檢查的是那個套件，不是 repo 的檔案：
 
-- **哪個套件。** repo 只用來得知它寫了哪些套件：`server.json` 的 `packages`，其次是 `package.json`（不含 private 的）的 `name`，再其次是 `pyproject.toml` 的 name，位置可以在根目錄或往下最多兩層資料夾，所以一個 repo 放了好幾個 server 也行。kirby 檢查其中指令實際執行的那一個。套件和 repo 之間沒有任何綁定（MCP registry 驗證的是套件和 server 名稱的對應，不是和 repo 的對應），所以對話框的 `package:` 那行會寫出是哪個檔案寫了它，並註明沒有驗證它出自這個 repo。
+- **哪個套件。** repo 只用來得知它寫了哪些套件：`server.json` 的 `packages`，其次是 `package.json`（不含 private 的）的 `name`，再其次是 `pyproject.toml` 的 name，位置可以在根目錄或往下最多兩層資料夾，所以一個 repo 放了好幾個 server 也行。kirby 檢查其中指令實際執行的那一個：交給 `npx`、`uvx` 這類工具執行的那個套件（`--package` 或 `--from` 的值，否則是工具和它的選項之後的第一個字），而不是指令列上更後面的字，那些是傳給該套件的參數。指令指定的是範圍時，例如 `pkg@^1.2` 或 `pkg>=1,<2`，kirby 取 registry 上符合該範圍的最高版本，檢查並鎖定那個版本。套件和 repo 之間沒有任何綁定（MCP registry 驗證的是套件和 server 名稱的對應，不是和 repo 的對應），所以對話框的 `package:` 那行會寫出是哪個檔案寫了它，並註明沒有驗證它出自這個 repo。
 - **哪個版本。** 指令指定的版本（`pkg@1.2.3`、`pkg==1.2.3`，或 `pkg@next` 這類 tag）；沒有的話用 `server.json` 給的版本；再沒有就用 registry 上的最新版。
 - **檢查什麼。** 那個版本的 npm tarball，或它適用所有平台的 PyPI wheel（沒有的話用 sdist），從 registry 下載、和 registry 給的 hash 比對後，解開到一個暫存資料夾：只解出一般檔案，不會寫到那個資料夾之外，也不會安裝、import 或執行其中任何東西。掃描跑在這些檔案上。查詢則查套件本身的這個版本，以及它的相依套件，版本的算法和 skill 一樣（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。repo 自己發布的安全公告，只算有寫到這個套件或沒寫任何套件的那些。
 
@@ -95,7 +95,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 - 算不出版本的相依套件的漏洞查詢（沒有 npm 或 uv、它們執行失敗，或有些套件不是來自 npm registry）；
 - 來源不在 GitHub 上的 plugin（掃描和兩項查詢）；
 - 用 container image（`docker run …`）執行或用 URL 連線的遠端 MCP server、沒寫任何 npm 或 PyPI 套件的 repo，以及指令執行的不是 repo 寫的任何套件：一行 `unchecked:` 說明原因，指令維持原樣；
-- kirby 無法確定會拿到哪個版本的 MCP server（registry 沒有回應，或指令指定的是 `pkg@^1.2` 這類範圍）：對話框會顯示 `not pinned:`，掃描是 unchecked，只用套件名稱做惡意套件查詢；
+- kirby 無法確定會拿到哪個版本的 MCP server（registry 沒有回應、沒有版本符合指令指定的範圍，或 kirby 讀不懂那個範圍）：對話框會顯示 `not pinned:`，掃描是 unchecked，只用套件名稱做惡意套件查詢；
 - 在 Claude Code 裡，GitHub 沒有回應，無法判斷你已經加入的 marketplace 是否落後於它的 repo；
 - 該做卻沒做成的模型審查（見下面的模型審查）。
 
