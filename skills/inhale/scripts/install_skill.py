@@ -83,7 +83,8 @@ def describe(files):
 # fetch URLs or run shell commands. Rules are (name, pattern, which files: all, md or script).
 RULES = [
     # Characters a reader cannot see but the model reads: zero-width, bidi controls, Unicode tags.
-    ("hidden-unicode", re.compile("[​-‍⁠﻿‪-‮⁦-⁩\U000e0000-\U000e007f]"), "all"),
+    ("hidden-unicode", re.compile(
+        "[\U0000200b-\U0000200d\U00002060\U0000feff\U0000202a-\U0000202e\U00002066-\U00002069\U000e0000-\U000e007f]"), "all"),
     ("injection-phrase", re.compile(
         r"\bignore (all |any )?(the )?(previous|prior|above|earlier) (instructions|prompts?)\b"
         r"|\b(do not|don't|never) (tell|inform|show|mention)\b[^.\n]{0,20}\buser\b", re.I), "all"),
@@ -120,7 +121,7 @@ def scan(root, files):
             unread.append(rel)
             continue
         kind = "md" if rel.lower().endswith((".md", ".mdx", ".markdown")) else "script" if rel.endswith(SCRIPT) else ""
-        text = data.decode("utf-8", errors="replace").removeprefix("﻿")
+        text = data.decode("utf-8", errors="replace").removeprefix("\N{BYTE ORDER MARK}")
         for n, line in enumerate(text.splitlines(), 1):
             for name, pattern, where in RULES:
                 if where in ("all", kind) and pattern.search(line):

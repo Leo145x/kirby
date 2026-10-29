@@ -97,7 +97,7 @@ def main():
     check("H1 result = cancelled + scan note + English note",
           r == "not installed: the user cancelled.\n" + c["scan_note"] + NO_DIALOG, r)
     check("H1 fixture fires all 12 rules", len({h["rule"] for h in c["scan"]["hits"]}) == 12)
-    check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "​" not in q + r)
+    check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
 
     # H2: the model's wording is used; each choice in the first dialog gives its result.
     for answer, start in [("先讀 README", "not installed: the user wants to read the README first. Summarise it for "
