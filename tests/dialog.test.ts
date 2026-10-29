@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { CANCEL, english, readDialog, SCOPES } from '../hooks/dialog'
+import { CANCEL, english, nextOptions, readDialog, SCOPES } from '../hooks/dialog'
 
 const GOOD = {
   about: '把 archify 裝成 skill。',
@@ -37,4 +37,10 @@ test('missing or unusable wording falls back to English and says why', async () 
     expect(dialog).toEqual(english())
     expect(typeof problem).toBe('string')
   }
+})
+
+test('a blocked install leaves Install out of the first dialog', async () => {
+  const { dialog } = readDialog(GOOD)
+  expect(nextOptions(dialog, false)).toEqual(['取消', '先讀 README', '換一個', '安裝'])
+  expect(nextOptions(dialog, true)).toEqual(['取消', '先讀 README', '換一個'])
 })

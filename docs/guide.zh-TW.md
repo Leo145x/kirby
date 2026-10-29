@@ -30,7 +30,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 
 你選定要裝的 repo 後，mod 會跳兩層對話框：
 
-1. **下一步**：取消 / 先看 README / 換一個 / 安裝。對話框會列出種類、commit、檔案數、內含的腳本和掃描結果。
+1. **下一步**：取消 / 先看 README / 換一個 / 安裝。對話框會列出種類、commit、檔案數、內含的腳本和安裝前檢查的結果（下面的掃描和查詢）。惡意套件查詢找到已知的惡意套件時，不會提供「安裝」。
 2. **scope**（選了「安裝」才會出現）：
 
 | scope | skill | plugin | MCP |
@@ -43,7 +43,18 @@ plugin 不論裝在哪個 scope，它的 marketplace 都會記錄在 user settin
 
 ### 掃描
 
-在第一個對話框出現前，tool 會掃描 skill 的檔案（就是實際要安裝的那份），找值得留意的模式：Markdown 裡的隱藏 Unicode、HTML 註解和針對模型的語句；範圍很廣的 `allowed-tools`；提到 agent 設定檔和憑證檔；以及腳本裡的網路呼叫、shell 執行、解碼、讀取機密環境變數和修改 shell 啟動檔。對話框會列出每條命中的規則和位置。這只是 pattern 比對，不是安全審查：有命中不代表有害，沒命中也不代表安全。plugin 和 MCP server 不會掃描，對話框會註明。tool 也會把命中位置和掃描的 commit 交給模型，你可以直接問它某一行在做什麼。在 Claude Code 裡，模型用 `gh api` 讀那個檔案，skill 沒有預先允許這個指令，所以除非你的權限模式允許，Claude Code 會先問你。
+在第一個對話框出現前，tool 會掃描 skill 的檔案（就是實際要安裝的那份），找值得留意的模式：Markdown 裡的隱藏 Unicode、HTML 註解和針對模型的語句；範圍很廣的 `allowed-tools`；提到 agent 設定檔和憑證檔；以及腳本裡的網路呼叫、shell 執行、解碼、讀取機密環境變數和修改 shell 啟動檔。對話框會列出每條命中的規則和位置，前面標上嚴重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 裡較少見，標 `warn`，其他標 `info`；`warn` 的規則排在前面。這只是 pattern 比對，不是安全審查：有命中不代表有害，沒命中也不代表安全，所以任何命中都不會擋下安裝。plugin 和 MCP server 不會掃描，對話框會註明。tool 也會把命中位置和掃描的 commit 交給模型，你可以直接問它某一行在做什麼。在 Claude Code 裡，模型用 `gh api` 讀那個檔案，skill 沒有預先允許這個指令，所以除非你的權限模式允許，Claude Code 會先問你。
+
+### 漏洞查詢和惡意套件查詢
+
+對 skill，安裝前檢查還會查詢已公開的漏洞和已知的惡意套件，只用除了你的 `gh` 登入之外不需要任何金鑰的公開服務：[OSV.dev](https://osv.dev) 和 GitHub。
+
+- **相依套件。** tool 讀取 skill 在鎖定 commit 的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`。沒有 lockfile 時，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不會安裝任何東西，也不會執行套件的程式碼（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。這時對話框會註明版本是檢查當下算出的，實際執行時可能不同。沒有 npm 或 uv 時只知道套件名稱，惡意套件查詢仍會用名稱查，漏洞查詢則標為 unchecked。
+- **漏洞查詢。** 向 OSV.dev 查每個相依套件的那個版本，以及鎖定的 commit 本身（OSV 會把 commit 對到記錄裡的 git 範圍）；向 GitHub 查 repo 為自己發布的 advisory。相依套件有 critical 或 high 的漏洞，或 OSV 對到這個 commit 的任何記錄，是 `danger`；其他漏洞是 `warn`，無法對到這個 commit 的 repo advisory 也是 `warn`，對話框會說無法判斷它是否影響這個 commit。
+- **惡意套件查詢。** OSV.dev 裡 id 以 `MAL-` 開頭的記錄，來自 OpenSSF Malicious Packages。查到就是 `danger`，而且會**擋下**安裝：第一層對話框只剩取消、先看 README 和換一個，模型會告訴你原因。仍然要裝的話，只能自己手動安裝。其他情況都不會擋：掃描命中和漏洞不論多嚴重，都由你判斷（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
+- **unchecked。** 查詢失敗或逾時，會顯示為 `unchecked`，不會當成沒找到，「安裝」也仍然可選。
+
+每個結果都會把同樣的發現交給模型，你可以直接問它某一項。plugin 和 MCP server 目前還不會查詢。
 
 ### 鎖定 commit
 
@@ -51,7 +62,7 @@ skill 只會安裝對話框顯示的那個 commit。如果在實際安裝前 rep
 
 ### 對話框語言
 
-對話框的文字由模型依 skill 規定的格式，用你使用的語言寫。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、掃描結果），以及範圍問題下方的 prompt cache 提醒，由 tool 產生，固定是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`。沒有提供文字或格式不完整時，對話框顯示英文。
+對話框的文字由模型依 skill 規定的格式，用你使用的語言寫。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、掃描和查詢結果），以及範圍問題下方的 prompt cache 提醒，由 tool 產生，固定是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`。沒有提供文字或格式不完整時，對話框顯示英文。
 
 ### 安裝和 prompt cache
 
@@ -97,6 +108,7 @@ Codex 也讀得懂 Claude Code 格式的 marketplace。plugin 來自這種 marke
 | `stars.py` | 讀取你的 star 和 star list（GraphQL），快取在 `~/.cache/kirby/stars.json`，24 小時更新一次 |
 | `public.py` | 依 agent 工具類的 topic 搜尋公開的 GitHub repo |
 | `detect.py` | 判斷 repo 是 marketplace、plugin、skill 還是 MCP server，以及安裝需要的資訊 |
-| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容和掃描結果，不會寫入；`--commit` 只安裝對話框顯示的那個 commit。由 mod 和 Codex 的 MCP server 呼叫 |
+| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入；`--commit` 只安裝對話框顯示的那個 commit。由 mod 和 Codex 的 MCP server 呼叫 |
+| `lookups.py` | `install_skill.py --check` 執行的漏洞查詢和惡意套件查詢：讀取相依套件檔案、不安裝就算出版本，再向 OSV.dev 和 GitHub 查詢。不會單獨執行 |
 
 `detect.py --agent codex` 會先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 會裝到 `.agents/skills/`。

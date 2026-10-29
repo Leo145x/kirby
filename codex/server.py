@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from dialog import CANCEL, SCOPES, read_dialog
+from dialog import CANCEL, SCOPES, next_options, read_dialog
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -285,11 +285,12 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
-        lines += c["scan_lines"]
+        lines += c["scan_lines"] + c["lookup_lines"]
         if not project:
             lines.append(SKILL_USER_ONLY)
         # The commit shown is the one installed.
-        return {"lines": lines, "scopes": SCOPES if project else ("user",), "scan": c["scan_note"], "commit": c["sha"]}
+        return {"lines": lines, "scopes": SCOPES if project else ("user",), "scan": f"{c['scan_note']}\n{c['lookup_note']}",
+                "commit": c["sha"], "blocked": c["blocked"] is True}
     if kind == "plugin":
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
@@ -351,19 +352,21 @@ def install(peer, a, meta):
     # Tells the model why its wording was not used, so the next call can fix it.
     note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
 
-    # Every answer from here on also tells the model what the scan showed the user.
+    # Every answer from here on also tells the model what the pre-install check showed the user.
     tail = f"\n{plan['scan']}{note}"
 
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
-    nxt = peer.ask(f"{header}\n" + "\n".join(plan["lines"]) + f"{about}\n\n{d['next']}", [cancel, readme_, other, go])
+    nxt = peer.ask(f"{header}\n" + "\n".join(plan["lines"]) + f"{about}\n\n{d['next']}",
+                   next_options(d, plan.get("blocked", False)))
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:
         return ("not installed: the user wants to read the README first. Summarise it for them (the readme tool) "
                 "and end your turn. Call this tool again only after they reply that they still want it." + tail)
     if nxt == other:
         return "not installed: the user wants a different one. Ask which of the other recommendations to look at." + tail
-    if nxt != go:
+    # A blocked install was not offered, whatever the answer says.
+    if nxt != go or plan.get("blocked"):
         return f"not installed: the user {'dismissed the dialog' if nxt is None else 'cancelled'}.{tail}"
 
     # The scope dialog's options are the server's own, whatever the model wrote above.

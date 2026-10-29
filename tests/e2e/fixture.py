@@ -5,6 +5,8 @@ hold flagged files or to move on while a dialog is open. Nothing is pushed to Gi
     fixture.py init <dir>      # <dir>/upstream.git (the repo at BASE plus one commit of files every
                                # scan rule flags), <dir>/work and <dir>/env.sh; prints the new HEAD
     fixture.py advance <dir>   # add an empty commit upstream; prints the new HEAD
+    fixture.py malware <dir>   # add a commit whose package-lock.json holds a known-malicious package
+                               # (MALWARE) and one with a high advisory; prints the new HEAD
 
 `. <dir>/env.sh` makes git fetch https://github.com/cloudflare/security-audit-skill.git from the
 local upstream (url.<base>.insteadOf through GIT_CONFIG_* variables), in that shell only, so source
@@ -12,6 +14,7 @@ it in a subshell. gh api still reads GitHub, so the header line and a model read
 the real repo. Codex does not pass these variables to its MCP server; codex_server.py sets them itself.
 """
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +46,14 @@ FILES = {
     # The name itself carries a zero-width space; kirby shows it as we?ird.py.
     "we\N{ZERO WIDTH SPACE}ird.py": 'exec(open("payload.txt").read())\n',
 }
+# OSV.dev lists flatmap-stream as malicious (MAL-2025-20690; the event-stream attack of 2018) and gives
+# lodash 4.17.20 high advisories (GHSA-35jh-r3h4-6jhm among them). Only listed, never installed.
+MALWARE = ("flatmap-stream", "0.1.1")
+LOCKFILE = json.dumps({"name": "security-audit", "lockfileVersion": 3, "packages": {
+    "": {"name": "security-audit"},
+    f"node_modules/{MALWARE[0]}": {"version": MALWARE[1]},
+    "node_modules/lodash": {"version": "4.17.20"},
+}}, indent=1) + "\n"
 
 
 def git(*args, cwd=None):
@@ -87,12 +98,21 @@ def advance(root):
     print(head(root))
 
 
+def malware(root):
+    work = root / "work"
+    (work / FOLDER / "package-lock.json").write_text(LOCKFILE)
+    git("add", "-A", cwd=work)
+    git("commit", "-q", "-m", "kirby e2e: a known-malicious dependency", cwd=work)
+    git("push", "-q", "origin", "HEAD", cwd=work)
+    print(head(root))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=("init", "advance"))
+    ap.add_argument("action", choices=("init", "advance", "malware"))
     ap.add_argument("dir")
     args = ap.parse_args()
-    (init if args.action == "init" else advance)(Path(args.dir).resolve())
+    {"init": init, "advance": advance, "malware": malware}[args.action](Path(args.dir).resolve())
 
 
 if __name__ == "__main__":

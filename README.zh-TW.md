@@ -17,6 +17,7 @@
 - **知道要裝的是什麼**：分辨 marketplace、plugin、skill 和 MCP server，以及安裝需要什麼。
 - **安裝前先問你**：要在對話框選「安裝」才會安裝，也可以先看 README 或換一個。接著選 scope：`local`、`project` 或 `user`。
 - **安裝 skill 前先掃描**：找值得留意的模式，例如隱藏 Unicode、針對模型的語句、網路呼叫或機密環境變數，並在對話框列出每個命中。可以直接問模型被標出的那一行在做什麼。這只是 pattern 比對，不是安全審查；plugin 和 MCP server 不會掃描。
+- **查詢已知漏洞和惡意套件**：向 OSV.dev 查 skill 的相依套件和它的 commit，也查 repo 自己在 GitHub 發布的 advisory，每項發現標上 danger、warn 或 info。只有已知的惡意套件會擋下安裝；沒查成的部分會標為 unchecked。
 - **只裝你看到的 commit**：skill 只會安裝對話框顯示的那個 commit；實際安裝前 repo 有變動，就不會安裝。
 - **用你的語言**：對話框用你使用的語言寫。
 - **不影響 prompt cache**：在 Claude Code 裡，安裝 skill、plugin 或 MCP server 都不會讓 prompt cache 失效（實測）。唯一的例外是帶有 MCP server 的 plugin，在 tool search 關閉時用 `/reload-plugins` 載入；這種情況對話框會註明，Claude Code 在 reload 前也會先警告。
@@ -26,7 +27,8 @@
 
 - 已登入的 [`gh`](https://cli.github.com/) CLI（`gh auth login`）
 - `git`
-- `python3`
+- `python3`（要讀 `uv.lock` 和 `pyproject.toml` 需 3.11 以上）
+- 選用：`npm` 和 `uv`，讓查詢能算出沒有 lockfile 的相依套件版本；沒有的話只用名稱查詢
 
 ## 快速開始
 
@@ -54,7 +56,7 @@ codex plugin add kirby@kirby
 
 ## 進一步了解
 
-[說明文件](docs/guide.zh-TW.md) 有完整細節：搜尋來源設定、安裝流程每一步、各 scope 裝到哪裡、掃描比對的內容、prompt cache、Codex 版的差異，以及腳本。
+[說明文件](docs/guide.zh-TW.md) 有完整細節：搜尋來源設定、安裝流程每一步、各 scope 裝到哪裡、掃描比對的內容、漏洞和惡意套件查詢、prompt cache、Codex 版的差異，以及腳本。
 
 ## 開發
 

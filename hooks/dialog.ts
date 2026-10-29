@@ -27,6 +27,12 @@ export function english(): Dialog {
   }
 }
 
+// The first dialog's options. A block (a malware-lookup finding) leaves Install out, so the user
+// cannot pick it (docs/adr/0001).
+export function nextOptions(d: Dialog, blocked: boolean): string[] {
+  return blocked ? d.options.slice(0, 3) : [...d.options]
+}
+
 const MAX = { about: 600, next: 200, option: 40, scope: 600 }
 
 function text(value: unknown, max: number): string | null {
