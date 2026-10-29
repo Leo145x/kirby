@@ -3,7 +3,7 @@
 ## Git Workflow
 
 - **Never push directly to main.** Every change goes on a feature branch, is pushed, and is opened as a PR; it is merged only after review.
-- After committing: `git checkout -b feat/xxx` → `git push -u origin feat/xxx` → `gh pr create`.
+- After committing: `git checkout -b feat/xxx` → `git push -u origin feat/xxx` → `gh pr create`. Name the branch `feat/` for a feature, `fix/` for a bug fix, or `docs/` for a docs-only change.
 - Branches that are never merged are the exception: `research/<name>` (from `/wayfinder`) and `prototype/<name>` (from `/prototype`) may be pushed without a PR. Nothing on them reaches main.
 
 ## Tests
