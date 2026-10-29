@@ -7,7 +7,7 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import { CANCEL, nextOptions, readDialog, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
-import { behind, findAdded, headOf, installPlugin } from './plugin'
+import { alreadyAdded, findAdded, headOf, installPlugin } from './plugin'
 import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
 
@@ -111,19 +111,20 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const name = String(input.plugin ?? '')
     if (!name) throw new Refusal('kind=plugin needs plugin')
     const runner: Run = argv => run($, argv)
-    // A marketplace already added is left as it is: the check describes the commit it is at. Claude Code's
-    // install would update one that is behind its repo, so that one is not installed from (plugin.ts).
+    // For a marketplace already added, the check is of what the install will bring: Claude Code's install
+    // refreshes one that is behind its repo (plugin.ts).
     const added = await findAdded(runner, repo).catch((e: Error) => { throw new Refusal(e.message) })
-    let head: string | null = null
+    let about: string[] = []
+    let commit: string | null = null
     if (added) {
-      head = await headOf(runner, added)
-      if (!head) throw new Refusal(`could not read the commit of the marketplace ${added.name} in ${added.location}`)
-      const latest = await run($, ['gh', 'api', `repos/${repo}/commits/${added.ref ?? 'HEAD'}`, '--jq', '.sha'])
-      if (!latest.ok) throw new Refusal(`could not tell whether the marketplace ${added.name} is behind ${repo}: ${latest.out}`)
-      const why = behind(repo, added, head, latest.out.trim())
-      if (why) throw new Refusal(why)
+      const head = await headOf(runner, added)
+      const r = await run($, ['gh', 'api', `repos/${repo}/commits/${added.ref ?? 'HEAD'}`, '--jq', '.sha'])
+      const latest = r.ok && /^[0-9a-f]{40}$/.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
+      const a = alreadyAdded(added, head, latest)
+      commit = a.commit
+      about = [a.line]
     }
-    const r = await run($, ['python3', '-I', `${scripts}/check_plugin.py`, '--agent', 'claude', ...(head ? ['--commit', head] : []), '--', repo, name])
+    const r = await run($, ['python3', '-I', `${scripts}/check_plugin.py`, '--agent', 'claude', ...(commit ? ['--commit', commit] : []), '--', repo, name])
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       marketplace: string; commit: string; sha: string; lines: string[]; note: string; blocked: boolean; mcp_servers: boolean | null
@@ -132,9 +133,8 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     // the note is conditional unless the variable settles it.
     const toolSearchOff = (await $.env.get('ENABLE_TOOL_SEARCH')) === 'false'
     const cache = c.mcp_servers === false ? '' : pluginCacheNote(c.mcp_servers === true, toolSearchOff)
-    const about = added ? [`marketplace: already added as ${added.name}, at commit ${c.commit}; installs from it as it is, without updating it`] : []
     return {
-      lines: [c.lines[0], ...about, ...c.lines.slice(1)].join('\n'), cache, scan: c.note, commit: c.sha,
+      lines: [c.lines[0], ...about, ...c.lines.slice(1)].join('\n'), cache, scan: [c.note, ...about].join('\n'), commit: c.sha,
       blocked: c.blocked === true, marketplace: added?.name ?? c.marketplace, added,
     }
   }

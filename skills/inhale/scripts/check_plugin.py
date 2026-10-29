@@ -108,6 +108,26 @@ def brings_mcp(entry, root, files):
     return False
 
 
+def depends_on(entry, root, files):
+    """The plugins the agent CLI installs along with this one, from its entry and its manifest: "name" or
+    "name@marketplace"."""
+    declared = list(entry.get("dependencies") or []) if isinstance(entry.get("dependencies"), list) else []
+    manifest = next((m for m in MANIFESTS if m in files), None)
+    if manifest:
+        try:
+            deps = json.loads((root / manifest).read_text(errors="replace")).get("dependencies")
+            declared += deps if isinstance(deps, list) else []
+        except (ValueError, AttributeError):
+            pass
+    names = []
+    for d in declared:
+        if isinstance(d, dict) and isinstance(d.get("name"), str):
+            d = d["name"] + (f"@{d['marketplace']}" if isinstance(d.get("marketplace"), str) else "")
+        if isinstance(d, str) and d and shown(d, 80) not in names:
+            names.append(shown(d, 80))
+    return names
+
+
 def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
     with tempfile.TemporaryDirectory() as tmp:
         mk_root = Path(tmp) / "marketplace"
@@ -153,6 +173,9 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
                        note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on "
                             f"plugin {shown(name, 60)}: {why}")
             return out
+        deps = depends_on(entry, root, files)
+        if deps:
+            lines.append(f"installed along with it, not checked: {', '.join(deps)}")
         scripts = [shown(f) for f in files if f.endswith(SCRIPT)]
         if scripts:
             lines.append(f"scripts: {len(scripts)}, e.g. {', '.join(scripts[:2])}")
@@ -163,6 +186,8 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
         if src["in"] == "repo" and not src["sha"]:
             note += (f"\nsource: not pinned; the marketplace entry gives no sha, so {src_repo} may be at a later "
                      "commit than the one checked when the plugin installs")
+        if deps:
+            note += f"\nplugins: the dialog showed the user that installing also installs these plugins, which were not checked: {', '.join(deps)}"
         out.update(files=len(files), scripts=scripts, mcp_servers=brings_mcp(entry, root, files),
                    blocked=looked["blocked"], lines=lines, note=note, source={**src, "commit": src_sha})
         return out
