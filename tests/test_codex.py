@@ -377,6 +377,17 @@ class ModelReview(unittest.TestCase):
         self.assertEqual(r, "not installed: review.findings must be a list of at most 5; call this tool again with "
                             "review as the inhale skill describes.")
 
+    def test_a_review_outside_the_structure_also_says_why_the_dialogs_would_be_in_english(self):
+        # As Claude Code does: the model can fix both in its next call.
+        a = {"repo": "o/r", "kind": "skill", "folder": "s", "sha": SHA, "review": {"findings": [self.FINDING] * 6}}
+        _, r = self.call(a)
+        self.assertEqual(r, "not installed: review.findings must be a list of at most 5; call this tool again with "
+                            "review as the inhale skill describes.\nnote: the dialogs were in English because no dialog "
+                            "was given; pass dialog as the inhale skill describes.")
+        _, r = self.call({"repo": "o/r", "kind": "skill"})
+        self.assertEqual(r, "not installed: kind=skill needs folder\nnote: the dialogs were in English because no dialog "
+                            "was given; pass dialog as the inhale skill describes.")
+
     def test_an_mcp_servers_review_line_comes_before_where_it_installs(self):
         package = {"needed": True, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
                    "files": ["dist/index.js"]}
