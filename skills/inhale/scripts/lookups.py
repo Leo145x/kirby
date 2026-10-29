@@ -45,7 +45,8 @@ NOTED = 30
 MAX_SOURCES = 10
 SHOWN_SOURCES = 4
 LOCKS = {"package-lock.json": "npm", "uv.lock": "PyPI"}
-MANIFESTS = {"package.json": "npm", "requirements.txt": "PyPI", "pyproject.toml": "PyPI"}
+# The dependency files read when there is no lockfile beside them.
+DEPENDENCY_FILES = {"package.json": "npm", "requirements.txt": "PyPI", "pyproject.toml": "PyPI"}
 ADVISORY, MALWARE = "advisory lookup", "malware lookup"
 DANGER_RATINGS = ("critical", "high")
 RATINGS = ("critical", "high", "moderate", "low")
@@ -56,7 +57,8 @@ GH_ECOSYSTEMS = {"npm": "npm", "PyPI": "pip"}
 # Specs npm would fetch from somewhere other than the registry (git, a URL, a path, a GitHub shorthand).
 NOT_REGISTRY = re.compile(r"^(git|https?:|file:|link:|github:|gitlab:|bitbucket:|gist:|[.~/])|^[^@\s]+/[^\s]+$")
 ELSEWHERE = "some dependencies come from outside the npm registry, so versions were not resolved"
-NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$")
+# Case-blind: older packages on the registry have upper-case names (JSONStream).
+NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$", re.I)
 PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 PY_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)")
 
@@ -146,7 +148,7 @@ def sources(files):
     by_dir = {}
     for rel in files:
         p = Path(rel)
-        if "node_modules" not in p.parts and p.name in {**LOCKS, **MANIFESTS}:
+        if "node_modules" not in p.parts and p.name in {**LOCKS, **DEPENDENCY_FILES}:
             by_dir.setdefault(p.parent, set()).add(p.name)
     picked = []
     for folder, names in sorted(by_dir.items()):
@@ -193,7 +195,7 @@ def read(root, rel, net):
     """One dependency file as {file, ecosystem, packages: {(name, version)}, names: {name} whose version
     is unknown, resolved: whether the versions were resolved now, why: why the versions are unknown}."""
     path, name = root / rel, Path(rel).name
-    ecosystem = LOCKS.get(name) or MANIFESTS[name]
+    ecosystem = LOCKS.get(name) or DEPENDENCY_FILES[name]
     src = {"file": rel, "ecosystem": ecosystem, "packages": set(), "names": set(), "resolved": False, "why": None}
     if tomllib is None and name in ("uv.lock", "pyproject.toml"):
         src.update(why="could not be read (needs Python 3.11 or later)", unreadable=True)
@@ -420,7 +422,7 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
         if "version" not in query and "commit" not in query:  # a package by name: only a malware record says anything
             commit_ids = [v for v in commit_ids if v.startswith("MAL-")]
         wanted = {vid for ids in [commit_ids, *results[:len(versioned)]] for vid in ids if not vid.startswith("MAL-")}
-        records, missed = fetch(sorted(wanted)[:MAX_RECORDS], net)
+        records, missed = full_records(sorted(wanted)[:MAX_RECORDS], net)
         missed += max(0, len(wanted) - MAX_RECORDS)
         if missed:
             unchecked.append((ADVISORY, f"the rating of {plural(missed, 'advisory', 'advisories')}",
@@ -457,7 +459,7 @@ def covered(deps, versioned):
     return " and ".join(f"{n} {eco}" for n, eco in zip(counts, ecosystems)) + (" dependency" if sum(counts) == 1 else " dependencies")
 
 
-def fetch(ids, net):
+def full_records(ids, net):
     """The full records of these ids, and how many could not be fetched."""
     def one(vid):
         try:

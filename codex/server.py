@@ -23,12 +23,13 @@ from urllib.parse import quote
 from dialog import CANCEL, SCOPES, next_options, read_dialog, read_review, review_note
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+# A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
+from detect import GITHUB_URL  # noqa: E402
+
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PACKAGE_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-# A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
-GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
-                        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
 TIMEOUT = 120
 README_MAX = 20000
 
@@ -336,8 +337,18 @@ def marketplace_head(added):
     """The commit an added marketplace is at."""
     ok, out = run(["git", "-C", added["root"], "rev-parse", "HEAD"])
     if not ok or not SHA_RE.match(out):
-        raise Refusal(f"could not read the commit of the marketplace {added['name']} in {added['root']}: {out}")
+        raise Refusal(f"could not read it in {added['root']}: {out}")
     return out
+
+
+# When kirby cannot tell which commit Codex installs from, the check goes ahead on the repo as it stands, and the
+# install keeps the plugin only if it can read that commit afterwards (docs/adr/0005); hooks/plugin.ts says the same.
+AS_IT_STANDS = ("the check is of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs "
+                "from that commit")
+
+
+def not_listed(why):
+    return f"unchecked: whether this marketplace is already added ({why}); {AS_IT_STANDS}"
 
 
 def preview(kind, a, project):
@@ -371,16 +382,24 @@ def preview(kind, a, project):
             raise Refusal("kind=plugin needs plugin")
         # `codex plugin add` does not refresh a marketplace already added, so the check is of the commit it is
         # at, which is the one Codex installs from (docs/adr/0003).
-        added = added_marketplace(repo)
-        head = marketplace_head(added) if added else None
+        about, head = [], None
+        try:
+            added = added_marketplace(repo)
+        except Refusal as e:
+            added = None
+            about.append(not_listed(e))
+        if added:
+            try:
+                head = marketplace_head(added)
+            except Refusal as e:
+                about.append(f"unchecked: which commit the marketplace {added['name']}, already added, is at ({e}); {AS_IT_STANDS}")
         ok, out = script("check_plugin.py", "--agent", "codex", *(["--commit", head] if head else []), "--", repo, name)
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        about, scan = [], [c["note"]]
-        if added:
+        if head:
             about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it is")
-            scan.append(about[-1])
+        scan = [c["note"], *about]
         if c["marketplace_file"].startswith(".claude-plugin/"):
             about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
         return {"lines": [c["lines"][0], *about, *c["lines"][1:]], "where": [USER_ONLY], "scopes": ("user",),

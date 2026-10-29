@@ -94,7 +94,9 @@ A part that could not run is shown as `unchecked`, with why, never as nothing fo
 - a lookup that fails or runs out of time;
 - the advisory lookup of dependencies whose versions could not be resolved (npm or uv is missing or failed, or some come from outside the npm registry);
 - both lookups of the dependency files past the tenth, which kirby does not read; the line names how many and which;
-- a plugin whose source is not on GitHub (the scan and both lookups);
+- a plugin whose source is not on GitHub, or whose source repo kirby cannot fetch (the scan and both lookups);
+- whether a marketplace is already added, when listing your marketplaces fails, and, in Codex, which commit one you already added is at, when kirby cannot read it: the check is of the repo as it stands, and the install removes the plugin again if kirby cannot tell it came from that commit;
+- an MCP server's archive that kirby cannot unpack (encrypted, or compressed in a way Python cannot read): the scan;
 - an MCP server run from a container image (`docker run …`) or a remote server at a URL, a repo that names no npm or PyPI package, or a command that runs none of the packages the repo names: one `unchecked:` line says why, and the command stays as given;
 - an MCP server whose version kirby cannot tell (the registry does not answer, no version matches the range the command asks for, or kirby does not read that range): the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name;
 - in Claude Code, whether a marketplace you already added is behind its repo, when GitHub does not answer;

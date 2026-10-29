@@ -15,6 +15,9 @@ import re
 import subprocess
 
 MCP_FILES = ("server.json", "smithery.yaml", ".mcp.json", "mcp.json")
+# A repo on GitHub, as a marketplace entry or `codex plugin marketplace list` gives its URL.
+GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
 MCP_TOPICS = {"mcp", "mcp-server", "model-context-protocol", "mcp-servers"}
 MAX_SKILLS = 15
 # Where each agent looks for a marketplace and a bare plugin manifest, in order of preference.

@@ -32,7 +32,7 @@ class Git:
     def __call__(self, url, ref, dest):
         self.fetched.append((url, ref))
         if ref not in self.repos.get(url, {}):
-            raise check_plugin.Refusal(f"git fetch {url} {ref} failed: not found")
+            raise check_plugin.GitFailed(f"fetch {url} {ref}", "not found")
         sha, files = self.repos[url][ref]
         for rel, text in files.items():
             (dest / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +42,7 @@ class Git:
 
 def check(repos, plugin="p", agent="claude", commit=None, net=None):
     git = Git(repos)
-    return check_plugin.check("o/mk", plugin, agent, commit, fetch=git, net=net or Net()), git
+    return check_plugin.check("o/mk", plugin, agent, commit, git=git, net=net or Net()), git
 
 
 class InTheMarketplace(unittest.TestCase):
@@ -169,6 +169,17 @@ class InAnotherRepo(unittest.TestCase):
                                             "marketplace entry gives no sha, so what installs may differ from what was checked")
             self.assertTrue(c["note"].endswith("\nsource: not pinned; the marketplace entry gives no sha, so x/src may be at "
                                                "a later commit than the one checked when the plugin installs"), c["note"])
+
+    def test_a_source_repo_that_cannot_be_fetched_is_unchecked_not_a_refusal(self):
+        c, git = check({MK: {None: (MK_SHA, self.entry(source="github", repo="x/src", sha=SRC_SHA))}})
+        self.assertEqual(git.fetched, [(MK, None), (self.SRC, SRC_SHA)])
+        self.assertEqual(c["lines"], [
+            "plugin: p · marketplace mk · commit aaaaaaa",
+            "source: x/src, which kirby could not fetch",
+            f"unchecked: pattern scan, advisory lookup and malware lookup (git fetch {self.SRC} {SRC_SHA} failed: not found)",
+        ])
+        self.assertFalse(c["blocked"])
+        self.assertEqual(c["review"], {"needed": False, "files": []})
 
     def test_a_source_kirby_cannot_fetch_from_github_is_unchecked(self):
         for source, what in [({"source": "npm", "package": "p"}, "a npm source"),

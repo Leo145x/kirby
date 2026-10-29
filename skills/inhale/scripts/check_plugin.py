@@ -17,8 +17,6 @@ reported as unchecked. Without a sha in the entry, the source is not pinned and 
 """
 import argparse
 import json
-import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -26,28 +24,17 @@ from pathlib import Path
 # -I leaves this folder off the import path; these are kirby's own, next to this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
-from detect import MARKETPLACES  # noqa: E402
-from install_skill import SCRIPT, VALID_REPO, VALID_SHA, check_lines, listing, review, scan, scan_note  # noqa: E402
+from detect import GITHUB_URL, MARKETPLACES  # noqa: E402
+from install_skill import (NO_REVIEW, SCRIPT, UNCHECKED, VALID_REPO, VALID_SHA, GitFailed, check_lines, checkout,  # noqa: E402
+                           inside, listing, review, scan, scan_note)
 from lookups import shown  # noqa: E402
 
-GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
-                        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
-MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
+# The files a plugin declares itself in.
+PLUGIN_MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
 
 
 class Refusal(Exception):
     """Why there is nothing to show the user; the message is for the model."""
-
-
-def fetch(url, ref, dest):
-    """A shallow checkout of url at ref (a full sha, a branch or a tag; None for the default branch) in
-    dest; returns its commit. No --filter: Claude Code runs a mod's processes with git's lazy fetching off."""
-    for args in (["init", "-q", str(dest)], ["-C", str(dest), "fetch", "-q", "--depth", "1", url, ref or "HEAD"],
-                 ["-C", str(dest), "checkout", "-q", "FETCH_HEAD"]):
-        r = subprocess.run(["git", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        if r.returncode != 0:
-            raise Refusal(f"git {' '.join(args[2:] if args[0] == '-C' else args)} failed: {r.stderr.strip()}")
-    return subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
 
 def github_repo(url):
@@ -58,12 +45,6 @@ def github_repo(url):
         return url
     m = GITHUB_URL.match(url.strip())
     return m.group(1) if m else None
-
-
-def inside(path):
-    """A relative folder of a repo, normalised ("." for the root), or None if it leaves the repo."""
-    parts = [p for p in path.strip().split("/") if p not in ("", ".")]
-    return None if ".." in parts or path.startswith("/") or "\\" in path else "/".join(parts) or "."
 
 
 def source_of(entry, doc):
@@ -100,7 +81,7 @@ def brings_mcp(entry, root, files):
     """Whether the plugin declares an MCP server, in its entry, a .mcp.json or its manifest."""
     if "mcpServers" in entry or ".mcp.json" in files:
         return True
-    for m in MANIFESTS:
+    for m in PLUGIN_MANIFESTS:
         if m in files:
             try:
                 return "mcpServers" in json.loads((root / m).read_text(errors="replace"))
@@ -113,7 +94,7 @@ def depends_on(entry, root, files):
     """The plugins the agent CLI installs along with this one, from its entry and its manifest: "name" or
     "name@marketplace"."""
     declared = list(entry.get("dependencies") or []) if isinstance(entry.get("dependencies"), list) else []
-    manifest = next((m for m in MANIFESTS if m in files), None)
+    manifest = next((m for m in PLUGIN_MANIFESTS if m in files), None)
     if manifest:
         try:
             deps = json.loads((root / manifest).read_text(errors="replace")).get("dependencies")
@@ -129,10 +110,14 @@ def depends_on(entry, root, files):
     return names
 
 
-def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
+def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
+    """git: how a repo is checked out (install_skill.checkout); the tests put a fake in its place."""
     with tempfile.TemporaryDirectory() as tmp:
         mk_root = Path(tmp) / "marketplace"
-        sha = fetch(f"https://github.com/{repo}.git", commit, mk_root)
+        try:
+            sha = git(f"https://github.com/{repo}.git", commit, mk_root)
+        except GitFailed as e:
+            raise Refusal(str(e)) from None
         if commit and sha != commit:
             raise Refusal(f"{repo} gave commit {sha[:7]}, not {commit[:7]}")
         mk_file = next((f for f in MARKETPLACES[agent] if (mk_root / f).is_file()), None)
@@ -152,28 +137,32 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
         src = source_of(entry, doc)
         out = {"repo": repo, "plugin": name, "marketplace": doc["name"], "marketplace_file": mk_file,
                "commit": sha[:7], "sha": sha, "source": src}
+        title = f"plugin: {shown(name, 60)} · marketplace {shown(doc['name'], 60)} · commit {sha[:7]}"
+        described = ([f"description: {shown(entry['description'], 160)}"]
+                     if isinstance(entry.get("description"), str) and entry["description"] else [])
+
+        def unchecked(source, why):
+            out.update(files=0, scripts=[], mcp_servers=None, blocked=False, lines=[title, *described, source, f"{UNCHECKED} ({why})"],
+                       note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on "
+                            f"plugin {shown(name, 60)}: {why}", review=dict(NO_REVIEW))
+            return out
+
+        # Three kinds of source: one kirby does not fetch, a folder of the marketplace repo, another GitHub repo.
+        if src["in"] is None:
+            return unchecked(f"source: {src['what']}", f"its source is {src['what']}, which kirby does not fetch")
         if src["in"] == "marketplace":
             src_repo, src_sha, base = repo, sha, mk_root
-        elif src["in"] == "repo":
+        else:
             src_repo, base = src["repo"], Path(tmp) / "source"
-            src_sha = fetch(f"https://github.com/{src_repo}.git", src["sha"] or src["ref"], base)
-        root = (base / src["path"]) if src["in"] else None
-        if root is not None and not root.is_dir():
+            try:
+                src_sha = git(f"https://github.com/{src_repo}.git", src["sha"] or src["ref"], base)
+            except GitFailed as e:
+                return unchecked(f"source: {named(src)}, which kirby could not fetch", shown(str(e), 300))
+        root = base / src["path"]
+        if not root.is_dir():
             raise Refusal(f"{repo}'s plugin {name} has no folder {src['path']} at commit {src_sha[:7]}")
-        files = listing(root) if root is not None else []
-
-        lines = [f"plugin: {shown(name, 60)} · marketplace {shown(doc['name'], 60)} · commit {sha[:7]}"
-                 + (f" · {len(files)} files" if root is not None else "")]
-        if isinstance(entry.get("description"), str) and entry["description"]:
-            lines.append(f"description: {shown(entry['description'], 160)}")
-        lines.append(source_line(src, src_sha if root is not None else None))
-        if root is None:
-            why = f"its source is {src['what']}, which kirby does not fetch"
-            lines.append(f"unchecked: pattern scan, advisory lookup and malware lookup ({why})")
-            out.update(files=0, scripts=[], mcp_servers=None, blocked=False, lines=lines,
-                       note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on "
-                            f"plugin {shown(name, 60)}: {why}", review={"needed": False, "files": []})
-            return out
+        files = listing(root)
+        lines = [f"{title} · {len(files)} files", *described, source_line(src, src_sha)]
         deps = depends_on(entry, root, files)
         if deps:
             lines.append(f"installed along with it, not checked: {', '.join(deps)}")
@@ -196,15 +185,18 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
         return out
 
 
+def named(src):
+    """A source in another repo, as the dialog names it: owner/repo, or owner/repo:folder."""
+    return src["repo"] if src["path"] == "." else f"{src['repo']}:{shown(src['path'])}"
+
+
 def source_line(src, commit):
-    if src["in"] is None:
-        return f"source: {src['what']}"
+    """The dialog's source: line for a source that was fetched, at commit."""
     if src["in"] == "marketplace":
         return "source: the root of this repo" if src["path"] == "." else f"source: {shown(src['path'])}/ in this repo"
-    named = src["repo"] if src["path"] == "." else f"{src['repo']}:{shown(src['path'])}"
     if src["sha"]:
-        return f"source: {named} at commit {commit[:7]}, pinned by the marketplace entry"
-    return (f"source: {named} at commit {commit[:7]} ({shown(src['ref'], 40) if src['ref'] else 'default branch'}); "
+        return f"source: {named(src)} at commit {commit[:7]}, pinned by the marketplace entry"
+    return (f"source: {named(src)} at commit {commit[:7]} ({shown(src['ref'], 40) if src['ref'] else 'default branch'}); "
             "not pinned: the marketplace entry gives no sha, so what installs may differ from what was checked")
 
 
