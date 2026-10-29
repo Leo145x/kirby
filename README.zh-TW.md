@@ -1,5 +1,7 @@
 # kirby
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/leo145x-kirby-1trnl2?v=28c193f5aba552f95702e44af0339b36)](https://m8ven.ai/mcp/leo145x-kirby-1trnl2?s=readme)
+
 [English](README.md) | 繁體中文 | [简体中文](README.zh-CN.md)
 
 跟你的 agent 說要什麼工具，kirby 就從你的 GitHub star 裡找出合適的 skill、plugin 或 MCP server，經你確認後安裝。
