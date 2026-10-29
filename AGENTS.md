@@ -4,6 +4,7 @@
 
 - **Never push directly to main.** Every change goes on a feature branch, is pushed, and is opened as a PR; it is merged only after review.
 - After committing: `git checkout -b feat/xxx` → `git push -u origin feat/xxx` → `gh pr create`.
+- Branches that are never merged are the exception: `research/<name>` (from `/wayfinder`) and `prototype/<name>` (from `/prototype`) may be pushed without a PR. Nothing on them reaches main.
 
 ## Tests
 
@@ -98,3 +99,17 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 `README.md`, `README.zh-TW.md` and `README.zh-CN.md` say the same thing, and so do `docs/guide.md`, `docs/guide.zh-TW.md` and `docs/guide.zh-CN.md`; when one changes, update the other two.
 
 Missing any of these leaves the docs out of step with what the code does. Check each one before opening a PR.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for Leo145x/kirby, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
