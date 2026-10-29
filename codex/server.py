@@ -23,12 +23,13 @@ from urllib.parse import quote
 from dialog import CANCEL, SCOPES, next_options, read_dialog, read_review, review_note
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+# A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
+from detect import GITHUB_URL  # noqa: E402
+
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PACKAGE_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-# A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
-GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
-                        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
 TIMEOUT = 120
 README_MAX = 20000
 
@@ -76,8 +77,8 @@ TOOLS = [
     },
     {
         "name": "file",
-        "description": "One file at the commit or package the pre-install check covered, raw: for reading a hit the "
-                       "scan reported, or for the model review. For a repo, pass repo and ref, the full commit sha. For "
+        "description": "One file at the commit or package the pre-install check covered, raw: for reading a pattern-scan "
+                       "finding, or for the model review. For a repo, pass repo and ref, the full commit sha. For "
                        "an MCP server's package, pass package and ref as the check tool's read gives them (ref is the "
                        "sha256 of the archive checked) and path inside the package.",
         "inputSchema": {"type": "object", "properties": {
@@ -336,8 +337,18 @@ def marketplace_head(added):
     """The commit an added marketplace is at."""
     ok, out = run(["git", "-C", added["root"], "rev-parse", "HEAD"])
     if not ok or not SHA_RE.match(out):
-        raise Refusal(f"could not read the commit of the marketplace {added['name']} in {added['root']}: {out}")
+        raise Refusal(f"could not read it in {added['root']}: {out}")
     return out
+
+
+# When kirby cannot tell which commit Codex installs from, the check goes ahead on the repo as it stands, and the
+# install keeps the plugin only if it can read that commit afterwards (docs/adr/0005); hooks/plugin.ts says the same.
+AS_IT_STANDS = ("the check is of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs "
+                "from that commit")
+
+
+def not_listed(why):
+    return f"unchecked: whether this marketplace is already added ({why}); {AS_IT_STANDS}"
 
 
 def preview(kind, a, project):
@@ -360,10 +371,10 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
-        lines += c["check_lines"]
+        lines += c["lines"]
         # The commit shown is the one installed.
         return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
-                "scan": f"{c['scan_note']}\n{c['lookup_note']}", "commit": c["sha"], "blocked": c["blocked"] is True,
+                "scan": c["note"], "commit": c["sha"], "blocked": c["blocked"] is True,
                 "review": c["review"]}
     if kind == "plugin":
         name = a.get("plugin")
@@ -371,16 +382,24 @@ def preview(kind, a, project):
             raise Refusal("kind=plugin needs plugin")
         # `codex plugin add` does not refresh a marketplace already added, so the check is of the commit it is
         # at, which is the one Codex installs from (docs/adr/0003).
-        added = added_marketplace(repo)
-        head = marketplace_head(added) if added else None
+        about, head = [], None
+        try:
+            added = added_marketplace(repo)
+        except Refusal as e:
+            added = None
+            about.append(not_listed(e))
+        if added:
+            try:
+                head = marketplace_head(added)
+            except Refusal as e:
+                about.append(f"unchecked: which commit the marketplace {added['name']}, already added, is at ({e}); {AS_IT_STANDS}")
         ok, out = script("check_plugin.py", "--agent", "codex", *(["--commit", head] if head else []), "--", repo, name)
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        about, scan = [], [c["note"]]
-        if added:
+        if head:
             about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it is")
-            scan.append(about[-1])
+        scan = [c["note"], *about]
         if c["marketplace_file"].startswith(".claude-plugin/"):
             about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
         return {"lines": [c["lines"][0], *about, *c["lines"][1:]], "where": [USER_ONLY], "scopes": ("user",),
@@ -454,21 +473,21 @@ def install(peer, a, meta):
     if not peer.can_elicit:
         return "not installed: this Codex client cannot show dialogs (no MCP elicitation), so the user cannot choose."
 
+    d, problem = read_dialog(a.get("dialog"))
+    cancel, readme_, other, go = d["options"]
+    # Tells the model why its wording was not used, so the next call can fix it.
+    note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
+
     project = project_dir(meta)
     try:
         header = repo_header(repo)
         plan = preview(kind, a, project)
     except Refusal as e:
-        return f"not installed: {e}"
+        return f"not installed: {e}{note}"
     # Whether a review was needed is the check's own finding, not the model's (docs/adr/0002).
-    reviewed, problem = read_review(a.get("review"), a.get("sha"), plan["review"])
-    if problem:
-        return f"not installed: {problem}; call this tool again with review as the inhale skill describes."
-
-    d, problem = read_dialog(a.get("dialog"))
-    cancel, readme_, other, go = d["options"]
-    # Tells the model why its wording was not used, so the next call can fix it.
-    note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
+    reviewed, bad_review = read_review(a.get("review"), a.get("sha"), plan["review"])
+    if bad_review:
+        return f"not installed: {bad_review}; call this tool again with review as the inhale skill describes.{note}"
 
     # Every answer from here on also tells the model what the pre-install check showed the user.
     tail = f"\n{plan['scan']}" + (f"\n{review_note(reviewed)}" if reviewed else "") + note

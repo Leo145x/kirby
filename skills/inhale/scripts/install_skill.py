@@ -14,8 +14,8 @@ SKILL.md is at the repo root. The installed folder is named after the skill's fr
 <skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) that commit
 is installed, even if the repo has moved on since, so the user gets what they were shown; if it can
 no longer be fetched (after a force-push, say), nothing is installed. --check also runs the advisory
-and malware lookups (lookups.py) on the skill's dependency files; its check_lines are the dialog's
-facts, one line when nothing was found. With --json, `review` says whether the model review runs and
+and malware lookups (lookups.py) on the skill's dependency files. With --json, `lines` are the dialog's
+facts (one line when nothing was found), `note` is what the model is told about them, and `review` says whether the model review runs and
 which files it reads, at which commit (docs/adr/0002).
 """
 import argparse
@@ -50,29 +50,39 @@ VALID_SHA = re.compile(r"^[0-9a-f]{40}$")
 SCRIPT = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl", ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts")
 
 
-def git(*args, cwd=None):
-    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
-    if res.returncode != 0:
-        sys.exit(f"git {' '.join(args)} failed: {res.stderr.strip()}")
-    return res.stdout.strip()
+class GitFailed(Exception):
+    """A git step that failed: step is what ran after `git`, err what git said."""
+
+    def __init__(self, step, err):
+        super().__init__(f"git {step} failed: {err}")
+        self.step, self.err = step, err
 
 
-def fetch(repo, folder, commit, dest):
-    """Check out folder of repo in dest, at commit (a full sha) or, without one, at the default branch as
-    it stands. Only that commit and only that folder: a sparse checkout of a depth-1 fetch."""
-    git("init", "-q", dest)
+def checkout(url, ref, dest, folder="."):
+    """A shallow checkout of url at ref (a full sha, a branch or a tag; None for the default branch as it stands)
+    in dest, of only folder; returns its commit. Only that commit and only that folder: a sparse checkout of a
+    depth-1 fetch. No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
+    clone's checkout fails there."""
+    dest = str(dest)
+    steps = [["init", "-q", dest]]
     if folder != ".":
-        git("sparse-checkout", "set", "--no-cone", f"/{folder}/", cwd=dest)
-    # No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
-    # clone's checkout fails there.
-    res = subprocess.run(["git", "fetch", "-q", "--depth", "1", f"https://github.com/{repo}.git", commit or "HEAD"],
-                         cwd=dest, capture_output=True, text=True)
-    if res.returncode != 0 and commit:
-        sys.exit(f"could not fetch {repo} at commit {commit[:7]}, the one shown to the user; nothing installed "
-                 f"(a force-push can remove a commit). git: {res.stderr.strip()}")
-    if res.returncode != 0:
-        sys.exit(f"git fetch https://github.com/{repo}.git failed: {res.stderr.strip()}")
-    git("checkout", "-q", "FETCH_HEAD", cwd=dest)
+        steps.append(["-C", dest, "sparse-checkout", "set", "--no-cone", f"/{folder}/"])
+    steps += [["-C", dest, "fetch", "-q", "--depth", "1", url, ref or "HEAD"], ["-C", dest, "checkout", "-q", "FETCH_HEAD"],
+              ["-C", dest, "rev-parse", "HEAD"]]
+    for args in steps:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise GitFailed(" ".join(args[2:] if args[0] == "-C" else args), r.stderr.strip())
+    return r.stdout.strip()
+
+
+def inside(path):
+    """A path inside a folder (a repo, an archive), normalised ("." for the folder itself), or None if it would
+    leave it: absolute, with a drive, a backslash or a .. part."""
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if path.startswith("/") or "\\" in path or ".." in parts or (parts and ":" in parts[0]):
+        return None
+    return "/".join(parts) or "."
 
 
 def frontmatter_name(skill_md):
@@ -174,7 +184,7 @@ def combinations(hits):
 def scan_lines(hits, unread, scanned, covered="the ones installed"):
     """The scan as dialog facts: what was covered, then the combination findings, then each flagged
     rule, led by its severity, with where it hit; warn rules first."""
-    lines = [f"scan: {scanned} files, {covered}; a pattern match, not a safety review"
+    lines = [f"pattern scan: {scanned} files, {covered}; a pattern match, not a safety review"
              + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
     if not hits:
         return lines + ["flagged: nothing"]
@@ -203,19 +213,25 @@ def check_lines(hits, unread, scanned, looked, covered="the ones installed"):
 
 
 def scan_note(repo, folder, sha, hits, place=None):
-    """The scan for the model, so it can read and explain a hit: repo paths at the scanned commit, or, with
-    place (an MCP server's package), paths inside it."""
+    """The pattern scan for the model, so it can read and explain a finding: repo paths at the scanned commit, or,
+    with place (an MCP server's package), paths inside it."""
     where = place or f"{repo} at commit {sha}"
     if not hits:
-        return f"scan: the dialog showed the user no pattern hits in {where} (a pattern match, not a safety review)"
+        return f"pattern scan: the dialog showed the user no pattern-scan findings in {where} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
-    lines = [f"scan: the dialog showed the user these pattern hits in {where}" + (", as paths inside it:" if place else ":")]
+    lines = [f"pattern scan: the dialog showed the user these pattern-scan findings in {where}"
+             + (", as paths inside it:" if place else ":")]
     lines += [f"  {SEVERITY[name]} {line}" for name, line in combinations(hits)]
     lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
               for h in by_severity(hits)[:NOTED_HITS]]
     if len(hits) > NOTED_HITS:
         lines.append(f"  … (+{len(hits) - NOTED_HITS} more)")
     return "\n".join(lines)
+
+
+UNCHECKED = "unchecked: pattern scan, advisory lookup and malware lookup"
+# A check that read no files gives the model review nothing to read.
+NO_REVIEW = {"needed": False, "files": []}
 
 
 def review(where, files, hits, looked, prefix=""):
@@ -260,7 +276,14 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         # The commit the dialog showed, even if the repo has moved on since (docs/adr/0005).
-        fetch(args.repo, folder, args.commit, tmp)
+        url = f"https://github.com/{args.repo}.git"
+        try:
+            sha = checkout(url, args.commit, tmp, folder)
+        except GitFailed as e:
+            if e.step.startswith("fetch") and args.commit:
+                sys.exit(f"could not fetch {args.repo} at commit {args.commit[:7]}, the one shown to the user; nothing "
+                         f"installed (a force-push can remove a commit). git: {e.err}")
+            sys.exit(f"git fetch {url} failed: {e.err}" if e.step.startswith("fetch") else str(e))
         src = Path(tmp) / folder
         if not (src / "SKILL.md").is_file():
             sys.exit(f"{args.repo}:{folder} has no SKILL.md")
@@ -268,7 +291,6 @@ def main():
         fallback = args.repo.split("/")[1] if folder == "." else folder.rsplit("/", 1)[-1]
         name = declared if declared and VALID_NAME.match(declared) else fallback
         target = DESTS[args.agent][args.scope] / name
-        sha = git("rev-parse", "HEAD", cwd=tmp)
         files = listing(src)
         exists = target.exists()
         hits, unread = scan(src, files)
@@ -282,8 +304,8 @@ def main():
                     "target": str(target), "exists": exists, "files": len(files),
                     "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
                     "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
-                    "check_lines": summary, "scan_note": scan_note(args.repo, folder, sha, hits),
-                    "lookup_note": looked["note"], "blocked": looked["blocked"],
+                    "lines": summary, "note": f"{scan_note(args.repo, folder, sha, hits)}\n{looked['note']}",
+                    "blocked": looked["blocked"],
                     "review": review({"repo": args.repo, "sha": sha}, files, hits, looked,
                                      prefix="" if folder == "." else f"{folder}/"),
                 }, ensure_ascii=False))

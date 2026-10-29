@@ -110,7 +110,7 @@ class AnNpmServer(unittest.TestCase):
             "package: @o/srv@1.2.3 (npm), named by this repo's server.json; not verified to come from this repo",
             "pinned: only @o/srv, to 1.2.3; its dependencies are not pinned, so they may differ from those checked "
             "when the server starts",
-            "scan: 2 files, those in srv-1.2.3.tgz; a pattern match, not a safety review",
+            "pattern scan: 2 files, those in srv-1.2.3.tgz; a pattern match, not a safety review",
             "warn: send-secrets: may send secrets out (network + env-secret)",
             "info: env-secret ×1 (dist/index.js:1)",
             "info: network ×1 (dist/index.js:2)",
@@ -121,7 +121,7 @@ class AnNpmServer(unittest.TestCase):
         self.assertFalse(c["blocked"])
         self.assertEqual(c["package"], {"ecosystem": "npm", "name": "@o/srv", "version": "1.2.3", "declared_in": "server.json"})
         self.assertTrue(c["note"].startswith(
-            "scan: the dialog showed the user these pattern hits in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), "
+            "pattern scan: the dialog showed the user these pattern-scan findings in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), "
             "as paths inside it:\n  warn send-secrets: may send secrets out (network + env-secret)\n"
             "  info env-secret dist/index.js:1\n  info network dist/index.js:2\nlookups: "), c["note"])
         self.assertTrue(c["note"].endswith(
@@ -157,18 +157,64 @@ class AnNpmServer(unittest.TestCase):
         self.assertEqual(c["mcp_args"], ["srv", "npx", "srv@1.0.0", "--port", "1"])
         self.assertEqual(c["package"]["version"], "1.0.0")
 
-    def test_a_range_is_not_resolved_so_nothing_is_pinned_or_scanned(self):
-        net = Net(repo={"package.json": json.dumps({"name": "srv"})})
+    PACKUMENT = {"name": "srv", "dist-tags": {"latest": "2.0.0"},
+                 "versions": {v: {} for v in ("1.1.0", "1.2.0", "1.3.0-beta.1", "1.10.0", "2.0.0")}}
+
+    def test_a_range_is_resolved_to_the_highest_version_it_matches_which_is_checked_and_pinned(self):
+        net = Net(repo={"package.json": json.dumps({"name": "srv"})},
+                  web={f"{NPM}/srv": self.PACKUMENT, **npm_web("srv", "1.10.0", tgz({"i.js": ""}))},
+                  resolve={"npm": lock(("srv", "1.10.0"))})
         c = check(["srv", "--", "npx", "-y", "srv@^1.2"], net)
-        self.assertEqual(net.got, [])
-        self.assertEqual(c["mcp_args"], ["srv", "--", "npx", "-y", "srv@^1.2"])
-        why = "the command asks for srv@^1.2, a range kirby does not resolve"
+        # 1.10.0, not 1.2.0 (a version is not a string), nor the pre-release, nor 2.0.0 outside the range.
+        self.assertEqual(net.got[:2], [f"{NPM}/srv", f"{NPM}/srv/1.10.0"])
+        self.assertEqual(c["mcp_args"], ["srv", "--", "npx", "-y", "srv@1.10.0"])
         self.assertEqual(c["lines"][:3], [
-            "package: srv (npm), named by this repo's package.json; not verified to come from this repo",
-            f"not pinned: kirby could not tell which version of srv the command installs ({why}); it installs as given",
-            f"unchecked: pattern scan ({why})",
+            "package: srv@1.10.0 (npm), named by this repo's package.json; not verified to come from this repo",
+            "pinned: only srv, to 1.10.0, the highest version matching ^1.2; its dependencies are not pinned, so they "
+            "may differ from those checked when the server starts",
+            "check: nothing found (1 file, 0 npm dependencies, advisory and malware lookups)",
         ])
-        self.assertEqual(net.queries, [{"package": {"name": "srv", "ecosystem": "npm"}}])
+
+    def test_a_range_no_version_matches_or_kirby_cannot_read_is_not_pinned(self):
+        for word, why in [("srv@^9", "no version of srv matches ^9"),
+                          ("srv@>=1 <2 || ~~3", "the command asks for srv@>=1 <2 || ~~3, a range kirby does not resolve")]:
+            net = Net(repo={"package.json": json.dumps({"name": "srv"})}, web={f"{NPM}/srv": self.PACKUMENT})
+            c = check(["srv", "--", "npx", "-y", word], net)
+            self.assertEqual(c["mcp_args"], ["srv", "--", "npx", "-y", word])
+            self.assertEqual(c["lines"][:3], [
+                "package: srv (npm), named by this repo's package.json; not verified to come from this repo",
+                f"not pinned: kirby could not tell which version of srv the command installs ({why}); it installs as given",
+                f"unchecked: pattern scan ({why})",
+            ])
+            self.assertEqual(net.queries[-1:], [{"package": {"name": "srv", "ecosystem": "npm"}}])
+
+    def test_npm_ranges(self):
+        versions = ["0.1.0", "0.1.5", "0.2.0", "1.0.0", "1.2.3", "1.2.9", "1.3.0", "1.10.0", "2.0.0-rc.1", "2.0.0", "2.1.0"]
+        for spec, want in [("^1.2.3", "1.10.0"), ("~1.2.3", "1.2.9"), ("^0.1.2", "0.1.5"), ("1.x", "1.10.0"), ("1.2.*", "1.2.9"),
+                           ("1", "1.10.0"), (">=1.2.3 <1.3", "1.2.9"), ("<=1.2", "1.2.9"), (">1.2", "2.1.0"), ("1.0.0 - 1.2", "1.2.9"),
+                           ("^3 || 0.2.x", "0.2.0"), ("*", "2.1.0"), ("=1.0.0", "1.0.0"), ("^2.0.0-rc.0", "2.1.0"),
+                           ("2.0.0-rc.0 - 2.0.0-rc.5", "2.0.0-rc.1"), ("<2.0.0", "1.10.0"), ("^4", None)]:
+            self.assertEqual(check_mcp.highest("npm", versions, spec), want, spec)
+
+    def test_pypi_ranges(self):
+        versions = ["0.9", "1.0", "1.0.post1", "1.4.2", "1.5", "1.6rc1", "2.0", "2.0.1"]
+        for spec, want in [(">=1.0,<2", "1.5"), ("~=1.4", "1.5"), ("~=1.4.0", "1.4.2"), ("==1.*", "1.5"), ("!=2.0.1", "2.0"),
+                           ("<1.5", "1.4.2"), (">1.0", "2.0.1"), ("<=1.0", "1.0"), (">=1.6rc1,<2", "1.6rc1"), (">=3", None)]:
+            self.assertEqual(check_mcp.highest("PyPI", versions, spec), want, spec)
+        with self.assertRaises(check_mcp.Failed):
+            check_mcp.highest("PyPI", versions, ">=1.0;<2")
+
+    def test_dependencies_from_outside_the_registry_are_looked_up_by_name_without_running_npm(self):
+        # npm fetches a git dependency to resolve it, and may run its prepare script; kirby does not let it.
+        net = Net(repo={"package.json": json.dumps({"name": "srv"})},
+                  web=npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest", deps={"zod": "^3", "evil": "github:o/evil"}),
+                  resolve={"npm": lock(("srv", "1.0.0"), ("zod", "3.0.0"))})
+        c = check(["srv", "--", "npx", "-y", "srv"], net)
+        self.assertEqual(net.ran, [])
+        self.assertIn("dependencies: srv@1.0.0: 2 npm, names only", c["lines"])
+        self.assertIn("unchecked: advisory lookup for the dependencies of srv@1.0.0 (some dependencies come from outside "
+                      "the npm registry, so versions were not resolved)", c["lines"])
+        self.assertEqual(c["mcp_args"][-1], "srv@1.0.0")
 
     def test_a_registry_that_does_not_answer_leaves_it_unpinned(self):
         net = Net(repo={"server.json": server_json({"registryType": "npm", "identifier": "srv", "version": "9.9.9"})})
@@ -196,9 +242,21 @@ class APythonServer(unittest.TestCase):
                   resolve={"uv": "mcp-server-time==1.0\nmcp==1.2.0\n"})
         c = check(["time", "--", "uvx", "mcp-server-time", "--local-timezone=UTC"], net)
         self.assertEqual(c["mcp_args"], ["time", "--", "uvx", "mcp-server-time==1.0", "--local-timezone=UTC"])
-        self.assertEqual(c["lines"][2:5], ["scan: 2 files, those in mcp_server_time-1.0-py3-none-any.whl; a pattern match, "
+        self.assertEqual(c["lines"][2:5], ["pattern scan: 2 files, those in mcp_server_time-1.0-py3-none-any.whl; a pattern match, "
                                            "not a safety review", "info: exec ×1 (mcp_server_time/__init__.py:2)",
                                            "dependencies: mcp-server-time@1.0: 1 PyPI, versions resolved at check time"])
+
+    def test_a_range_is_resolved_among_the_releases_that_have_files_and_pinned_with_equals(self):
+        whl = {"filename": "w.whl", "url": "https://files.example/w.whl"}
+        latest = self.web()[f"{PYPI}/mcp-server-time/json"]
+        web = {**self.web(path="mcp-server-time/1.0/json"),
+               f"{PYPI}/mcp-server-time/json": {**latest, "releases": {"0.9": [whl], "1.0": [whl], "1.1": [{**whl, "yanked": True}],
+                                                                      "1.2": [], "2.0": [whl]}}}
+        net = Net(repo={"pyproject.toml": "[project]\nname = 'mcp-server-time'\n"}, web=web, resolve={"uv": "mcp-server-time==1.0\n"})
+        c = check(["time", "--", "uvx", "mcp-server-time>=0.9,<2"], net)
+        self.assertEqual(c["mcp_args"], ["time", "--", "uvx", "mcp-server-time==1.0"])
+        self.assertEqual(c["lines"][1], "pinned: only mcp-server-time, to 1.0, the highest version matching >=0.9,<2; its "
+                                        "dependencies are not pinned, so they may differ from those checked when the server starts")
 
     def test_the_from_option_and_extras_keep_their_shape(self):
         net = Net(repo={"pyproject.toml": "[project]\nname = 'MCP_Server_Time'\n"}, web=self.web(), tools=())
@@ -249,6 +307,28 @@ class Unchecked(unittest.TestCase):
         self.assert_unchecked(["srv", "--", "npx", "-y", "someone-elses-srv"],
                               "the command runs none of the packages this repo names: srv")
         self.assert_unchecked(["srv", "--", "node", "dist/index.js"], "the command runs none of the packages this repo names: srv")
+
+    def test_only_the_package_the_runner_runs_counts_not_a_later_word(self):
+        # npx runs other-pkg; srv is only an argument to it, so checking srv would check the wrong code.
+        why = "the command runs none of the packages this repo names: srv"
+        self.assert_unchecked(["srv", "--", "npx", "-y", "other-pkg", "srv"], why)
+        self.assert_unchecked(["srv", "--", "uvx", "other-pkg", "srv"], why,
+                              repo={"pyproject.toml": "[project]\nname = 'srv'\n"})
+        # A runner's subcommand that does not fetch a package runs none either.
+        self.assert_unchecked(["srv", "--", "npm", "run", "srv"], why)
+
+    def test_the_runners_package_option_and_subcommand_name_the_package(self):
+        for args, index in [(["srv", "--", "npx", "--package", "srv", "srv-cli"], 4),
+                            (["srv", "--", "npx", "-y", "-p=srv", "srv-cli"], 4),
+                            (["srv", "--", "pnpm", "dlx", "srv"], 4),
+                            (["srv", "--", "npm", "exec", "--yes", "--", "srv"], 6)]:
+            net = Net(repo={"package.json": json.dumps({"name": "srv"})}, web=npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest"),
+                      resolve={"npm": lock(("srv", "1.0.0"))})
+            c = check(args, net)
+            self.assertEqual(c["package"]["name"], "srv", args)
+            want = list(args)
+            want[index] = want[index].replace("srv", "srv@1.0.0", 1)
+            self.assertEqual(c["mcp_args"], want, args)
 
 
 class Findings(unittest.TestCase):
@@ -351,12 +431,50 @@ class Unpacking(unittest.TestCase):
         tmp, root, files = self.unpack(buf.getvalue(), "p-1.0-py3-none-any.whl")
         self.assertEqual(files, ["out/pkg/ok.py"])
 
+    def test_what_a_tarball_skips_counts_against_the_limit_too(self):
+        # A stream skips a member by reading through it, so a member left out still costs its size in decompression.
+        for info in [tarfile.TarInfo("package/odd"), tarfile.TarInfo("../escape.js")]:
+            if info.name == "package/odd":
+                info.type = b"Z"  # a type tarfile does not know, whose data it still reads past
+            info.size = 11
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as t:
+                t.addfile(info, io.BytesIO(b"x" * 11))
+            limit = check_mcp.MAX_UNPACKED
+            check_mcp.MAX_UNPACKED = 10
+            try:
+                with self.assertRaises(check_mcp.Failed, msg=info.name):
+                    self.unpack(buf.getvalue(), "srv-1.0.0.tgz")
+            finally:
+                check_mcp.MAX_UNPACKED = limit
+
+    def test_an_encrypted_or_oddly_compressed_wheel_is_a_failure_not_a_crash(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("pkg/a.py", "1")
+        plain = buf.getvalue()
+        # The encryption flag, in the local header (offset 6) and the central directory (offset 8).
+        encrypted = bytearray(plain)
+        for sig, at in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+            encrypted[plain.index(sig) + at] |= 1
+        # A compression method zipfile does not have, in the same two places (offsets 8 and 10).
+        odd = bytearray(plain)
+        for sig, at in ((b"PK\x03\x04", 8), (b"PK\x01\x02", 10)):
+            odd[plain.index(sig) + at] = 99
+        for data in (bytes(encrypted), bytes(odd)):
+            with self.assertRaises(check_mcp.Failed) as e:
+                self.unpack(data, "p-1.0-py3-none-any.whl")
+            self.assertTrue(str(e.exception).startswith("could not unpack p-1.0-py3-none-any.whl ("), str(e.exception))
+
     def test_an_archive_too_large_unpacked_is_refused(self):
         limit = check_mcp.MAX_UNPACKED
         check_mcp.MAX_UNPACKED = 10
         try:
             with self.assertRaises(check_mcp.Failed):
                 self.unpack(tgz({"big.js": "x" * 11}), "srv-1.0.0.tgz")
+            # Right at the limit, the file is unpacked whole.
+            _, root, _ = self.unpack(tgz({"big.js": "x" * 10}), "srv-1.0.0.tgz")
+            self.assertEqual((root / "big.js").read_text(), "x" * 10)
         finally:
             check_mcp.MAX_UNPACKED = limit
 

@@ -89,16 +89,16 @@ python3 -I $KIRBY/skills/inhale/scripts/install_skill.py cloudflare/security-aud
 ```
 
 Record `SHA` (40 hex), `SHA7` (`commit`, equal to `SHA[:7]`), `N` (`files`), `SCRIPTS` (`scripts`),
-`CHECK_LINES` (`check_lines`), `BLOCKED` (`blocked`, must be `false`), `review.needed` (must be `false`: its
-only hits are info, so no model review runs for it; if it is now `true`, the cases below gain the review of B26, so note it)
-and `SCAN_NOTE`: `scan_note`, a newline, then `lookup_note`; every result after the dialog opens ends
-with both. `SHA` must equal the `ls-remote` HEAD. The lookups ask OSV.dev and GitHub at check time, so
+`CHECK_LINES` (`lines`), `BLOCKED` (`blocked`, must be `false`), `review.needed` (must be `false`: its
+only findings are info, so no model review runs for it; if it is now `true`, the cases below gain the review of B26, so note it)
+and `SCAN_NOTE` (`note`: the `pattern scan:` block, a newline, then the `lookups:` block); every result after the dialog opens ends
+with it. `SHA` must equal the `ls-remote` HEAD. The lookups ask OSV.dev and GitHub at check time, so
 `CHECK_LINES` can change when a new advisory is published; record it, do not expect the values below.
 At the time of writing (`SHA` `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`): 20 files, 4 scripts, and
 `CHECK_LINES`:
 
 ```
-scan: 20 files, the ones installed; a pattern match, not a safety review
+pattern scan: 20 files, the ones installed; a pattern match, not a safety review
 info: exec ×2 (validate-coverage-ledger.test.cjs:5, validate-findings.test.cjs:5)
 dependencies: no npm or Python dependency files
 advisory lookup: nothing found
@@ -106,8 +106,8 @@ malware lookup: nothing found
 ```
 
 (the first two lines are the pattern scan's, the other three the lookups'; they are listed one by one
-because the scan found something: with no finding and nothing unscanned or unchecked, `check_lines` is
-the one line `check: nothing found (<n> files, <dependencies>, advisory and malware lookups)`), and `lookup_note`:
+because the scan found something: with no finding and nothing unscanned or unchecked, `lines` is
+the one line `check: nothing found (<n> files, <dependencies>, advisory and malware lookups)`), and the `lookups:` block of `SCAN_NOTE`:
 
 ```
 lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <SHA>
@@ -130,7 +130,7 @@ for the second, `CODEX_PLUGIN_LINES` and `CODEX_PLUGIN_NOTE` for the third. `PLU
 `description: <PLUGIN_DESC>`, `source: plugins/agent-sdk-dev/ in this repo`, then its check lines (at
 the time of writing the one line `check: nothing found (6 files, no npm or Python dependency files, advisory and malware lookups)`,
 and `PLUGIN_MCP_LINES` likewise ends with one `check: nothing found (…)` line; if either now lists the scan
-and lookups line by line, note it); `PLUGIN_NOTE` is a `scan:` block and a `lookups:` block for
+and lookups line by line, note it); `PLUGIN_NOTE` is a `pattern scan:` block and a `lookups:` block for
 `anthropics/claude-plugins-official at commit <PLUGIN_SHA>`. `mcp_servers` is `false` for `agent-sdk-dev`
 and `true` for `context7`; `blocked` is `false` for both. The marketplace moves often, so record the
 values again if a case runs much later.
@@ -146,10 +146,10 @@ with its last word now `@modelcontextprotocol/server-everything@<MCP_VERSION>`),
 and `MCP_NOTE` (`note`). `MCP_LINES` starts
 `package: @modelcontextprotocol/server-everything@<MCP_VERSION> (npm), named by this repo's src/everything/package.json; not verified to come from this repo`
 and `pinned: only @modelcontextprotocol/server-everything, to <MCP_VERSION>; its dependencies are not pinned, so they may differ from those checked when the server starts`,
-then the scan of the package's files (`scan: <n> files, those in server-everything-<MCP_VERSION>.tgz; …`) and the lookups
+then the scan of the package's files (`pattern scan: <n> files, those in server-everything-<MCP_VERSION>.tgz; …`) and the lookups
 (`dependencies: @modelcontextprotocol/server-everything@<MCP_VERSION>: <n> npm, versions resolved at check time`). At the time of
 writing (2.1.0) the scan flagged `send-secrets` and `download-decode`, and the lookups one repo advisory for that package. `MCP_NOTE`
-is a `scan:` block for `the npm package @modelcontextprotocol/server-everything@<MCP_VERSION> (server-everything-<MCP_VERSION>.tgz)`,
+is a `pattern scan:` block for `the npm package @modelcontextprotocol/server-everything@<MCP_VERSION> (server-everything-<MCP_VERSION>.tgz)`,
 a `lookups:` block, and a last line starting `package: the command runs @modelcontextprotocol/server-everything@<MCP_VERSION> (npm)`.
 `blocked` is `false`. `review.needed` is `true` (the warn combinations); record `MCP_REVIEW_SHA` (`review.sha`, 64 hex, the sha256
 of the archive checked). A new release changes all of these; record them again if a case runs much later. The two plugins'
@@ -254,16 +254,16 @@ before anything else; it lists every place a case can leave something behind.
 | A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
 | A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
 | A7 | both | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
-| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `check_lines` = FLAGGED (below) followed by the last three lines of `CHECK_LINES` (the lookups'); `scan.combinations` = `["send-secrets", "download-run", "download-decode"]`; `scan_note` has the 3 combination lines and 15 hit lines of FLAGGED_NOTE (below); `blocked` `false` |
+| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `lines` = FLAGGED (below) followed by the last three lines of `CHECK_LINES` (the lookups'); `scan.combinations` = `["send-secrets", "download-run", "download-decode"]`; `note` starts with FLAGGED_NOTE's `pattern scan:` block (below: its 3 combination lines and 15 finding lines), then a `lookups:` block; no `check_lines`, `scan_note` or `lookup_note` field; `blocked` `false` |
 | A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture and takes it away again, and H13 adds one: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
 | A17 | both | in an empty dir: the `check_mcp.py` run of Values to record (MCP server), then `check_mcp.py --read '{"ecosystem": "npm", "name": "@modelcontextprotocol/server-everything", "version": "<MCP_VERSION>", "sha": "<MCP_REVIEW_SHA>", "path": "package.json"}'`; again with `"sha"` 64 zeros; then `check_mcp.py --read 'x'` | the first prints that package's `package.json` (its `name` is `@modelcontextprotocol/server-everything`, its `version` `<MCP_VERSION>`); the second exits 1 with `the registry now gives another archive than the one checked`; the third exits 1 with `--read needs {"ecosystem": "npm" or "PyPI", "name", "version", "sha": 64 hex, "path"}`; nothing is left in the dir |
 | A13 | both | in an empty dir: `install_skill.py Leo145x/kirby skills/inhale --scope project --commit d4f7a5f5dca68fb15d6a40ba63c5b8d6d643070f` (an older commit, not the tip); then the same with `--commit 0123456789abcdef0123456789abcdef01234567` in another empty dir | the first exits 0 with `installed Leo145x/kirby:skills/inhale@d4f7a5f -> .claude/skills/inhale (5 files)`, `.kirby.json` has that `commit`, and `scripts/install_skill.py` equals `git -C $KIRBY show d4f7a5f:skills/inhale/scripts/install_skill.py`; the second exits 1 with `could not fetch Leo145x/kirby at commit 0123456, the one shown to the user; nothing installed (a force-push can remove a commit). git: fatal: remote error: upload-pack: not our ref 0123456789abcdef0123456789abcdef01234567` and writes nothing |
 | A14 | both | in an empty dir: `install_skill.py anthropics/skills skills/pdf --scope project --check` (a skill the check finds nothing in) | its last line is `  check: nothing found (<n> files, no npm or Python dependency files, advisory and malware lookups)`, with `<n>` the file count of its first line; no `scan:`, `flagged:`, `dependencies:` or `… lookup:` line. If the skill now has a finding, pick another and note it |
 | A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
-| A11 | both | `python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py -- anthropics/claude-plugins-official 42crunch-api-security-testing` (a source in another repo, pinned by its entry) | exit 0; `lines[2]` matches `^source: 42Crunch-AI/claude-plugins:plugins/api-security-testing at commit [0-9a-f]{7}, pinned by the marketplace entry$`; `source.commit` equals the entry's `sha` (`gh api repos/anthropics/claude-plugins-official/contents/.claude-plugin/marketplace.json -H 'Accept: application/vnd.github.raw'`); `note` starts `scan: ` and names `42Crunch-AI/claude-plugins at commit <that sha>`, and holds no `source: not pinned` line. If the entry changed, pick another `git-subdir` entry with a `sha` and note it |
+| A11 | both | `python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py -- anthropics/claude-plugins-official 42crunch-api-security-testing` (a source in another repo, pinned by its entry) | exit 0; `lines[2]` matches `^source: 42Crunch-AI/claude-plugins:plugins/api-security-testing at commit [0-9a-f]{7}, pinned by the marketplace entry$`; `source.commit` equals the entry's `sha` (`gh api repos/anthropics/claude-plugins-official/contents/.claude-plugin/marketplace.json -H 'Accept: application/vnd.github.raw'`); `note` starts `pattern scan: ` and names `42Crunch-AI/claude-plugins at commit <that sha>`, and holds no `source: not pinned` line. If the entry changed, pick another `git-subdir` entry with a `sha` and note it |
 | A12 | both | `check_plugin.py -- anthropics/claude-plugins-official nope-not-a-plugin`; `check_plugin.py --commit abc -- anthropics/claude-plugins-official agent-sdk-dev` | exit 1 with `anthropics/claude-plugins-official has no marketplace plugin named nope-not-a-plugin`; exit non-zero with `--commit needs a full 40-character sha: 'abc'` |
 | A15 | both | `check_mcp.py -- modelcontextprotocol/servers '["time", "--", "uvx", "mcp-server-time"]'` (a PyPI server in a folder of the repo) | exit 0; `mcp_args[3]` matches `^mcp-server-time==\S+$` and `package.version` is that version; `lines[0]` is `package: mcp-server-time@<version> (PyPI), named by this repo's src/time/pyproject.toml; not verified to come from this repo`; `lines[1]` starts `pinned: only mcp-server-time, to <version>; `; the scan line or the one `check: nothing found (…)` line names `mcp_server_time-<version>-py3-none-any.whl` or counts its files, and `dependencies:` (or the `check:` line) counts PyPI dependencies; `blocked` `false`; nothing is left in the scratch directory |
-| A16 | both | `check_mcp.py -- modelcontextprotocol/servers '["e", "--", "docker", "run", "-i", "mcp/time"]'`; then `'["e", "--url", "https://mcp.example/mcp"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@^1"]'`; then `check_mcp.py -- modelcontextprotocol/servers 'not json'` | the first: `lines` is exactly `["unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which kirby does not check); not pinned"]` and `mcp_args` unchanged; the second: `["unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL; its code does not install here)"]`; the third: `lines[1]` is `not pinned: kirby could not tell which version of @modelcontextprotocol/server-everything the command installs (the command asks for @modelcontextprotocol/server-everything@^1, a range kirby does not resolve); it installs as given` and `mcp_args` unchanged; the last exits 1 with `mcp_args must be a JSON list of strings` |
+| A16 | both | `check_mcp.py -- modelcontextprotocol/servers '["e", "--", "docker", "run", "-i", "mcp/time"]'`; then `'["e", "--url", "https://mcp.example/mcp"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@^999"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@~2026.1"]'`; then `'["e", "--", "npx", "-y", "other-pkg", "@modelcontextprotocol/server-everything"]'`; then `check_mcp.py -- modelcontextprotocol/servers 'not json'` | the first: `lines` is exactly `["unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which kirby does not check); not pinned"]` and `mcp_args` unchanged; the second: `["unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL; its code does not install here)"]`; the third: `lines[1]` is `not pinned: kirby could not tell which version of @modelcontextprotocol/server-everything the command installs (no version of @modelcontextprotocol/server-everything matches ^999); it installs as given` and `mcp_args` unchanged; the fourth: `mcp_args[4]` is `@modelcontextprotocol/server-everything@<V>` and `lines[1]` starts `pinned: only @modelcontextprotocol/server-everything, to <V>, the highest version matching ~2026.1; `, with `<V>` the highest `2026.1.x` in `npm view @modelcontextprotocol/server-everything versions --json` (2026.1.26 on 2026-10-30); the fifth (npx runs `other-pkg`, so the package the repo names is only an argument): `lines` is exactly `["unchecked: pattern scan, advisory lookup and malware lookup (the command runs none of the packages this repo names: <names>); not pinned"]` and `mcp_args` unchanged; the last exits 1 with `mcp_args must be a JSON list of strings` |
 
 What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and check lines
 (the scan's, then the lookups': no dependency files, nothing found, each on its own line as the scan found something), English options and `ENGLISH_NOTE`, all 12 rules and the 3 combinations fired, the zero-width name shown as `we?ird.py`,
@@ -298,10 +298,10 @@ It installs nothing outside `$E2E/codex/h`: commands that would install at user 
 and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
 FLAGGED, the scan lines for the fixture (the dialog shows these; the combinations come first, then the
-warn rules; the `exec` hits in `validate-*` follow the upstream files at the fixed commit):
+warn rules; the `exec` findings in `validate-*` follow the upstream files at the fixed commit):
 
 ```
-scan: <N+3> files, the ones installed; a pattern match, not a safety review
+pattern scan: <N+3> files, the ones installed; a pattern match, not a safety review
 warn: send-secrets: may send secrets out (network + env-secret)
 warn: download-run: may download and run code (network + exec)
 warn: download-decode: may download and decode a payload (network + decode)
@@ -314,11 +314,11 @@ info: broad-tools ×1 (E2E-NOTES.md:3)
 info also: agent-config ×1, long-base64 ×1, network ×1, exec ×4, env-secret ×1, decode ×1
 ```
 
-FLAGGED_NOTE, the scan block in every result for the fixture (`<FX_SHA>` is the commit the dialog
-showed), followed by the fixture's `lookup_note` (as at the time of writing, with `<FX_SHA>`):
+FLAGGED_NOTE, the `pattern scan:` block in every result for the fixture (`<FX_SHA>` is the commit the dialog
+showed), followed by the fixture's `lookups:` block (as at the time of writing, with `<FX_SHA>`):
 
 ```
-scan: the dialog showed the user these pattern hits in cloudflare/security-audit-skill at commit <FX_SHA>:
+pattern scan: the dialog showed the user these pattern-scan findings in cloudflare/security-audit-skill at commit <FX_SHA>:
   warn send-secrets: may send secrets out (network + env-secret)
   warn download-run: may download and run code (network + exec)
   warn download-decode: may download and decode a payload (network + decode)
@@ -466,9 +466,9 @@ Reset the project before each; prompt as B3.
 **B8 Read the README first.** Answer `Read README first` (option 2).
 - Result exactly: `not installed: the user wants to read the README first. Summarise it for them (gh api repos/cloudflare/security-audit-skill/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.` then `SCAN_NOTE`.
 - Transcript: a `gh api repos/cloudflare/security-audit-skill/readme` call; no further install call in the turn.
-- Reply: a README summary that also lists each hit in `SCAN_NOTE` with the commit, offers to explain them, and ends the turn.
+- Reply: a README summary that also lists each finding in `SCAN_NOTE` with the commit, offers to explain them, and ends the turn.
 
-**B9 Explain a hit.** Right after B8, prompt `validate-findings.test.cjs 第 5 行在做什麼？`.
+**B9 Explain a finding.** Right after B8, prompt `validate-findings.test.cjs 第 5 行在做什麼？`.
 - Transcript: an `mcp__kirby__file` call with `{"repo": "cloudflare/security-audit-skill", "path": "skills/security-audit/validate-findings.test.cjs", "ref": "<SHA>"}` (the scanned commit, not a branch); no `gh api` Bash call. No permission prompt opens for it (kirby's hook allows `check` and `file`).
 - Reply: quotes or describes line 5 of that file at `<SHA>` (fetch it yourself to compare); describes what the code does; gives no verdict that it is safe or malicious.
 
@@ -610,7 +610,10 @@ can add it on its own in a fresh config directory. If it does, remove it
 `git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
 - Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
   `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`,
-  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`).
+  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`). kirby says `behind its repo` only when it read
+  the clone's commit: if it cannot, the line is instead
+  `marketplace: already added as claude-plugins-official, at a commit kirby could not read; installing refreshes it to <PLUGIN_SHA7>, the commit checked`
+  (covered by `tests/plugin.test.ts`; this case does not need to break the clone to see it).
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`,
   then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `git -C <LOC> rev-parse HEAD` is now `PLUGIN_SHA`.
 - Cleanup: uninstall it as in B17, then `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
@@ -735,7 +738,7 @@ answer Codex's dialogs offer, so there is no `answered "…"` result.
 - Result exactly `not installed: the user wants to read the README first. Summarise it for them (the readme tool) and end your turn. Call this tool again only after they reply that they still want it.` + `SCAN_NOTE`.
 - Transcript: `mcp__kirby__readme` with `{"repo": "cloudflare/security-audit-skill"}`. Reply as B8.
 
-**C6 Explain a hit.** Prompt `validate-findings.test.cjs 第 5 行在做什麼？`.
+**C6 Explain a finding.** Prompt `validate-findings.test.cjs 第 5 行在做什麼？`.
 - Transcript: `mcp__kirby__file` with `{"repo": "cloudflare/security-audit-skill", "path": "skills/security-audit/validate-findings.test.cjs", "ref": "<SHA>"}`; no shell `gh api`.
 - Reply as B9.
 

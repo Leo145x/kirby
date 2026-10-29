@@ -209,7 +209,7 @@ class OneScope(unittest.TestCase):
                        "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
                        "checked when the server starts",
                        "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"],
-             "note": "scan: the dialog showed the user no pattern hits in the npm package probe@1.0.0",
+             "note": "pattern scan: the dialog showed the user no pattern-scan findings in the npm package probe@1.0.0",
              "review": {"needed": False, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
                         "files": ["dist/index.js"]}}
 
@@ -265,12 +265,12 @@ class Blocked(unittest.TestCase):
 
     CHECK = {
         "name": "s", "commit": "aaaaaaa", "sha": "a" * 40, "files": 2, "scripts": [], "exists": False,
-        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
-                        "dependencies: package-lock.json: 1 npm",
-                        "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-                        "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
-        "scan_note": "scan: the dialog showed the user no pattern hits",
-        "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
+        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
+                  "dependencies: package-lock.json: 1 npm",
+                  "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+                  "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
+        "note": "pattern scan: the dialog showed the user no pattern-scan findings\n"
+                "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
         # A blocked install gets no model review: Install is not offered anyway.
         "review": {"needed": False, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
@@ -291,9 +291,8 @@ class Blocked(unittest.TestCase):
         peer, r = self.install(self.CHECK, "取消")
         question, options = peer.asked[0]
         self.assertEqual(options, ["取消", "先讀 README", "換一個"])
-        self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["check_lines"]), question)
-        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
-                            + self.CHECK["lookup_note"])
+        self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["lines"]), question)
+        self.assertEqual(r, "not installed: the user cancelled.\n" + self.CHECK["note"])
         self.assertNotIn("model review", question)
 
     def test_without_a_block_install_is_offered(self):
@@ -307,8 +306,8 @@ class ModelReview(unittest.TestCase):
 
     CHECK = {
         "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh"], "exists": False,
-        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
-        "scan_note": "scan: the dialog showed the user these pattern hits", "lookup_note": "lookups: none", "blocked": False,
+        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
+        "note": "pattern scan: the dialog showed the user these pattern-scan findings\nlookups: none", "blocked": False,
         "review": NEEDED,
     }
     FINDING = {"file": "s/run.sh", "line": 1, "reason": "Reads the SSH key."}
@@ -332,7 +331,7 @@ class ModelReview(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(json.loads(out), {
             "review": "needed", "read": {"repo": "o/r", "ref": SHA}, "files": ["s/SKILL.md", "s/run.sh"],
-            "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["check_lines"],
+            "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["lines"],
                          server.SKILL_USER_ONLY],
             "blocked": False})
 
@@ -354,10 +353,10 @@ class ModelReview(unittest.TestCase):
 
     def test_the_reviews_findings_follow_the_check_in_the_dialog_and_in_every_result(self):
         peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消")
-        self.assertIn("\n".join([*self.CHECK["check_lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
+        self.assertIn("\n".join([*self.CHECK["lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
         self.assertEqual(peer.asked[0][1], GOOD["options"])
-        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user these pattern hits\n"
-                            f"lookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
+        self.assertEqual(r, "not installed: the user cancelled.\npattern scan: the dialog showed the user these pattern-scan "
+                            f"findings\nlookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
 
     def test_without_a_review_the_dialog_says_so_and_install_stays(self):
         peer, r = self.call(self.SKILL, "取消")
@@ -376,6 +375,17 @@ class ModelReview(unittest.TestCase):
         self.assertEqual(peer.asked, [])
         self.assertEqual(r, "not installed: review.findings must be a list of at most 5; call this tool again with "
                             "review as the inhale skill describes.")
+
+    def test_a_review_outside_the_structure_also_says_why_the_dialogs_would_be_in_english(self):
+        # As Claude Code does: the model can fix both in its next call.
+        a = {"repo": "o/r", "kind": "skill", "folder": "s", "sha": SHA, "review": {"findings": [self.FINDING] * 6}}
+        _, r = self.call(a)
+        self.assertEqual(r, "not installed: review.findings must be a list of at most 5; call this tool again with "
+                            "review as the inhale skill describes.\nnote: the dialogs were in English because no dialog "
+                            "was given; pass dialog as the inhale skill describes.")
+        _, r = self.call({"repo": "o/r", "kind": "skill"})
+        self.assertEqual(r, "not installed: kind=skill needs folder\nnote: the dialogs were in English because no dialog "
+                            "was given; pass dialog as the inhale skill describes.")
 
     def test_an_mcp_servers_review_line_comes_before_where_it_installs(self):
         package = {"needed": True, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
@@ -396,8 +406,8 @@ class Plugin(unittest.TestCase):
     SHA, OLD = "a" * 40, "c" * 40
     CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
              "blocked": False, "lines": ["plugin: p · marketplace mk · commit aaaaaaa · 2 files", "source: plugins/p/ in this repo",
-                                         "scan: 2 files, the ones installed; a pattern match, not a safety review"],
-             "note": "scan: the dialog showed the user no pattern hits in o/mk at commit " + SHA,
+                                         "pattern scan: 2 files, the ones installed; a pattern match, not a safety review"],
+             "note": "pattern scan: the dialog showed the user no pattern-scan findings in o/mk at commit " + SHA,
              "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}}
 
     def install(self, *answers, listed=([],), heads=(), check=None):
@@ -411,9 +421,11 @@ class Plugin(unittest.TestCase):
             if argv[0] == "gh":
                 return True, '[1, "2026-01-01T00:00:00Z", false]'
             if argv[:4] == ["codex", "plugin", "marketplace", "list"]:
-                return True, json.dumps({"marketplaces": listed.pop(0) if len(listed) > 1 else listed[0]})
+                got = listed.pop(0) if len(listed) > 1 else listed[0]
+                return (False, "boom") if got is None else (True, json.dumps({"marketplaces": got}))
             if argv[0] == "git":
-                return True, heads.pop(0)
+                head = heads.pop(0)
+                return (False, "fatal: not a git repository") if head is None else (True, head)
             return True, "ok"
 
         def fake_script(name, *args, cwd=None):
@@ -464,6 +476,28 @@ class Plugin(unittest.TestCase):
         self.assertEqual(scripts[0][-2:], ("o/mk", "p"))
         self.assertNotIn("--commit", scripts[0])
         self.assertEqual(ran[0][:4], ["codex", "plugin", "marketplace", "add"])
+
+    def test_a_marketplace_list_that_fails_is_one_unchecked_line_and_the_check_goes_ahead(self):
+        line = ("unchecked: whether this marketplace is already added (codex plugin marketplace list failed: boom); the check is "
+                "of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit")
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[None])
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
+        self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
+        # Still unable to tell which commit it came from after the install, kirby removes it again.
+        self.assertEqual(ran[-1], ["codex", "plugin", "remove", "p@mk"])
+        self.assertTrue(r.startswith("install failed (scope user): "), r)
+        self.assertTrue(r.endswith(f"{self.CHECK['note']}\n{line}"), r)
+
+    def test_an_added_marketplace_whose_commit_cannot_be_read_is_one_unchecked_line(self):
+        line = ("unchecked: which commit the marketplace mk, already added, is at (could not read it in "
+                "/home/u/.codex/.tmp/marketplaces/mk: fatal: not a git repository); the check is of its repo as it stands, and "
+                "the plugin is removed again if kirby cannot tell it installs from that commit")
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[self.added()]], heads=[None, self.SHA])
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
+        self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
+        # Readable after the install and the commit checked: the plugin stays.
+        self.assertEqual(ran, [["codex", "plugin", "add", "p@mk"]])
+        self.assertTrue(r.startswith("installed (scope user): codex plugin add p@mk\n"), r)
 
     def test_a_blocked_plugin_offers_no_install(self):
         peer, ran, _, r = self.install("取消", check={**self.CHECK, "blocked": True})

@@ -45,7 +45,8 @@ NOTED = 30
 MAX_SOURCES = 10
 SHOWN_SOURCES = 4
 LOCKS = {"package-lock.json": "npm", "uv.lock": "PyPI"}
-MANIFESTS = {"package.json": "npm", "requirements.txt": "PyPI", "pyproject.toml": "PyPI"}
+# The dependency files read when there is no lockfile beside them.
+DEPENDENCY_FILES = {"package.json": "npm", "requirements.txt": "PyPI", "pyproject.toml": "PyPI"}
 ADVISORY, MALWARE = "advisory lookup", "malware lookup"
 DANGER_RATINGS = ("critical", "high")
 RATINGS = ("critical", "high", "moderate", "low")
@@ -55,7 +56,9 @@ NPM_DEPS = ("dependencies", "devDependencies", "optionalDependencies")
 GH_ECOSYSTEMS = {"npm": "npm", "PyPI": "pip"}
 # Specs npm would fetch from somewhere other than the registry (git, a URL, a path, a GitHub shorthand).
 NOT_REGISTRY = re.compile(r"^(git|https?:|file:|link:|github:|gitlab:|bitbucket:|gist:|[.~/])|^[^@\s]+/[^\s]+$")
-NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$")
+ELSEWHERE = "some dependencies come from outside the npm registry, so versions were not resolved"
+# Case-blind: older packages on the registry have upper-case names (JSONStream).
+NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$", re.I)
 PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 PY_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)")
 
@@ -134,20 +137,25 @@ def py_name(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def package_key(ecosystem, name):
+    """A package's name as its registry compares it: PyPI's normalised form, npm's in lower case."""
+    return py_name(name) if ecosystem == "PyPI" else name.lower()
+
+
 def sources(files):
     """The dependency files among the skill's files: per folder, the lockfile when there is one,
     otherwise the manifests."""
     by_dir = {}
     for rel in files:
         p = Path(rel)
-        if "node_modules" not in p.parts and p.name in {**LOCKS, **MANIFESTS}:
+        if "node_modules" not in p.parts and p.name in {**LOCKS, **DEPENDENCY_FILES}:
             by_dir.setdefault(p.parent, set()).add(p.name)
     picked = []
     for folder, names in sorted(by_dir.items()):
         for lockfile, manifests in (("package-lock.json", ["package.json"]), ("uv.lock", ["requirements.txt", "pyproject.toml"])):
             chosen = [lockfile] if lockfile in names else [m for m in manifests if m in names]
             picked += [str(folder / n) if str(folder) != "." else n for n in chosen]
-    return picked[:MAX_SOURCES]
+    return picked
 
 
 def npm_lock(data):
@@ -187,7 +195,7 @@ def read(root, rel, net):
     """One dependency file as {file, ecosystem, packages: {(name, version)}, names: {name} whose version
     is unknown, resolved: whether the versions were resolved now, why: why the versions are unknown}."""
     path, name = root / rel, Path(rel).name
-    ecosystem = LOCKS.get(name) or MANIFESTS[name]
+    ecosystem = LOCKS.get(name) or DEPENDENCY_FILES[name]
     src = {"file": rel, "ecosystem": ecosystem, "packages": set(), "names": set(), "resolved": False, "why": None}
     if tomllib is None and name in ("uv.lock", "pyproject.toml"):
         src.update(why="could not be read (needs Python 3.11 or later)", unreadable=True)
@@ -204,9 +212,10 @@ def read(root, rel, net):
             data = json.loads(text)
             specs = {k: v for field in NPM_DEPS for k, v in (data.get(field) or {}).items()}
             src["names"] = {k for k in specs if NPM_NAME.match(k)}
+            # npm would fetch those to resolve them, and a git dependency's prepare script can run then.
             elsewhere = [k for k, v in specs.items() if isinstance(v, str) and NOT_REGISTRY.match(v.strip())]
             if elsewhere:
-                src["why"] = "some dependencies come from outside the npm registry, so versions were not resolved"
+                src["why"] = ELSEWHERE
         elif name == "requirements.txt":
             src["names"] = requirement_names(text.splitlines())
         else:
@@ -329,15 +338,21 @@ def check(repo, sha, root, files, net=None):
     lookups found nothing and nothing went unchecked, the dependencies they covered (for the one line
     install_skill.check_lines makes), else None}."""
     net = net or Net()
-    deps = [read(root, rel, net) for rel in sources(files)]
-    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net)
+    found = sources(files)
+    deps = [read(root, rel, net) for rel in found[:MAX_SOURCES]]
+    # The files past the limit are not read, which the dialog says rather than leaving them out.
+    rest = [shown(rel) for rel in found[MAX_SOURCES:]]
+    unread = [(f"{plural(len(rest), 'more dependency file', 'more dependency files')} ({listed(rest)})",
+               f"kirby reads at most {MAX_SOURCES}")] if rest else []
+    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net, unread=unread)
 
 
-def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
+def check_package(repo, ecosystem, name, version, direct, net=None, why=None, elsewhere=False):
     """The lookups for an MCP server's published package (check_mcp.py), as check() gives them: the package
     itself at the version the install command is pinned to, and the packages it depends on, resolved as its
     package manager would resolve them now, without installing anything (docs/adr/0004). direct are the names
-    it depends on, looked up by name for malware when the versions cannot be resolved. With version None
+    it depends on, looked up by name for malware when the versions cannot be resolved. elsewhere: some of them
+    come from outside the npm registry, so npm is not run, as read() does for a package.json. With version None
     (why says why it is not known), only the package itself is looked up, by name, for malware."""
     net = net or Net()
     what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
@@ -346,15 +361,18 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
     if version is None:
         return looked_up(repo, query, subject, subject, [], net, unknown=(f"the dependencies of {what}", why))
     own = name if ecosystem == "npm" else py_name(name)
-    with tempfile.TemporaryDirectory() as tmp:
-        # A manifest of kirby's own that asks for just this package, so the tree is the one installing it brings.
-        if ecosystem == "npm":
-            rel = "package.json"
-            text = json.dumps({"name": "kirby-check", "version": "0.0.0", "private": True, "dependencies": {name: version}})
-        else:
-            rel, text = "requirements.txt", f"{name}=={version}\n"
-        (Path(tmp) / rel).write_text(text)
-        src = read(Path(tmp), rel, net)
+    if elsewhere:
+        src = {"ecosystem": ecosystem, "packages": set(), "names": set(), "resolved": False, "why": ELSEWHERE}
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            # A manifest of kirby's own that asks for just this package, so the tree is the one installing it brings.
+            if ecosystem == "npm":
+                rel = "package.json"
+                text = json.dumps({"name": "kirby-check", "version": "0.0.0", "private": True, "dependencies": {name: version}})
+            else:
+                rel, text = "requirements.txt", f"{name}=={version}\n"
+            (Path(tmp) / rel).write_text(text)
+            src = read(Path(tmp), rel, net)
     src.update(file=what, part=f"the dependencies of {what}")
     src["packages"] = {(n, v) for n, v in src["packages"] if n != own}
     if not src["resolved"]:
@@ -362,17 +380,20 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
     return looked_up(repo, query, subject, subject, [src], net)
 
 
-def looked_up(repo, query, subject, about, deps, net, unknown=None):
+def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
     """The lookups of a subject (a commit, or a package; query is its OSV query) and of deps, as check()
     describes them. about names the subject for the model; unknown is (part, why) for dependencies that
-    could not be listed at all."""
+    could not be listed at all; unread is (part, why) for each part of the dependencies that was not read."""
     findings, unchecked = [], []
     parts = {ADVISORY: [subject, "this repo's advisories"], MALWARE: [subject]}
     if unknown:
         part, why = unknown
+        unchecked.append((ADVISORY, subject, why))
+        unread = [*unread, unknown]
+    for part, why in unread:
         parts[ADVISORY].append(part)
         parts[MALWARE].append(part)
-        unchecked += [(ADVISORY, subject, why), (ADVISORY, part, why), (MALWARE, part, why)]
+        unchecked += [(ADVISORY, part, why), (MALWARE, part, why)]
     for d in deps:
         part = d.get("part", d["file"])
         parts[ADVISORY].append(part)
@@ -401,7 +422,7 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None):
         if "version" not in query and "commit" not in query:  # a package by name: only a malware record says anything
             commit_ids = [v for v in commit_ids if v.startswith("MAL-")]
         wanted = {vid for ids in [commit_ids, *results[:len(versioned)]] for vid in ids if not vid.startswith("MAL-")}
-        records, missed = fetch(sorted(wanted)[:MAX_RECORDS], net)
+        records, missed = full_records(sorted(wanted)[:MAX_RECORDS], net)
         missed += max(0, len(wanted) - MAX_RECORDS)
         if missed:
             unchecked.append((ADVISORY, f"the rating of {plural(missed, 'advisory', 'advisories')}",
@@ -438,7 +459,7 @@ def covered(deps, versioned):
     return " and ".join(f"{n} {eco}" for n, eco in zip(counts, ecosystems)) + (" dependency" if sum(counts) == 1 else " dependencies")
 
 
-def fetch(ids, net):
+def full_records(ids, net):
     """The full records of these ids, and how many could not be fetched."""
     def one(vid):
         try:
@@ -506,8 +527,8 @@ def names_package(advisory, package):
     eco, name = package
     named = {((v.get("package") or {}).get("ecosystem"), (v.get("package") or {}).get("name"))
              for v in advisory.get("vulnerabilities") or [] if isinstance(v, dict) and isinstance(v.get("package"), dict)}
-    key = (lambda n: py_name(n)) if eco == "PyPI" else (lambda n: n.lower())
-    return not named or any(e == GH_ECOSYSTEMS[eco] and isinstance(n, str) and key(n) == key(name) for e, n in named)
+    return not named or any(e == GH_ECOSYSTEMS[eco] and isinstance(n, str) and package_key(eco, n) == package_key(eco, name)
+                            for e, n in named)
 
 
 def repo_findings(advisories, commit_aliases, subject="this commit", package=None):

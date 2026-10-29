@@ -11,8 +11,8 @@ import type { Review } from './dialog'
 export type Package = { ecosystem: 'npm' | 'PyPI'; name: string; version: string }
 export type ReviewOf = Review & { repo?: string; package?: Package }
 
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-const SHA_RE = /^[0-9a-f]{40}$/
+export const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+export const SHA_RE = /^[0-9a-f]{40}$/
 const PACKAGE_SHA_RE = /^[0-9a-f]{64}$/
 const FILES_SHOWN = 200
 const FILE_MAX = 20_000

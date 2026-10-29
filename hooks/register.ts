@@ -9,18 +9,17 @@
 
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REVIEWER } from './check'
+import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REPO_RE, REVIEWER, SHA_RE } from './check'
 import type { ReviewOf } from './check'
 import { CANCEL, nextOptions, readDialog, readReview, reviewNote, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
-import { alreadyAdded, findAdded, headOf, installPlugin } from './plugin'
+import { alreadyAdded, findAdded, headOf, installPlugin, notListed } from './plugin'
 import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
 
 type $ = EngineInterface
 type Input = Record<string, unknown>
 
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const TIMEOUT_MS = 120_000
 
 const TOOL = {
@@ -91,8 +90,8 @@ const CHECK = {
 const FILE = {
   name: 'file',
   description:
-    'One file at the commit or package the pre-install check covered, raw and read-only: for reading a hit the scan ' +
-    'reported, or for the model review. For a repo, pass repo and ref, the full commit sha. For an MCP server\'s ' +
+    'One file at the commit or package the pre-install check covered, raw and read-only: for reading a pattern-scan ' +
+    'finding, or for the model review. For a repo, pass repo and ref, the full commit sha. For an MCP server\'s ' +
     "package, pass package and ref as the check tool's read gives them (ref is the sha256 of the archive checked) " +
     'and path inside the package.',
   inputSchema: {
@@ -160,16 +159,16 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
-      check_lines: string[]; scan_note: string; lookup_note: string; blocked: boolean; review: ReviewOf
+      lines: string[]; note: string; blocked: boolean; review: ReviewOf
     }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    lines.push(...c.check_lines)
+    lines.push(...c.lines)
     return {
-      lines: lines.join('\n'), cache: '', scan: `${c.scan_note}\n${c.lookup_note}`, review: c.review, commit: c.sha, blocked: c.blocked === true,
+      lines: lines.join('\n'), cache: '', scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true,
     }
   }
   if (kind === 'plugin') {
@@ -178,13 +177,16 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const runner: Run = argv => run($, argv)
     // For a marketplace already added, the check is of what the install will bring: Claude Code's install
     // refreshes one that is behind its repo (plugin.ts).
-    const added = await findAdded(runner, repo).catch((e: Error) => { throw new Refusal(e.message) })
     let about: string[] = []
+    const added = await findAdded(runner, repo).catch((e: Error) => {
+      about = [notListed(e.message)]
+      return null
+    })
     let commit: string | null = null
     if (added) {
       const head = await headOf(runner, added)
       const r = await run($, ['gh', 'api', `repos/${repo}/commits/${added.ref ?? 'HEAD'}`, '--jq', '.sha'])
-      const latest = r.ok && /^[0-9a-f]{40}$/.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
+      const latest = r.ok && SHA_RE.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
       const a = alreadyAdded(added, head, latest)
       commit = a.commit
       about = [a.line]

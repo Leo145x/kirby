@@ -65,11 +65,11 @@ class Scan(unittest.TestCase):
 
     def test_lines_say_what_was_covered_and_group_hits_by_rule(self):
         self.assertEqual(install_skill.scan_lines([], [], 3), [
-            "scan: 3 files, the ones installed; a pattern match, not a safety review", "flagged: nothing"])
+            "pattern scan: 3 files, the ones installed; a pattern match, not a safety review", "flagged: nothing"])
         hits = [{"rule": "exec", "file": "a.sh", "line": n} for n in (1, 2, 3)]
         lines = install_skill.scan_lines(hits, ["logo.png"], 2)
         self.assertEqual(lines, [
-            "scan: 2 files, the ones installed; a pattern match, not a safety review; "
+            "pattern scan: 2 files, the ones installed; a pattern match, not a safety review; "
             "not scanned: 1 binary or large files",
             "info: exec ×3 (a.sh:1, a.sh:2, … (+1))",
         ])
@@ -119,10 +119,10 @@ class Scan(unittest.TestCase):
         sha = "a" * 40
         hits = [{"rule": "exec", "file": "scripts/a.sh", "line": 3}]
         self.assertEqual(install_skill.scan_note("o/r", "skills/x", sha, hits),
-                         f"scan: the dialog showed the user these pattern hits in o/r at commit {sha}:\n"
+                         f"pattern scan: the dialog showed the user these pattern-scan findings in o/r at commit {sha}:\n"
                          "  info exec skills/x/scripts/a.sh:3")
         self.assertTrue(install_skill.scan_note("o/r", ".", sha, hits).endswith("\n  info exec scripts/a.sh:3"))
-        self.assertIn("no pattern hits", install_skill.scan_note("o/r", ".", sha, []))
+        self.assertIn("no pattern-scan findings", install_skill.scan_note("o/r", ".", sha, []))
         many = [{"rule": "exec", "file": "a.sh", "line": n} for n in range(35)]
         self.assertTrue(install_skill.scan_note("o/r", ".", sha, many).endswith("\n  … (+5 more)"))
         # Warn hits are noted first, so the cap never drops one for an info hit.
@@ -155,12 +155,12 @@ class CheckLines(unittest.TestCase):
                          "check: nothing found (3 files, 1 npm and 1 PyPI dependencies, advisory and malware lookups)")
 
     def test_a_finding_something_unchecked_or_a_block_lists_every_line(self):
-        scan_line = "scan: 1 files, the ones installed; a pattern match, not a safety review"
+        scan_line = "pattern scan: 1 files, the ones installed; a pattern match, not a safety review"
         nothing = ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
                    "malware lookup: nothing found"]
         self.assertEqual(self.check({"run.sh": "curl https://x\n"}), [scan_line, "info: network ×1 (run.sh:1)", *nothing])
         self.assertEqual(self.check({"SKILL.md": "hi\n", "logo.png": b"\x89PNG\0"}), [
-            "scan: 1 files, the ones installed; a pattern match, not a safety review; not scanned: 1 binary or large files",
+            "pattern scan: 1 files, the ones installed; a pattern match, not a safety review; not scanned: 1 binary or large files",
             "flagged: nothing", *nothing])
         self.assertEqual(self.check({"SKILL.md": "hi\n"}, Net(fail=("gh",))), [
             scan_line, "flagged: nothing", "dependencies: no npm or Python dependency files",
@@ -282,6 +282,17 @@ class Commit(unittest.TestCase):
                "GIT_CONFIG_VALUE_0": "https://github.com/o/r.git"}
         return subprocess.run([sys.executable, "-I", str(SCRIPT), "o/r", "skills/x", "--scope", "project", *args],
                               cwd=self.project, env=env, capture_output=True, text=True)
+
+    def test_the_json_check_gives_lines_and_note_as_the_plugin_and_mcp_checks_do(self):
+        r = self.install("--check", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        c = json.loads(r.stdout)
+        self.assertEqual(c["sha"], self.versions[1])
+        self.assertFalse({"check_lines", "scan_note", "lookup_note"} & set(c))
+        self.assertTrue(c["lines"][0].startswith(("pattern scan: 1 files", "check: nothing found (1 file")), c["lines"])
+        self.assertTrue(c["note"].startswith(f"pattern scan: the dialog showed the user no pattern-scan findings in o/r at "
+                                             f"commit {self.versions[1]}"), c["note"])
+        self.assertIn("\nlookups: the dialog showed the user ", c["note"])
 
     def test_commit_must_be_a_full_sha_and_is_checked_before_cloning(self):
         for bad in ("abc1234", "x" * 40, "A" * 40, ""):

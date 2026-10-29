@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { callLine, resultLine } from '../hooks/rows'
 
-const SCAN = 'scan: the dialog showed the user no pattern hits in the npm package x@1.0.0 (x-1.0.0.tgz) (a pattern match, not a safety review)'
+const SCAN = 'pattern scan: the dialog showed the user no pattern-scan findings in the npm package x@1.0.0 (x-1.0.0.tgz) (a pattern match, not a safety review)'
 
 test('the call line names the repo and what is installed, not the dialog wording', async () => {
   const dialog = { about: '安裝 security-audit skill', next: '下一步？', options: ['取消', '先讀', '換一個', '安裝'], scope: '範圍？' }
@@ -36,7 +36,7 @@ test('other results keep their first clause', async () => {
     .toBe('install failed (scope local)')
   expect(resultLine(`not installed: the user cancelled at the scope step.\n${SCAN}`))
     .toBe('not installed: the user cancelled at the scope step.')
-  expect(resultLine("not installed: the user wants to read the README first. Summarise it for them (gh api repos/a/b.js/readme) and end your turn.\nscan: x"))
+  expect(resultLine("not installed: the user wants to read the README first. Summarise it for them (gh api repos/a/b.js/readme) and end your turn.\npattern scan: x"))
     .toBe('not installed: the user wants to read the README first.')
   expect(resultLine('not installed: a/b has no marketplace plugin named x')).toBe('not installed: a/b has no marketplace plugin named x')
   expect(resultLine(undefined)).toBe('')
