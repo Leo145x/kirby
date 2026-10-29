@@ -65,7 +65,7 @@ When the user picks a recommendation, call `check`, have the files reviewed if i
 
 `check` takes the same `repo`, `kind` and `folder`, `plugin` or `mcp_args` that install will get, runs the same pre-install check without a dialog, and returns JSON:
 
-- `review`: `needed` when the check found a danger or warn finding; otherwise `not needed`, or `not possible: …` when there are no files to read. Unless it is `needed`, call install without `review` or `sha`.
+- `review`: `needed` when the check found a danger or warn finding and the install is not blocked; otherwise `not needed`, or `not possible: …` when there are no files to read. Unless it is `needed`, call install without `review` or `sha`.
 - `read` and `files`, only when a review is needed: where the files are and which ones (`more_files` counts any left off the list).
 - `findings` (the dialog's facts) and `blocked`.
 

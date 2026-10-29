@@ -3,12 +3,13 @@
 // The dialogs show the facts the tool found and the model's wording in the user's language (see
 // dialog.ts); what the tool answers is for the model, in English. Beside it, two read-only tools for
 // the model review (docs/adr/0002, check.ts): `check` runs install's pre-install check without a
-// dialog, and `file` reads one file where the check read it. install takes the review's result and
-// decides from its own check whether one was needed.
+// dialog, and `file` reads one file where the check read it; kirby allows those two without a prompt, and
+// the reviewer agent kirby:reviewer can use only them. install takes the review's result and decides from
+// its own check whether one was needed.
 
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import { checkResult, fileRequest, fileText } from './check'
+import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REVIEWER } from './check'
 import type { ReviewOf } from './check'
 import { CANCEL, nextOptions, readDialog, readReview, reviewNote, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
@@ -324,8 +325,19 @@ async function install($: $, input: Input): Promise<string> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await Promise.all([TOOL, CHECK, FILE].map(t => $.tool.register(t)))
+    // Without the reviewer the skill passes could_not_run, and the dialog says the review is unchecked.
+    await $.agent.register(REVIEWER).catch(err => $.ui.log(`kirby:reviewer not registered: ${String(err)}`, { to: 'debug' }))
     return next(e)
   })
+
+  // check and file only read GitHub and package contents, so the review never stops at a permission prompt
+  // (docs/adr/0002). Nothing else is allowed, and a deny rule of the user's or the organization's still stands.
+  for (const tool of READ_ONLY_TOOLS) {
+    on('tool.check', { tool }, async ($, e, next) => {
+      const below = await next(e)
+      return below.decision === 'deny' ? below : { decision: 'allow', reason: 'kirby allows its own read-only check and file tools' }
+    })
+  }
 
   on('tool.call', { tool: 'mcp__kirby__install' }, async ($, e: Input) => ({ result: await install($, e) }))
   on('tool.call', { tool: 'mcp__kirby__check' }, async ($, e: Input) => ({ result: await check($, e) }))

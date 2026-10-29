@@ -14,7 +14,7 @@ claude plugin test .
 python3 -B -m unittest discover -s tests
 ```
 
-`claude plugin test .` runs `tests/dialog.test.ts`, `tests/check.test.ts`, `tests/plugin.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py`, `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py` and `tests/test_check_mcp.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
+`claude plugin test .` runs `tests/dialog.test.ts`, `tests/check.test.ts`, `tests/plugin.test.ts`, `tests/register.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py`, `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py` and `tests/test_check_mcp.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
 
 ## Before Every Commit
 
@@ -35,11 +35,11 @@ kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__chec
 
 | # | File | What to update |
 |---|------|---------|
-| 1 | `hooks/register.ts`, `hooks/check.ts` | `TOOL`, `CHECK`, `FILE` (name, description, inputSchema) + the tool names bound in `tool.call`; `check.ts`'s input checks and the `check` result |
+| 1 | `hooks/register.ts`, `hooks/check.ts` | `TOOL`, `CHECK`, `FILE` (name, description, inputSchema) + the tool names bound in `tool.call`; `check.ts`'s input checks and the `check` result; `READ_ONLY_TOOLS` (the tools the `tool.check` hook allows and the reviewer agent can use) and `REVIEWER` (the reviewer agent's prompt) |
 | 2 | `codex/server.py` | the `TOOLS` list + the dispatch (`if name == …` / `SEARCHES`) |
-| 3 | `skills/inhale/SKILL.md` | frontmatter `allowed-tools` + how section 4 calls the tools and their parameters, and the review prompt |
+| 3 | `skills/inhale/SKILL.md` | frontmatter `allowed-tools` + how section 4 calls the tools and their parameters, and how it starts `kirby:reviewer` |
 | 4 | `codex/skills/inhale/SKILL.md` | the tool list in the opening **Tools.** paragraph + how each step calls the tools, and the review prompt |
-| 5 | `tests/test_codex.py`, `tests/check.test.ts` | tests of each side's input checks and of the `check` result |
+| 5 | `tests/test_codex.py`, `tests/check.test.ts`, `tests/register.test.ts` | tests of each side's input checks and of the `check` result; the reviewer agent's tools and the tools allowed without a prompt |
 | 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H14 |
 | 7 | `tests/e2e/RUNBOOK.md` | the tool list in A4 + each case's calls and expected results |
 | 8 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the three parts under How it is built + the tool description in the Codex section |
@@ -54,7 +54,7 @@ The strings the install tool returns to the model (`not installed: …`, `instal
 | 1a | `hooks/rows.ts`, `tests/rows.test.ts` | the result line shown in Claude Code's transcript, which reads the start of each result |
 | 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` and `REVIEW_MAX` limits, the rules in `readDialog` / `read_dialog` and `readReview` / `read_review`, `clean`, `reviewNote` / `review_note` |
 | 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog and review rules and of a plugin's install steps |
-| 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the `dialog` format, the review prompt's result format, Limits, and each result under Act on the result |
+| 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md`, `hooks/check.ts` (`REVIEWER`) | the `dialog` format, the review prompt's result format, Limits, and each result under Act on the result |
 | 5 | `tests/e2e/codex_server.py`, `tests/e2e/RUNBOOK.md` | expected results checked word for word |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Install flow section (and the README Features list, if a feature it names changes) |
 

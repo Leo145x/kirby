@@ -110,16 +110,22 @@ class Review(unittest.TestCase):
         # The limits count characters, not bytes.
         self.assertIsNone(read_review({"findings": [{**ok, "reason": "讀" * 120}]}, SHA, NEEDED)[1])
 
-    def test_both_skills_ask_the_subagent_for_the_structure_and_limits_the_tool_takes(self):
-        root = Path(__file__).resolve().parent.parent
-        for skill in ("skills/inhale/SKILL.md", "codex/skills/inhale/SKILL.md"):
-            prompt = (root / skill).read_text().split("You review the files of an agent tool", 1)[1].split("```", 1)[0]
-            self.assertIn('{"findings": [{"file": "<a path from FILES>", "line": <line number>, "reason": "<one sentence in '
-                          f'your own words, at most {REVIEW_MAX["reason"]} characters', prompt, skill)
-            self.assertIn(f'At most {REVIEW_MAX["findings"]} findings', prompt, skill)
-            self.assertIn('{"could_not_run": "<why, at most 120 characters>"}', prompt, skill)
-            # The subagent reviews on its own: what the main model fills in is where the files are, and which.
-            self.assertEqual(set(re.findall(r"<[A-Z]+>", prompt)), {"<READ>", "<FILES>"}, skill)
+    def test_the_codex_skill_asks_the_subagent_for_the_structure_and_limits_the_tool_takes(self):
+        # Claude Code's reviewer agent carries the same instructions as its own prompt (tests/register.test.ts).
+        skill = Path(__file__).resolve().parent.parent / "codex/skills/inhale/SKILL.md"
+        prompt = skill.read_text().split("You review the files of an agent tool", 1)[1].split("```", 1)[0]
+        self.assertIn('{"findings": [{"file": "<a path from FILES>", "line": <line number>, "reason": "<one sentence in '
+                      f'your own words, at most {REVIEW_MAX["reason"]} characters', prompt)
+        self.assertIn(f'At most {REVIEW_MAX["findings"]} findings', prompt)
+        self.assertIn('{"could_not_run": "<why, at most 120 characters>"}', prompt)
+        # The subagent reviews on its own: what the main model fills in is where the files are, and which.
+        self.assertEqual(set(re.findall(r"<[A-Z]+>", prompt)), {"<READ>", "<FILES>"})
+
+    def test_the_claude_code_skill_gives_the_reviewer_only_where_the_files_are_and_which(self):
+        text = (Path(__file__).resolve().parent.parent / "skills/inhale/SKILL.md").read_text()
+        self.assertIn("`subagent_type` `kirby:reviewer`", text)
+        self.assertIn("```\nREAD: <READ>\nFILES: <FILES>\n```", text)
+        self.assertNotIn("You review the files of an agent tool", text)
 
 
 class Server(unittest.TestCase):
@@ -266,8 +272,8 @@ class Blocked(unittest.TestCase):
         "scan_note": "scan: the dialog showed the user no pattern hits",
         "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
-        # A malware finding is danger, so the check asks for a model review; none is passed here.
-        "review": {"needed": True, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
+        # A blocked install gets no model review: Install is not offered anyway.
+        "review": {"needed": False, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
     }
 
     def install(self, check, *answers):
@@ -287,8 +293,8 @@ class Blocked(unittest.TestCase):
         self.assertEqual(options, ["取消", "先讀 README", "換一個"])
         self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["check_lines"]), question)
         self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
-                            + self.CHECK["lookup_note"] + "\nreview: the dialog showed the user these model review lines:\n"
-                            "  model review: unchecked (no review result was passed)")
+                            + self.CHECK["lookup_note"])
+        self.assertNotIn("model review", question)
 
     def test_without_a_block_install_is_offered(self):
         peer, _ = self.install({**self.CHECK, "blocked": False}, "取消")

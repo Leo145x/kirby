@@ -403,6 +403,8 @@ def main():
         "blocked: the malware lookup found a known-malicious package, so Install is not offered",
         f"danger: {name}@{version} (npm) is a known-malicious package (MAL-2025-20690)",
     ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in looked), c["check_lines"])
+    # Install is not offered, so no model review is asked for (docs/adr/0002).
+    check("H13 a blocked install needs no model review", c["review"]["needed"] is False, c["review"])
     for answer, start in [("取消", "not installed: the user cancelled."),
                           ("先讀 README", "not installed: the user wants to read the README first.")]:
         p = Peer(answer)
@@ -411,7 +413,7 @@ def main():
         check(f"H13 {answer!r}: no Install, result says why", opts == ZH["options"][:3]
               and "\n".join(c["check_lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
               and f"\nblocked: the dialog did not offer Install, because the malware lookup lists {name}@{version} (npm) "
-                  "as known-malicious." in r and len(p.asked) == 1, f"{opts}\n      {r}")
+                  "as known-malicious." in r and "model review" not in q + r and len(p.asked) == 1, f"{opts}\n      {r}")
     check("H13 nothing written", not (project / ".agents").exists())
 
     print(f"\n{'all passed' if not failures else f'{len(failures)} failed: ' + ', '.join(failures)}")

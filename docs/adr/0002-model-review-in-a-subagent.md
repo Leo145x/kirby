@@ -6,6 +6,12 @@ It reports in a fixed structure: file, line, and a one-sentence reason that may 
 
 The review runs only when another part of the pre-install check found a danger or warn finding, including the pattern scan's combination findings (ADR 0005). Most tools are clean, and this way they don't pay the wait and the tokens. When a review should have run but no result is passed, or the model reports that it could not run, the dialog says so in one line and Install stays available (ADR 0005).
 
+Decided on 2026-10-30, after the first build:
+
+1. **No review when an install is blocked.** A known-malicious package (ADR 0001) already takes Install out of the dialog, so a review would only cost time and tokens.
+2. **In Claude Code, kirby's hook allows its own `check` and `file` tools without a permission prompt.** It allows those two and nothing else, so the review never stops at a prompt; they only read GitHub and package contents and write nothing to the machine. A deny rule the user or the organization set still stands. Codex already runs them without asking, because the tools declare themselves read-only.
+3. **Claude Code registers a reviewer agent, `kirby:reviewer`, that can use only `check` and `file`, and the inhale skill starts it for the review.** Even if a reviewed file carries prompt injection, the reviewer has no Bash or write tool to misuse. Its instructions are its own prompt; the main model gives it only where the files are and which. This decision is for Claude Code; in Codex the skill still gives the subagent it starts the same instructions.
+
 ## Considered Options
 
 - **The install tool runs `claude -p` or `codex exec` itself**: the result would reach the dialog without passing through the main model, but whether a headless run works from inside kirby's process was never checked. The subagent route works the same way in Claude Code and Codex.

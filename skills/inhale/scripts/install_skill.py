@@ -220,10 +220,12 @@ def scan_note(repo, folder, sha, hits, place=None):
 
 def review(where, files, hits, looked, prefix=""):
     """What the model review needs (docs/adr/0002): whether it runs, which is only when another part of the check
-    found a danger or warn finding, a combination finding included; where it reads the files (where: {"repo",
+    found a danger or warn finding, a combination finding included, and the install is not blocked (Install is not
+    offered then, so a review would only cost time and tokens); where it reads the files (where: {"repo",
     "sha"} for a commit, or {"package", "sha"} for an MCP server's package, as the file tool takes them); and
     the files there, the ones the check covered, as paths there (prefix: the folder they are in)."""
-    needed = any(SEVERITY[h["rule"]] != "info" for h in hits) or bool(combinations(hits)) or looked["found"]
+    found = any(SEVERITY[h["rule"]] != "info" for h in hits) or bool(combinations(hits)) or looked["found"]
+    needed = found and not looked["blocked"]
     return {"needed": needed, **where, "files": [shown(prefix + f, 200) for f in files]}
 
 
