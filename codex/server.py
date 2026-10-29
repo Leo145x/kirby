@@ -77,8 +77,8 @@ TOOLS = [
     },
     {
         "name": "file",
-        "description": "One file at the commit or package the pre-install check covered, raw: for reading a hit the "
-                       "scan reported, or for the model review. For a repo, pass repo and ref, the full commit sha. For "
+        "description": "One file at the commit or package the pre-install check covered, raw: for reading a pattern-scan "
+                       "finding, or for the model review. For a repo, pass repo and ref, the full commit sha. For "
                        "an MCP server's package, pass package and ref as the check tool's read gives them (ref is the "
                        "sha256 of the archive checked) and path inside the package.",
         "inputSchema": {"type": "object", "properties": {
@@ -371,10 +371,10 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
-        lines += c["check_lines"]
+        lines += c["lines"]
         # The commit shown is the one installed.
         return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
-                "scan": f"{c['scan_note']}\n{c['lookup_note']}", "commit": c["sha"], "blocked": c["blocked"] is True,
+                "scan": c["note"], "commit": c["sha"], "blocked": c["blocked"] is True,
                 "review": c["review"]}
     if kind == "plugin":
         name = a.get("plugin")

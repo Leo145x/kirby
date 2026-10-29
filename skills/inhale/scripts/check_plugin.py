@@ -143,7 +143,7 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
 
         def unchecked(source, why):
             out.update(files=0, scripts=[], mcp_servers=None, blocked=False, lines=[title, *described, source, f"{UNCHECKED} ({why})"],
-                       note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on "
+                       note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on "
                             f"plugin {shown(name, 60)}: {why}", review=dict(NO_REVIEW))
             return out
 

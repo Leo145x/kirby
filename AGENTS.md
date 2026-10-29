@@ -46,11 +46,11 @@ kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__chec
 
 ## Install Results and Dialogs Checklist
 
-The strings the install tool returns to the model (`not installed: …`, `installed (scope …)`, `install failed …`, `scan:`, `review:`) and the dialog rules, the model review's among them, exist once on each side; change one side, change the other:
+The strings the install tool returns to the model (`not installed: …`, `installed (scope …)`, `install failed …`, `pattern scan:`, `review:`) and the dialog rules, the model review's among them, exist once on each side; change one side, change the other:
 
 | # | File | What to update |
 |---|------|---------|
-| 1 | `hooks/register.ts`, `hooks/plugin.ts` ↔ `codex/server.py` | result strings, notes such as `*_NOT_SCANNED` |
+| 1 | `hooks/register.ts`, `hooks/plugin.ts` ↔ `codex/server.py` | result strings; the notes they add after the scripts' `pattern scan:`, `lookups:` and `package:` blocks (the `review:` block of model review lines, the `note: the dialogs were in English …` line); the unchecked lines each side writes itself, such as `notListed` ↔ `not_listed` |
 | 1a | `hooks/rows.ts`, `tests/rows.test.ts` | the result line shown in Claude Code's transcript, which reads the start of each result |
 | 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` and `REVIEW_MAX` limits, the rules in `readDialog` / `read_dialog` and `readReview` / `read_review`, `clean`, `reviewNote` / `review_note` |
 | 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog and review rules and of a plugin's install steps |

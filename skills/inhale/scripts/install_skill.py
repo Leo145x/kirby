@@ -14,8 +14,8 @@ SKILL.md is at the repo root. The installed folder is named after the skill's fr
 <skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) that commit
 is installed, even if the repo has moved on since, so the user gets what they were shown; if it can
 no longer be fetched (after a force-push, say), nothing is installed. --check also runs the advisory
-and malware lookups (lookups.py) on the skill's dependency files; its check_lines are the dialog's
-facts, one line when nothing was found. With --json, `review` says whether the model review runs and
+and malware lookups (lookups.py) on the skill's dependency files. With --json, `lines` are the dialog's
+facts (one line when nothing was found), `note` is what the model is told about them, and `review` says whether the model review runs and
 which files it reads, at which commit (docs/adr/0002).
 """
 import argparse
@@ -184,7 +184,7 @@ def combinations(hits):
 def scan_lines(hits, unread, scanned, covered="the ones installed"):
     """The scan as dialog facts: what was covered, then the combination findings, then each flagged
     rule, led by its severity, with where it hit; warn rules first."""
-    lines = [f"scan: {scanned} files, {covered}; a pattern match, not a safety review"
+    lines = [f"pattern scan: {scanned} files, {covered}; a pattern match, not a safety review"
              + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
     if not hits:
         return lines + ["flagged: nothing"]
@@ -213,13 +213,14 @@ def check_lines(hits, unread, scanned, looked, covered="the ones installed"):
 
 
 def scan_note(repo, folder, sha, hits, place=None):
-    """The scan for the model, so it can read and explain a hit: repo paths at the scanned commit, or, with
-    place (an MCP server's package), paths inside it."""
+    """The pattern scan for the model, so it can read and explain a finding: repo paths at the scanned commit, or,
+    with place (an MCP server's package), paths inside it."""
     where = place or f"{repo} at commit {sha}"
     if not hits:
-        return f"scan: the dialog showed the user no pattern hits in {where} (a pattern match, not a safety review)"
+        return f"pattern scan: the dialog showed the user no pattern-scan findings in {where} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
-    lines = [f"scan: the dialog showed the user these pattern hits in {where}" + (", as paths inside it:" if place else ":")]
+    lines = [f"pattern scan: the dialog showed the user these pattern-scan findings in {where}"
+             + (", as paths inside it:" if place else ":")]
     lines += [f"  {SEVERITY[name]} {line}" for name, line in combinations(hits)]
     lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
               for h in by_severity(hits)[:NOTED_HITS]]
@@ -303,8 +304,8 @@ def main():
                     "target": str(target), "exists": exists, "files": len(files),
                     "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
                     "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
-                    "check_lines": summary, "scan_note": scan_note(args.repo, folder, sha, hits),
-                    "lookup_note": looked["note"], "blocked": looked["blocked"],
+                    "lines": summary, "note": f"{scan_note(args.repo, folder, sha, hits)}\n{looked['note']}",
+                    "blocked": looked["blocked"],
                     "review": review({"repo": args.repo, "sha": sha}, files, hits, looked,
                                      prefix="" if folder == "." else f"{folder}/"),
                 }, ensure_ascii=False))

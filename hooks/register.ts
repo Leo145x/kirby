@@ -90,8 +90,8 @@ const CHECK = {
 const FILE = {
   name: 'file',
   description:
-    'One file at the commit or package the pre-install check covered, raw and read-only: for reading a hit the scan ' +
-    'reported, or for the model review. For a repo, pass repo and ref, the full commit sha. For an MCP server\'s ' +
+    'One file at the commit or package the pre-install check covered, raw and read-only: for reading a pattern-scan ' +
+    'finding, or for the model review. For a repo, pass repo and ref, the full commit sha. For an MCP server\'s ' +
     "package, pass package and ref as the check tool's read gives them (ref is the sha256 of the archive checked) " +
     'and path inside the package.',
   inputSchema: {
@@ -159,16 +159,16 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
-      check_lines: string[]; scan_note: string; lookup_note: string; blocked: boolean; review: ReviewOf
+      lines: string[]; note: string; blocked: boolean; review: ReviewOf
     }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    lines.push(...c.check_lines)
+    lines.push(...c.lines)
     return {
-      lines: lines.join('\n'), cache: '', scan: `${c.scan_note}\n${c.lookup_note}`, review: c.review, commit: c.sha, blocked: c.blocked === true,
+      lines: lines.join('\n'), cache: '', scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true,
     }
   }
   if (kind === 'plugin') {

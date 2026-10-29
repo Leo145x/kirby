@@ -87,7 +87,8 @@ def preview(cwd):
     c = json.loads(out)
     # What every result after the dialog opens ends with: the pattern scan, then the lookups, then (the fixture
     # always has warn findings) the line saying no model review was passed.
-    c["note"] = f"{c['scan_note']}\n{c['lookup_note']}" + (REVIEW_NOTE + UNREVIEWED if c["review"]["needed"] else "")
+    c["check_note"] = c["note"]
+    c["note"] = c["check_note"] + (REVIEW_NOTE + UNREVIEWED if c["review"]["needed"] else "")
     return c
 
 
@@ -113,20 +114,20 @@ def main():
     q, opts = p.asked[0]
     scripts = f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}\n" if c["scripts"] else ""
     check("H1 dialog lists commit, scripts and every check line",
-          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n{scripts}" + "\n".join(c["check_lines"]) in q, q)
+          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n{scripts}" + "\n".join(c["lines"]) in q, q)
     check("H1 lookups: no dependency files, nothing found, each on its own line as the scan found something",
-          c["check_lines"][-3:] == ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
-                                    "malware lookup: nothing found"] and c["blocked"] is False, c["check_lines"])
+          c["lines"][-3:] == ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
+                                    "malware lookup: nothing found"] and c["blocked"] is False, c["lines"])
     check("H1 English options", opts == ENGLISH, opts)
     check("H1 result = cancelled + scan and lookup notes + English note",
           r == "not installed: the user cancelled.\n" + c["note"] + NO_DIALOG, r)
     check("H1 fixture fires all 12 rules and the 3 combinations", len({h["rule"] for h in c["scan"]["hits"]}) == 12
           and c["scan"]["combinations"] == ["send-secrets", "download-run", "download-decode"]
-          and c["check_lines"][1:4] == ["warn: send-secrets: may send secrets out (network + env-secret)",
+          and c["lines"][1:4] == ["warn: send-secrets: may send secrets out (network + env-secret)",
                                         "warn: download-run: may download and run code (network + exec)",
                                         "warn: download-decode: may download and decode a payload (network + decode)"],
-          c["check_lines"][:4])
-    check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
+          c["lines"][:4])
+    check("H1 file names are cleaned", "we?ird.py" in c["check_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
     check("H1 warn findings and no review passed -> one unchecked line, Install offered",
           c["review"]["needed"] is True and f"\n{UNREVIEWED}\n" in q and "Install" in opts, q)
 
@@ -292,7 +293,7 @@ def main():
           and c["lines"][0] == f"package: {pinned[4]} (npm), named by this repo's src/everything/package.json; not "
                                "verified to come from this repo"
           and c["lines"][1].startswith("pinned: only @modelcontextprotocol/server-everything, to ")
-          and c["lines"][2].startswith(("scan: ", "check: ")), out[:600])
+          and c["lines"][2].startswith(("pattern scan: ", "check: ")), out[:600])
     p = Peer("安裝", server.USER_OPTION)
     with Held() as held:
         r = server.install(p, {**mcp, "mcp_args": args}, meta)
@@ -324,17 +325,19 @@ def main():
                  "kirby does not check); not pinned")
     check("H10 a container image is unchecked and not pinned",
           f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{server.USER_ONLY}" in p.asked[0][0] and not held.argv
-          and r.startswith("not installed: the user cancelled.\nscan: the dialog showed the user that the pattern scan "
+          and r.startswith("not installed: the user cancelled.\npattern scan: the dialog showed the user that the pattern scan "
                            "and the lookups did not run on this MCP server"), r)
 
-    # H11: refusals before any dialog.
+    # H11: refusals before any dialog. Past the repo and the kind, they also say why the dialogs would be in English,
+    # as Claude Code's do.
     for case, a, want in [
         ("bad repo", {"repo": "x", "kind": "skill"}, 'not installed: not an owner/repo: "x"'),
         ("bad kind", {"repo": REPO, "kind": "app"}, "not installed: kind must be skill, plugin or mcp"),
-        ("no folder", {"repo": REPO, "kind": "skill"}, "not installed: kind=skill needs folder"),
+        ("no folder", {"repo": REPO, "kind": "skill"}, "not installed: kind=skill needs folder" + NO_DIALOG),
         ("no plugin", {"repo": "anthropics/claude-plugins-official", "kind": "plugin", "plugin": "no-such-plugin"},
-         "not installed: anthropics/claude-plugins-official has no marketplace plugin named no-such-plugin"),
-        ("no mcp_args", {"repo": "modelcontextprotocol/servers", "kind": "mcp"}, "not installed: kind=mcp needs mcp_args"),
+         "not installed: anthropics/claude-plugins-official has no marketplace plugin named no-such-plugin" + NO_DIALOG),
+        ("no mcp_args", {"repo": "modelcontextprotocol/servers", "kind": "mcp"},
+         "not installed: kind=mcp needs mcp_args" + NO_DIALOG),
     ]:
         p = Peer()
         with Held():
@@ -362,15 +365,15 @@ def main():
     got = json.loads(out) if ok else {}
     check("H14 check: review needed, the fixture's files at the commit checked, the dialog's facts",
           got.get("review") == "needed" and got.get("read") == {"repo": REPO, "ref": c["sha"]}
-          and f"{FOLDER}/e2e-setup.sh" in got.get("files", []) and got.get("findings", [])[-len(c["check_lines"]):] == c["check_lines"]
+          and f"{FOLDER}/e2e-setup.sh" in got.get("files", []) and got.get("findings", [])[-len(c["lines"]):] == c["lines"]
           and got.get("blocked") is False, out[:400])
     finding = {"file": f"{FOLDER}/e2e-setup.sh", "line": 5, "reason": "Reads the​ user's SSH key.\nSends it out."}
     line = f"warn: {FOLDER}/e2e-setup.sh:5: Reads the user's SSH key. Sends it out. (model review, as reported by the model)"
-    base = f"{c['scan_note']}\n{c['lookup_note']}"
+    base = c["check_note"]
     p = Peer("取消")
     r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [finding]}}, meta)
     check("H14 findings follow the check, cleaned and labelled, and reach the result",
-          "\n".join([*c["check_lines"], line]) + "\n\n測試用。" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
+          "\n".join([*c["lines"], line]) + "\n\n測試用。" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
           and r == f"not installed: the user cancelled.\n{base}{REVIEW_NOTE}{line}", r)
     for case, a, want in [
         ("another commit", {"sha": "f" * 40, "review": {"findings": []}},
@@ -397,12 +400,12 @@ def main():
     c = preview(project)
     name, version = fixture.MALWARE
     deps = "dependencies: package-lock.json: 2 npm"
-    looked = c["check_lines"][c["check_lines"].index(deps):] if deps in c["check_lines"] else []
+    looked = c["lines"][c["lines"].index(deps):] if deps in c["lines"] else []
     check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and looked[:3] == [
         deps,
         "blocked: the malware lookup found a known-malicious package, so Install is not offered",
         f"danger: {name}@{version} (npm) is a known-malicious package (MAL-2025-20690)",
-    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in looked), c["check_lines"])
+    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in looked), c["lines"])
     # Install is not offered, so no model review is asked for (docs/adr/0002).
     check("H13 a blocked install needs no model review", c["review"]["needed"] is False, c["review"])
     for answer, start in [("取消", "not installed: the user cancelled."),
@@ -411,7 +414,7 @@ def main():
         r = server.install(p, {**skill, "dialog": ZH}, meta)
         q, opts = p.asked[0]
         check(f"H13 {answer!r}: no Install, result says why", opts == ZH["options"][:3]
-              and "\n".join(c["check_lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
+              and "\n".join(c["lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
               and f"\nblocked: the dialog did not offer Install, because the malware lookup lists {name}@{version} (npm) "
                   "as known-malicious." in r and "model review" not in q + r and len(p.asked) == 1, f"{opts}\n      {r}")
     check("H13 nothing written", not (project / ".agents").exists())

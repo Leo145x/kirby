@@ -55,15 +55,15 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 - **哪個版本。** 指令指定的版本（`pkg@1.2.3`、`pkg==1.2.3`，或 `pkg@next` 這類 tag）；沒有的話用 `server.json` 給的版本；再沒有就用 registry 上的最新版。
 - **檢查什麼。** 那個版本的 npm tarball，或它適用所有平台的 PyPI wheel（沒有的話用 sdist），從 registry 下載、和 registry 給的 hash 比對後，解開到一個暫存資料夾：只解出一般檔案，不會寫到那個資料夾之外，也不會安裝、import 或執行其中任何東西。掃描跑在這些檔案上。查詢則查套件本身的這個版本，以及它的相依套件，版本的算法和 skill 一樣（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。repo 自己發布的安全公告，只算有寫到這個套件或沒寫任何套件的那些。
 
-命中的位置是套件裡的路徑。模型有那個套件的 `check` tool 回應時，會用 `file` tool 從檢查過的套件讀取（見下面的模型審查）；否則它會告訴你去哪裡看那個檔案（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
+發現的位置是套件裡的路徑。模型有那個套件的 `check` tool 回應時，會用 `file` tool 從檢查過的套件讀取（見下面的模型審查）；否則它會告訴你去哪裡看那個檔案（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
 
 ### pattern 掃描
 
 掃描會讀每個要檢查的檔案，找值得留意的模式。任何檔案裡的：隱藏 Unicode（`hidden-unicode`）、針對模型的語句（`injection-phrase`）、提到 agent 設定檔（`agent-config`）和憑證檔（`credentials`），以及很長的 base64 字串（`long-base64`）。Markdown 裡的：範圍很廣的 `allowed-tools`（`broad-tools`）和 HTML 註解（`html-comment`）。腳本裡的：網路呼叫（`network`）、shell 執行（`exec`）、解碼（`decode`）、讀取機密環境變數（`env-secret`）和修改 shell 啟動檔（`startup-files`）。二進位檔和超過 2 MB 的檔案不掃描，掃描那行會寫出有幾個。
 
-同一個工具在任何檔案裡命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 時，會再多一項組合發現，寫出是哪兩條規則：`send-secrets`（可能把機密送出去）、`download-run`（可能下載並執行程式碼）和 `download-decode`（可能下載並解碼一段內容）。
+同一個工具在任何檔案裡比對到 `network`，又比對到 `env-secret`、`exec` 或 `decode` 時，會再多一項組合發現，寫出是哪兩條規則：`send-secrets`（可能把機密送出去）、`download-run`（可能下載並執行程式碼）和 `download-decode`（可能下載並解碼一段內容）。
 
-對話框先列組合發現，再列每條命中的規則和位置。這只是 pattern 比對，不是安全審查：有命中不代表有害，沒命中也不代表安全。tool 也會把命中位置和掃描的 commit 交給模型，你可以直接問它某一行在做什麼；模型用 kirby 的唯讀 `file` tool 讀那個 commit 的那個檔案。
+對話框先列組合發現，再列每條比對到的規則和位置。這只是 pattern 比對，不是安全審查：有發現不代表有害，沒有發現也不代表安全。tool 也會把這些發現和掃描的 commit 交給模型，你可以直接問它某一行在做什麼；模型用 kirby 的唯讀 `file` tool 讀那個 commit 的那個檔案。
 
 ### 漏洞查詢和惡意套件查詢
 
@@ -81,11 +81,11 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 | `warn` | 掃描規則 `hidden-unicode`、`injection-phrase`、`credentials`、`startup-files`，這些在正常的工具裡較少見；組合發現；相依套件的其他漏洞；無法對到檢查的 commit 或套件的 repo 安全公告，對話框會說無法判斷它是否有影響；模型審查的每一項發現 |
 | `info` | 其他掃描規則 |
 
-有組合發現，讀取機密再送出去的工具就不會全部只是 `info`，雖然這幾條規則單獨命中時都是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）。掃描的部分，組合發現和 warn 的規則排在前面；查詢的部分，惡意套件排最前面，接著是檢查對象本身的安全公告，再來是評級最嚴重的相依套件。
+有組合發現，讀取機密再送出去的工具就不會全部只是 `info`，雖然這幾條規則單獨比對到時都是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）。掃描的部分，組合發現和 warn 的規則排在前面；查詢的部分，惡意套件排最前面，接著是檢查對象本身的安全公告，再來是評級最嚴重的相依套件。
 
 ### 擋下安裝
 
-只有已知的惡意套件會擋下安裝：惡意套件查詢在 OpenSSF Malicious Packages 裡找到工具本身或它的某個相依套件。這時對話框會顯示 `blocked:`，只剩取消、先看 README 和換一個，模型會告訴你原因，也不會做模型審查。仍然要裝的話，只能自己手動安裝。其他情況都不會擋：掃描命中、漏洞和模型審查的發現不論多嚴重，都由你判斷，因為很多正常的工具也會抓 URL、執行 shell 指令，或依賴有已知 CVE 的套件（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
+只有已知的惡意套件會擋下安裝：惡意套件查詢在 OpenSSF Malicious Packages 裡找到工具本身或它的某個相依套件。這時對話框會顯示 `blocked:`，只剩取消、先看 README 和換一個，模型會告訴你原因，也不會做模型審查。仍然要裝的話，只能自己手動安裝。其他情況都不會擋：pattern 掃描的發現、漏洞和模型審查的發現不論多嚴重，都由你判斷，因為很多正常的工具也會抓 URL、執行 shell 指令，或依賴有已知 CVE 的套件（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
 
 ### unchecked
 
@@ -112,7 +112,7 @@ kirby 能自己多做一些事來省掉一個步驟時，就會去做：repo 之
 
 ### 模型審查
 
-掃描或查詢找到 `danger` 或 `warn` 的發現（包括組合發現）時，還會由模型讀檔案，回報看起來有害的地方（[ADR 0002](adr/0002-model-review-in-a-subagent.md)）。什麼都沒找到、或只有 `info` 命中的工具不做審查，所以不必多等，也不多花 token。被擋下的安裝也不做：反正不會提供「安裝」。
+掃描或查詢找到 `danger` 或 `warn` 的發現（包括組合發現）時，還會由模型讀檔案，回報看起來有害的地方（[ADR 0002](adr/0002-model-review-in-a-subagent.md)）。什麼都沒找到、或只有 `info` 發現的工具不做審查，所以不必多等，也不多花 token。被擋下的安裝也不做：反正不會提供「安裝」。
 
 - **流程。** 呼叫安裝 tool 之前，模型先呼叫 `check` tool：它不跳對話框，執行同樣的安裝前檢查，說明需不需要審查、檔案在哪裡（檢查的那個 commit 的 repo，或 MCP server 的套件）、是哪些檔案。需要審查時，模型啟動一個 subagent：Claude Code 用 Agent tool 啟動 kirby 的審查 agent `kirby:reviewer`，Codex 用它的多 agent tool 啟動 subagent，並給它 skill 裡固定的提示。subagent 只透過 `file` tool 讀那個 commit 或那個套件裡的檔案，也不會被告知其他檢查找到什麼，所以是獨立審查。接著模型呼叫安裝 tool，傳入審查結果和檢查給的 sha。
 - **Claude Code 的審查 agent。** `kirby:reviewer` 只能用 `check` 和 `file`，所以即使被審查的檔案裡有針對它的指令，它也沒有 Bash 或寫入的 tool 可以濫用。它的指示是它自己的；模型只告訴它檔案在哪裡、是哪些。kirby 的 hook 讓 `check` 和 `file` 不經權限詢問就執行，其他 tool 一律不放行：這兩個 tool 只讀 GitHub 和套件內容，不會寫入你的電腦。你的設定或組織設定裡的 deny 規則仍然會擋下它們。在 Codex 裡，這些 tool 宣告自己只讀取，所以 Codex 直接執行、不先詢問。
@@ -121,7 +121,7 @@ kirby 能自己多做一些事來省掉一個步驟時，就會去做：repo 之
 - **在對話框裡。** 每項發現是一行 `warn`，排在檢查的各行之後，標上 `(model review, as reported by the model)`；沒有發現時則用一行說明。審查的發現只會增加：不會移除或降低其他發現，也不會擋下安裝。
 - **沒有審查。** 需不需要審查由安裝 tool 依自己的檢查決定。需要卻沒有傳入、審查無法執行，或審查讀的不是檢查的那個 commit 或套件時，對話框用一行 `model review: unchecked (…)` 說明，「安裝」仍然保留。
 
-結果是由模型轉交的，kirby 無法證明審查途中沒被改過或被跳過，所以這些發現都標為模型回報。
+結果是由模型轉交的，kirby 無法證明審查途中沒被改過、也確實做了，所以這些發現都標為模型回報。
 
 ### 哪些有鎖定
 
@@ -206,7 +206,7 @@ Codex 也讀得懂 Claude Code 格式的 marketplace。plugin 來自這種 marke
 | `stars.py` | 讀取你的 star 和 star list（GraphQL），快取在 `~/.cache/kirby/stars.json`，24 小時更新一次 |
 | `public.py` | 依 agent 工具類的 topic 搜尋公開的 GitHub repo |
 | `detect.py` | 判斷 repo 是 marketplace、plugin、skill 還是 MCP server，以及安裝需要的資訊 |
-| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入（加上 `--json` 時，對話框的那幾行是 `check_lines`，`review` 說明要不要做模型審查、讀哪些檔案）；`--commit` 安裝對話框顯示的那個 commit，即使 repo 之後又有新的 commit。由 mod 和 Codex 的 MCP server 呼叫 |
+| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入（加上 `--json` 時，對話框的那幾行是 `lines`，告訴模型的內容是 `note`，`review` 說明要不要做模型審查、讀哪些檔案）；`--commit` 安裝對話框顯示的那個 commit，即使 repo 之後又有新的 commit。由 mod 和 Codex 的 MCP server 呼叫 |
 | `check_plugin.py` | marketplace plugin 的安裝前檢查：抓取 marketplace（已經加入的用 `--commit` 指定它所在的 commit），依 plugin 的來源找到它的檔案，再執行掃描和查詢。輸出 JSON，也含上述的 `review`；不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
 | `check_mcp.py` | MCP server 的安裝前檢查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 寫的、指令實際執行的套件，下載並解開那個版本（不安裝），再執行掃描和查詢。輸出 JSON，其中 `mcp_args` 是鎖定在那個版本的指令，`review` 同上（它的 `sha` 是封存檔的 sha256）。`check_mcp.py --read '<JSON>'` 為 `file` tool 印出這種套件裡的單一檔案。不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 執行的漏洞查詢和惡意套件查詢：讀取相依套件檔案、不安裝就算出版本，再向 OSV.dev 和 GitHub 查詢。不會單獨執行 |

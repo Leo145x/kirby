@@ -62,7 +62,7 @@ class InTheMarketplace(unittest.TestCase):
             "description: Does p things",
             "source: plugins/p/ in this repo",
             "scripts: 1, e.g. scripts/run.sh",
-            "scan: 2 files, the ones installed; a pattern match, not a safety review",
+            "pattern scan: 2 files, the ones installed; a pattern match, not a safety review",
             "warn: download-run: may download and run code (network + exec)",
             "info: network ×1 (scripts/run.sh:1)",
             "info: exec ×1 (scripts/run.sh:1)",
@@ -70,7 +70,7 @@ class InTheMarketplace(unittest.TestCase):
         ])
         self.assertFalse(c["blocked"])
         self.assertTrue(c["note"].startswith(
-            f"scan: the dialog showed the user these pattern hits in o/mk at commit {MK_SHA}:\n"
+            f"pattern scan: the dialog showed the user these pattern-scan findings in o/mk at commit {MK_SHA}:\n"
             "  warn download-run: may download and run code (network + exec)\n  info network plugins/p/scripts/run.sh:1\n  info exec plugins/p/scripts/run.sh:1\n"
             f"lookups: the dialog showed the user no findings from the advisory and malware lookups for o/mk at commit {MK_SHA}"),
             c["note"])
@@ -99,7 +99,7 @@ class InTheMarketplace(unittest.TestCase):
         c, _ = check({MK: {None: (MK_SHA, files)}}, agent="codex")
         self.assertEqual(c["marketplace_file"], ".agents/plugins/marketplace.json")
         self.assertEqual(c["lines"][1:5], ["source: plugins/q/ in this repo", "scripts: 1, e.g. evil.sh",
-                                           "scan: 1 files, the ones installed; a pattern match, not a safety review",
+                                           "pattern scan: 1 files, the ones installed; a pattern match, not a safety review",
                                            "warn: credentials ×1 (evil.sh:1)"])
 
     def test_a_bare_name_resolves_under_plugin_root(self):
@@ -154,7 +154,7 @@ class InAnotherRepo(unittest.TestCase):
         self.assertEqual(git.fetched, [(MK, None), (self.SRC, SRC_SHA)])
         self.assertEqual(c["lines"][1:3], ["source: x/src:tools/p at commit bbbbbbb, pinned by the marketplace entry",
                                            "scripts: 1, e.g. run.py"])
-        self.assertTrue(c["note"].startswith(f"scan: the dialog showed the user no pattern hits in x/src at commit {SRC_SHA}"))
+        self.assertTrue(c["note"].startswith(f"pattern scan: the dialog showed the user no pattern-scan findings in x/src at commit {SRC_SHA}"))
         self.assertNotIn("not pinned", c["note"])
         self.assertEqual(c["source"]["commit"], SRC_SHA)
         # The review reads the source repo at the source's commit, not the marketplace.
