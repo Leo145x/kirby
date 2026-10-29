@@ -43,18 +43,18 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 ### 扫描
 
-在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置，前面标上严重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 里较少见，标 `warn`，其他标 `info`；`warn` 的规则排在前面。同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项标 `warn` 的发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。这几条规则单独命中时仍是 `info`，所以读取机密再发送出去的 skill 不会全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；这些发现排在最前面。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全，所以任何命中都不会拦下安装。plugin 的文件也用同样的方式扫描（见下面的 plugin）；MCP server 不会扫描，对话框会注明。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。在 Claude Code 里，模型用 `gh api` 读取那个文件，skill 没有预先允许这个命令，所以除非你的权限模式允许，Claude Code 会先询问你。
+在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置，前面标上严重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 里较少见，标 `warn`，其他标 `info`；`warn` 的规则排在前面。同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项标 `warn` 的发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。这几条规则单独命中时仍是 `info`，所以读取机密再发送出去的 skill 不会全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；这些发现排在最前面。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全，所以任何命中都不会拦下安装。plugin 的文件也用同样的方式扫描（见下面的 plugin），MCP server 的命令所运行的已发布包也一样（见下面的 MCP server）。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。在 Claude Code 里，模型用 `gh api` 读取那个文件，skill 没有预先允许这个命令，所以除非你的权限模式允许，Claude Code 会先询问你。
 
 ### 漏洞查询和恶意包查询
 
-对 skill 和 plugin，安装前检查还会查询已公开的漏洞和已知的恶意包，只用除了你的 `gh` 登录之外不需要任何密钥的公开服务：[OSV.dev](https://osv.dev) 和 GitHub。
+对 skill、plugin 和 MCP server，安装前检查还会查询已公开的漏洞和已知的恶意包，只用除了你的 `gh` 登录之外不需要任何密钥的公开服务：[OSV.dev](https://osv.dev) 和 GitHub。
 
 - **依赖包。** tool 读取 skill 在锁定 commit 的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`。没有 lockfile 时，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不会安装任何东西，也不会运行包的代码（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。这时对话框会注明版本是检查时算出的，实际运行时可能不同。没有 npm 或 uv 时只知道包名，恶意包查询仍会按包名查，漏洞查询则标为 unchecked。
 - **漏洞查询。** 向 OSV.dev 查每个依赖包的那个版本，以及锁定的 commit 本身（OSV 会把 commit 对应到记录里的 git 范围）；向 GitHub 查 repo 为自己发布的 advisory。依赖包有 critical 或 high 的漏洞，或 OSV 对应到这个 commit 的任何记录，是 `danger`；其他漏洞是 `warn`，无法对应到这个 commit 的 repo advisory 也是 `warn`，对话框会说无法判断它是否影响这个 commit。
 - **恶意包查询。** OSV.dev 里 id 以 `MAL-` 开头的记录，来自 OpenSSF Malicious Packages。查到就是 `danger`，而且会**拦下**安装：第一层对话框只剩取消、先看 README 和换一个，模型会告诉你原因。仍然要装的话，只能自己手动安装。其他情况都不会拦：扫描命中和漏洞不论多严重，都由你判断（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
 - **unchecked。** 查询失败或超时，会显示为 `unchecked`，不会当成没找到，“安装”也仍然可选。
 
-每个结果都会把同样的发现交给模型，你可以直接问它某一项。MCP server 目前还不会查询。
+每个结果都会把同样的发现交给模型，你可以直接问它某一项。
 
 ### plugin
 
@@ -66,9 +66,21 @@ plugin 按它在 marketplace 里的条目所写的来源检查，用的是 marke
 
 对话框的 `source:` 那行会说明是哪一种。之后扫描和查询跟 skill 一样运行在这些文件上，查到已知的恶意包也同样会拦下安装。
 
+### MCP server
+
+MCP server 每次启动时运行的是它的命令获取的包（`npx -y <package>`、`uvx <package>`），所以检查的是那个包，不是 repo 的文件：
+
+- **哪个包。** repo 只用来得知它写了哪些包：`server.json` 的 `packages`，其次是 `package.json`（不含 private 的）的 `name`，再其次是 `pyproject.toml` 的 name，位置可以在根目录或往下最多两层文件夹，所以一个 repo 放了好几个 server 也行。tool 检查其中命令实际运行的那一个。包和 repo 之间没有任何绑定（MCP registry 验证的是包和 server 名称的对应，不是和 repo 的对应），所以对话框的 `package:` 那行会写明是哪个文件写了它，并注明没有验证它出自这个 repo。
+- **哪个版本。** 命令指定的版本（`pkg@1.2.3`、`pkg==1.2.3`，或 `pkg@next` 这类 tag）；没有的话用 `server.json` 给的版本；再没有就用 registry 上的最新版。
+- **检查什么。** 那个版本的 npm tarball，或它适用所有平台的 PyPI wheel（没有的话用 sdist），从 registry 下载、和 registry 给的 hash 比对后，解开到一个临时文件夹：只解出普通文件，不会写到那个文件夹之外，也不会安装、import 或运行其中任何东西。扫描运行在这些文件上。查询则查包本身的这个版本（针对它的任何漏洞公告都是 `danger`），以及它的依赖，版本的算法和 skill 一样（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。repo 自己发布的漏洞公告，只算写到这个包或没写任何包的那些。
+- **锁定版本。** 命令会改写成那个版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖是在检查时算出版本的，server 启动时可能不同，对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。
+- **unchecked。** container image（`docker run …`）、通过 URL 连接的远程 server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包，都不会检查：一行 `unchecked:` 说明原因，命令保持原样。tool 无法确定命令会拿到哪个版本时（registry 没有响应，或命令指定的是 `pkg@^1.2` 这类范围），对话框会显示 `not pinned:`，扫描标为 unchecked，只用包名做恶意包查询。
+
+命中的位置是包里的路径，模型无法用读取 repo 的工具读取，它会告诉你去哪里看那个文件（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
+
 ### 锁定 commit
 
-skill 会安装对话框显示的那个 commit，即使在实际安装前 repo 有了新的 commit 也一样：kirby 会自己去获取那个 commit，你不必再回答一次对话框（[ADR 0005](adr/0005-one-click-by-default.md)）。只有那个 commit 已经获取不到时（force-push 可能把它移除），安装才会失败；不会安装任何东西，结果会说明原因，你仍然想装的话，模型会重新弹出对话框，显示当前的 commit。plugin 则从对话框显示的 marketplace commit 安装（见下方）。MCP server 没有锁定版本：它每次启动时运行的是它的命令所获取的代码，例如 `npx -y <package>`。
+skill 会安装对话框显示的那个 commit，即使在实际安装前 repo 有了新的 commit 也一样：kirby 会自己去获取那个 commit，你不必再回答一次对话框（[ADR 0005](adr/0005-one-click-by-default.md)）。只有那个 commit 已经获取不到时（force-push 可能把它移除），安装才会失败；不会安装任何东西，结果会说明原因，你仍然想装的话，模型会重新弹出对话框，显示当前的 commit。plugin 则从对话框显示的 marketplace commit 安装（见下方）。MCP server 的命令会锁定在检查过的包版本，但它的依赖不会（见上面的 MCP server）。
 
 plugin 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
@@ -128,6 +140,7 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
 | `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `check_lines`）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
 | `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
-| `lookups.py` | `install_skill.py --check` 和 `check_plugin.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
+| `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
+| `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。

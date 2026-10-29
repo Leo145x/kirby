@@ -12,6 +12,7 @@ and exits 1 if any case failed.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -268,16 +269,38 @@ def main():
     check("H9 options out of order -> scope dialog still asks", len(p.asked) == 2 and not held.argv
           and r.startswith("not installed: the user cancelled at the scope step."), r)
 
-    # H10: an MCP server: the command, not-scanned line, where it installs.
+    # H10: an MCP server: the check of the package its command runs, the command pinned to the version checked,
+    # where it installs. A container image is unchecked and stays as given.
     args = ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]
+    mcp = {"repo": "modelcontextprotocol/servers", "kind": "mcp", "dialog": ZH}
+    out = subprocess.run([sys.executable, "-I", str(ROOT / "skills/inhale/scripts/check_mcp.py"), "--", mcp["repo"],
+                          json.dumps(args)], capture_output=True, text=True, check=True).stdout
+    c = json.loads(out)
+    pinned = c["mcp_args"]
+    check("H10 the package is found in the monorepo and pinned", pinned[:4] == args[:4]
+          and re.fullmatch(r"@modelcontextprotocol/server-everything@\d+\.\d+\.\d+", pinned[4]) is not None
+          and c["lines"][0] == f"package: {pinned[4]} (npm), named by this repo's src/everything/package.json; not "
+                               "verified to come from this repo"
+          and c["lines"][1].startswith("pinned: only @modelcontextprotocol/server-everything, to ")
+          and c["lines"][2].startswith(("scan: ", "check: ")), out[:600])
     p = Peer("安裝", server.USER_OPTION)
     with Held() as held:
-        r = server.install(p, {"repo": "modelcontextprotocol/servers", "kind": "mcp", "mcp_args": args, "dialog": ZH}, meta)
-    check("H10 mcp facts, scope dialog, then install",
-          f"MCP server: codex mcp add {' '.join(args)}\n{server.MCP_NOT_SCANNED}\n{server.USER_ONLY}" in p.asked[0][0]
-          and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *args]]
-          and r == f"installed (scope user): codex mcp add {' '.join(args)}\n(held)\n"
-                   f"next: The user starts a new Codex session to use it.\n{server.MCP_NOT_SCANNED}", r)
+        r = server.install(p, {**mcp, "mcp_args": args}, meta)
+    check("H10 mcp facts, scope dialog, then install the pinned command",
+          "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], server.USER_ONLY]) in p.asked[0][0]
+          and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
+          and r == f"installed (scope user): codex mcp add {' '.join(pinned)}\n(held)\n"
+                   f"next: The user starts a new Codex session to use it.\n{c['note']}", r)
+    docker = ["kirby-e2e", "--", "docker", "run", "-i", "--rm", "mcp/everything"]
+    p = Peer("取消")
+    with Held() as held:
+        r = server.install(p, {**mcp, "mcp_args": docker}, meta)
+    unchecked = ("unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which "
+                 "kirby does not check); not pinned")
+    check("H10 a container image is unchecked and not pinned",
+          f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{server.USER_ONLY}" in p.asked[0][0] and not held.argv
+          and r.startswith("not installed: the user cancelled.\nscan: the dialog showed the user that the pattern scan "
+                           "and the lookups did not run on this MCP server"), r)
 
     # H11: refusals before any dialog.
     for case, a, want in [

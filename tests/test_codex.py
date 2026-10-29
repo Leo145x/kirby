@@ -111,33 +111,52 @@ class OneScope(unittest.TestCase):
             self.asked.append((question, options))
             return self.answers.pop(0)
 
-    def install(self, *answers, dialog=GOOD):
-        ran, run = [], server.run
+    ARGS = ["probe", "--", "npx", "-y", "probe"]
+    CHECK = {"mcp_args": ["probe", "--", "npx", "-y", "probe@1.0.0"], "blocked": False,
+             "lines": ["package: probe@1.0.0 (npm), named by this repo's package.json; not verified to come from this repo",
+                       "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
+                       "checked when the server starts",
+                       "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"],
+             "note": "scan: the dialog showed the user no pattern hits in the npm package probe@1.0.0"}
+
+    def install(self, *answers, dialog=GOOD, check=None):
+        ran, scripts, run, script = [], [], server.run, server.script
 
         def fake(argv, cwd=None):
             ran.append(argv)
             return True, '[1, "2026-01-01T00:00:00Z", false]' if argv[0] == "gh" else "added"
 
-        server.run = fake
+        def fake_script(name, *args, cwd=None):
+            scripts.append((name, *args))
+            return True, json.dumps(check or self.CHECK)
+
+        server.run, server.script = fake, fake_script
         try:
             peer = self.Peer(*answers)
-            args = ["probe", "--", "npx", "-y", "probe"]
-            r = server.install(peer, {"repo": "o/r", "kind": "mcp", "mcp_args": args, "dialog": dialog}, None)
+            r = server.install(peer, {"repo": "o/r", "kind": "mcp", "mcp_args": self.ARGS, "dialog": dialog}, None)
         finally:
-            server.run = run
+            server.run, server.script = run, script
+        self.scripts = scripts
         return peer, [a for a in ran if a[0] == "codex"], r
 
-    def test_the_scope_dialog_says_where_in_the_servers_words(self):
+    def test_the_dialog_shows_the_check_and_the_pinned_command_installs(self):
         peer, ran, r = self.install("安裝", server.USER_OPTION)
-        self.assertIn(f"{server.MCP_NOT_SCANNED}\n{server.USER_ONLY}", peer.asked[0][0])
+        self.assertEqual(self.scripts, [("check_mcp.py", "--", "o/r", json.dumps(self.ARGS))])
+        self.assertIn("\n".join(["MCP server: codex mcp add probe -- npx -y probe@1.0.0", *self.CHECK["lines"], server.USER_ONLY]),
+                      peer.asked[0][0])
         self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, server.USER_OPTION]))
-        self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe"]])
-        self.assertTrue(r.startswith("installed (scope user): codex mcp add probe -- npx -y probe\nadded\n"))
+        self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe@1.0.0"]])
+        self.assertTrue(r.startswith("installed (scope user): codex mcp add probe -- npx -y probe@1.0.0\nadded\n"))
+        self.assertTrue(r.endswith(f"\n{self.CHECK['note']}"), r)
 
     def test_cancel_at_the_scope_dialog_runs_nothing(self):
         peer, ran, r = self.install("安裝", CANCEL)
         self.assertEqual((len(peer.asked), ran), (2, []))
-        self.assertEqual(r, f"not installed: the user cancelled at the scope step.\n{server.MCP_NOT_SCANNED}")
+        self.assertEqual(r, f"not installed: the user cancelled at the scope step.\n{self.CHECK['note']}")
+
+    def test_a_blocked_server_offers_no_install(self):
+        peer, ran, r = self.install("取消", check={**self.CHECK, "blocked": True})
+        self.assertEqual((peer.asked[0][1], ran), (GOOD["options"][:3], []))
 
     def test_options_out_of_order_still_meet_the_scope_dialog(self):
         # The model put cancel last, so the user's cancel reads as install; the scope dialog still stops it.

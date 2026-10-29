@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { callLine, resultLine } from '../hooks/rows'
 
-const SCAN = 'scan: not scanned; the server runs what this command fetches when it starts, not this repo\'s files'
+const SCAN = 'scan: the dialog showed the user no pattern hits in the npm package x@1.0.0 (x-1.0.0.tgz) (a pattern match, not a safety review)'
 
 test('the call line names the repo and what is installed, not the dialog wording', async () => {
   const dialog = { about: '安裝 security-audit skill', next: '下一步？', options: ['取消', '先讀', '換一個', '安裝'], scope: '範圍？' }
