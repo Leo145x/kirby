@@ -1,7 +1,7 @@
 {
   "name": "kirby",
   "version": "0.1.0",
-  "description": "Find skills, plugins and MCP servers in your GitHub stars and star lists or through a public GitHub search, and install the one you pick at the scope you choose.",
+  "description": "Find skills, plugins and MCP servers in your GitHub stars and star lists or on public GitHub, check what one would install (a pattern scan, vulnerability and malware lookups, and a model review when something turns up), and install your pick at the scope you choose.",
   "license": "MIT",
   "author": {
     "name": "Leo145x"
