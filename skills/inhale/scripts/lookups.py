@@ -134,6 +134,11 @@ def py_name(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def package_key(ecosystem, name):
+    """A package's name as its registry compares it: PyPI's normalised form, npm's in lower case."""
+    return py_name(name) if ecosystem == "PyPI" else name.lower()
+
+
 def sources(files):
     """The dependency files among the skill's files: per folder, the lockfile when there is one,
     otherwise the manifests."""
@@ -506,8 +511,8 @@ def names_package(advisory, package):
     eco, name = package
     named = {((v.get("package") or {}).get("ecosystem"), (v.get("package") or {}).get("name"))
              for v in advisory.get("vulnerabilities") or [] if isinstance(v, dict) and isinstance(v.get("package"), dict)}
-    key = (lambda n: py_name(n)) if eco == "PyPI" else (lambda n: n.lower())
-    return not named or any(e == GH_ECOSYSTEMS[eco] and isinstance(n, str) and key(n) == key(name) for e, n in named)
+    return not named or any(e == GH_ECOSYSTEMS[eco] and isinstance(n, str) and package_key(eco, n) == package_key(eco, name)
+                            for e, n in named)
 
 
 def repo_findings(advisories, commit_aliases, subject="this commit", package=None):
