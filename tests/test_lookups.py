@@ -216,6 +216,16 @@ class Resolving(unittest.TestCase):
         self.assertEqual(r["lines"][0], "dependencies: package-lock.json: 2 npm; uv.lock: 1 PyPI")
         self.assertIn({"package": {"name": "requests", "ecosystem": "PyPI"}, "version": "2.19.0"}, net.queries)
 
+    def test_dependency_files_past_the_tenth_are_unchecked_not_dropped(self):
+        files = {f"{d}/package-lock.json": lock(("a", "1.0.0")) for d in "abcdefghijkl"}
+        r = check(files, Net())
+        self.assertEqual(r["lines"][1:], [
+            "unchecked: advisory lookup for 2 more dependency files (k/package-lock.json, l/package-lock.json); malware lookup "
+            "for 2 more dependency files (k/package-lock.json, l/package-lock.json) (kirby reads at most 10)",
+            "advisory lookup: nothing found in the rest", "malware lookup: nothing found in the rest"])
+        self.assertIsNone(r["nothing_found"])
+        self.assertIn("\n  unchecked: advisory lookup for 2 more dependency files", r["note"])
+
     def test_the_dialog_names_at_most_four_dependency_files(self):
         files = {f"{d}/package-lock.json": lock(("a", "1.0.0")) for d in "abcdef"}
         self.assertEqual(check(files, Net())["lines"][0], "dependencies: a/package-lock.json: 1 npm; b/package-lock.json: "

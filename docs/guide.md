@@ -93,6 +93,7 @@ A part that could not run is shown as `unchecked`, with why, never as nothing fo
 
 - a lookup that fails or runs out of time;
 - the advisory lookup of dependencies whose versions could not be resolved (npm or uv is missing or failed, or some come from outside the npm registry);
+- both lookups of the dependency files past the tenth, which kirby does not read; the line names how many and which;
 - a plugin whose source is not on GitHub (the scan and both lookups);
 - an MCP server run from a container image (`docker run …`) or a remote server at a URL, a repo that names no npm or PyPI package, or a command that runs none of the packages the repo names: one `unchecked:` line says why, and the command stays as given;
 - an MCP server whose version kirby cannot tell (the registry does not answer, no version matches the range the command asks for, or kirby does not read that range): the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name;

@@ -153,7 +153,7 @@ def sources(files):
         for lockfile, manifests in (("package-lock.json", ["package.json"]), ("uv.lock", ["requirements.txt", "pyproject.toml"])):
             chosen = [lockfile] if lockfile in names else [m for m in manifests if m in names]
             picked += [str(folder / n) if str(folder) != "." else n for n in chosen]
-    return picked[:MAX_SOURCES]
+    return picked
 
 
 def npm_lock(data):
@@ -336,8 +336,13 @@ def check(repo, sha, root, files, net=None):
     lookups found nothing and nothing went unchecked, the dependencies they covered (for the one line
     install_skill.check_lines makes), else None}."""
     net = net or Net()
-    deps = [read(root, rel, net) for rel in sources(files)]
-    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net)
+    found = sources(files)
+    deps = [read(root, rel, net) for rel in found[:MAX_SOURCES]]
+    # The files past the limit are not read, which the dialog says rather than leaving them out.
+    rest = [shown(rel) for rel in found[MAX_SOURCES:]]
+    unread = [(f"{plural(len(rest), 'more dependency file', 'more dependency files')} ({listed(rest)})",
+               f"kirby reads at most {MAX_SOURCES}")] if rest else []
+    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net, unread=unread)
 
 
 def check_package(repo, ecosystem, name, version, direct, net=None, why=None, elsewhere=False):
@@ -373,17 +378,20 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None, el
     return looked_up(repo, query, subject, subject, [src], net)
 
 
-def looked_up(repo, query, subject, about, deps, net, unknown=None):
+def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
     """The lookups of a subject (a commit, or a package; query is its OSV query) and of deps, as check()
     describes them. about names the subject for the model; unknown is (part, why) for dependencies that
-    could not be listed at all."""
+    could not be listed at all; unread is (part, why) for each part of the dependencies that was not read."""
     findings, unchecked = [], []
     parts = {ADVISORY: [subject, "this repo's advisories"], MALWARE: [subject]}
     if unknown:
         part, why = unknown
+        unchecked.append((ADVISORY, subject, why))
+        unread = [*unread, unknown]
+    for part, why in unread:
         parts[ADVISORY].append(part)
         parts[MALWARE].append(part)
-        unchecked += [(ADVISORY, subject, why), (ADVISORY, part, why), (MALWARE, part, why)]
+        unchecked += [(ADVISORY, part, why), (MALWARE, part, why)]
     for d in deps:
         part = d.get("part", d["file"])
         parts[ADVISORY].append(part)
