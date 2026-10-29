@@ -9,8 +9,8 @@ The details behind the [README](../README.md): how kirby is built, what each ste
 kirby has three parts:
 
 - **The `inhale` skill** searches your stars and star lists (or public GitHub), then judges and recommends skills, plugins or MCP servers that fit the task.
-- **A mod** (`hooks/register.ts`, for Claude Code) provides the install tool `mcp__kirby__install`. An install through this tool waits for your answers in two dialogs.
-- **An MCP server** (`codex/server.py`, for Codex) provides the search tools and an `install` tool with the same two dialogs.
+- **A mod** (`hooks/register.ts`, for Claude Code) provides the install tool `mcp__kirby__install`, and two read-only tools for the model review: `mcp__kirby__check`, which runs the pre-install check without a dialog, and `mcp__kirby__file`, which reads one file where the check read it. An install through the install tool waits for your answers in two dialogs.
+- **An MCP server** (`codex/server.py`, for Codex) provides the search tools, the same `check` and `file` tools, and an `install` tool with the same two dialogs.
 
 The skill tells the model to install only through these tools, but that is an instruction, not a block: the model can still run install commands such as `claude mcp add` or `codex mcp add` itself.
 
@@ -30,7 +30,7 @@ Public search only finds repos tagged with an agent-tooling topic (`agent-skills
 
 Once you pick a repo, the mod shows two dialogs:
 
-1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (the scan and the lookups below). When the check finds nothing and nothing went unscanned or unchecked, that is one line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines. When the malware lookup finds a known-malicious package, Install is left out.
+1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (the scan, the lookups and, when they found something, the model review below). When the check finds nothing and nothing went unscanned or unchecked, that is one line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines. When the malware lookup finds a known-malicious package, Install is left out.
 2. **Scope** (only after Install):
 
 | scope | skill | plugin | MCP |
@@ -43,7 +43,7 @@ Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Scan
 
-Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a `warn` finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload). Each of those rules alone stays `info`, so a skill that reads a secret and sends it out is not all `info` ([ADR 0005](adr/0005-one-click-by-default.md)); these findings are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below), and so is the published package an MCP server's command runs (see MCP servers below). The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. In Claude Code the model reads that file with `gh api`, which the skill does not pre-approve, so unless your permission mode allows it, Claude Code asks you first.
+Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a `warn` finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload). Each of those rules alone stays `info`, so a skill that reads a secret and sends it out is not all `info` ([ADR 0005](adr/0005-one-click-by-default.md)); these findings are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below), and so is the published package an MCP server's command runs (see MCP servers below). The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. The model reads that file at that commit with kirby's read-only `file` tool.
 
 ### Advisory and malware lookups
 
@@ -55,6 +55,18 @@ For a skill, a plugin or an MCP server, the pre-install check also looks up publ
 - **Unchecked.** A lookup that fails or runs out of time shows as `unchecked`, never as nothing found, and Install stays available.
 
 The model gets the same findings in every result, so you can ask about one.
+
+### Model review
+
+When the scan or the lookups find a `danger` or `warn` finding (a combination finding included), a model also reads the files and reports what looks harmful ([ADR 0002](adr/0002-model-review-in-a-subagent.md)). A tool where they find nothing, or only `info` hits, gets no review, so it costs no extra wait or tokens.
+
+- **The flow.** Before the install tool, the model calls the `check` tool, which runs the same pre-install check without a dialog and says whether a review is needed, where the files are (the repo at the commit checked, or an MCP server's package) and which files they are. If a review is needed, the model starts a subagent (in Claude Code with the Agent tool, in Codex with its multi-agent tools) with a fixed prompt from the skill. The subagent reads the files only through the `file` tool, at that commit or from that package, and is not told what the other checks found, so it reviews the files on its own. Then the model calls the install tool with the review's result and the sha the check gave.
+- **What is reviewed.** What gets installed: a skill's files, a plugin's source (also in another repo), or, for an MCP server, the published package the check unpacked. For a package, `file` downloads the same archive again, checks it against the registry's hash and against the sha256 the check gave, and unpacks it into a temporary folder; nothing in it is installed or run.
+- **The result.** At most 5 findings, each a file the check listed, a line number, and a one-sentence reason of at most 120 characters that does not quote the file; or `could_not_run` with a reason. The install tool checks that structure, strips hidden and control characters, and refuses a result outside it before any dialog opens, so the model sends it again.
+- **In the dialog.** Each finding is a `warn` line after the check's lines, labelled `(model review, as reported by the model)`, or one line says the review found nothing. A review finding only adds: it never removes or lowers another finding, and it never blocks.
+- **Missing review.** The install tool decides from its own check whether a review was needed. If one was and none was passed, the review could not run, or it read another commit than the one checked, the dialog says `model review: unchecked (…)` in one line, and Install stays available ([ADR 0005](adr/0005-one-click-by-default.md)).
+
+The model passes the result on, so kirby cannot prove that the review was not edited on the way or skipped; that is why its findings are labelled as reported by the model.
 
 ### Plugins
 
@@ -76,7 +88,7 @@ An MCP server runs the package its command fetches when it starts (`npx -y <pack
 - **Pinning.** The command is rewritten to that version (`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`), and the dialog shows the rewritten command. Only that package is pinned: its dependencies are resolved when the check runs and may differ when the server starts, and the dialog's `pinned:` line says so. An MCP server therefore does not install exactly what was checked, as a skill does.
 - **Unchecked.** A container image (`docker run …`), a remote server at a URL, a repo that names no npm or PyPI package, and a command that runs none of the packages the repo names are not checked: one `unchecked:` line says why, and the command stays as given. If the tool cannot tell which version the command gets (the registry does not answer, or the command asks for a range such as `pkg@^1.2`), the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name.
 
-The hits are paths inside the package, which the model cannot read with the repo tools; it tells you where to read the file instead (unpkg for npm, inspector.pypi.io for PyPI).
+The hits are paths inside the package. When the model has the `check` tool's answer for it, it reads them with the `file` tool from the package checked (see Model review above); otherwise it tells you where to read the file (unpkg for npm, inspector.pypi.io for PyPI).
 
 ### Pinned commit
 
@@ -110,7 +122,7 @@ The same repo is a Codex plugin. Codex reads `.codex-plugin/plugin.json`, which 
 
 What differs from Claude Code:
 
-- **Searches and reads go through MCP tools.** The server's `stars`, `public` and `detect` tools run the same scripts, and its `readme` and `file` tools read a README or one file at a commit from GitHub, all outside Codex's sandbox, so they do not ask for network access each time. These five tools declare that they only read, and with Codex's default approval settings Codex runs them without asking. It still asks before kirby's `install` runs; "Always allow" remembers the answer.
+- **Searches and reads go through MCP tools.** The server's `stars`, `public` and `detect` tools run the same scripts, its `readme` and `file` tools read a README or one file at a commit from GitHub (or, for the model review, from an MCP server's package), and its `check` tool runs the pre-install check without a dialog, all outside Codex's sandbox, so they do not ask for network access each time. These six tools declare that they only read, and with Codex's default approval settings Codex runs them without asking. It still asks before kirby's `install` runs; "Always allow" remembers the answer.
 - **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. As in Claude Code, the model writes their wording in your language, and the facts stay in English.
 - **No `default_source` setting.** The default is `stars`; say "public" or "both" in the prompt.
 - **Scopes:**
@@ -138,9 +150,9 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `stars.py` | Reads your stars and star lists (GraphQL), cached in `~/.cache/kirby/stars.json` for 24 hours |
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
-| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `check_lines`); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
-| `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON; installs nothing. Called by the mod and the Codex MCP server |
-| `check_mcp.py` | The pre-install check of an MCP server: `check_mcp.py owner/repo '<mcp_args as JSON>'` finds which package the repo names and the command runs, downloads and unpacks that version without installing it, and runs the scan and the lookups on it. Prints JSON, with the command pinned to that version as `mcp_args`; installs nothing. Called by the mod and the Codex MCP server |
+| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `check_lines`, and `review` says whether the model review runs and which files it reads); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
+| `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON, with `review` as above; installs nothing. Called by the mod and the Codex MCP server |
+| `check_mcp.py` | The pre-install check of an MCP server: `check_mcp.py owner/repo '<mcp_args as JSON>'` finds which package the repo names and the command runs, downloads and unpacks that version without installing it, and runs the scan and the lookups on it. Prints JSON, with the command pinned to that version as `mcp_args` and `review` as above (its `sha` is the archive's sha256). `check_mcp.py --read '<JSON>'` prints one file of such a package for the `file` tool. Installs nothing. Called by the mod and the Codex MCP server |
 | `lookups.py` | The advisory and malware lookups `install_skill.py --check`, `check_plugin.py` and `check_mcp.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
 
 `detect.py --agent codex` looks for Codex marketplaces (`.agents/plugins/marketplace.json`) first; `install_skill.py --agent codex` installs into `.agents/skills/`.

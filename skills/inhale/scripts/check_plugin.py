@@ -9,7 +9,8 @@ plugin's entry in its marketplace file and follows the entry's source: a folder 
 repo, or another GitHub repo, at the entry's sha when it gives one and as it stands otherwise. It runs
 the pattern scan (install_skill.py's) and the advisory and malware lookups (lookups.py) on the
 plugin's files, and prints JSON: the dialog's facts (`lines`), the same for the model (`note`),
-`blocked`, the marketplace's name and commit, and the source. Nothing is installed.
+`blocked`, the marketplace's name and commit, the source, and `review`: whether the model review runs
+and which files it reads, in which repo at which commit (docs/adr/0002). Nothing is installed.
 
 A source kirby cannot fetch from GitHub (an npm package, an archive, a command, another git host) is
 reported as unchecked. Without a sha in the entry, the source is not pinned and may differ at install time.
@@ -26,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from detect import MARKETPLACES  # noqa: E402
-from install_skill import SCRIPT, VALID_REPO, VALID_SHA, check_lines, listing, scan, scan_note  # noqa: E402
+from install_skill import SCRIPT, VALID_REPO, VALID_SHA, check_lines, listing, review, scan, scan_note  # noqa: E402
 from lookups import shown  # noqa: E402
 
 GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
@@ -171,7 +172,7 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
             lines.append(f"unchecked: pattern scan, advisory lookup and malware lookup ({why})")
             out.update(files=0, scripts=[], mcp_servers=None, blocked=False, lines=lines,
                        note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on "
-                            f"plugin {shown(name, 60)}: {why}")
+                            f"plugin {shown(name, 60)}: {why}", review={"needed": False, "files": []})
             return out
         deps = depends_on(entry, root, files)
         if deps:
@@ -189,7 +190,9 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
         if deps:
             note += f"\nplugins: the dialog showed the user that installing also installs these plugins, which were not checked: {', '.join(deps)}"
         out.update(files=len(files), scripts=scripts, mcp_servers=brings_mcp(entry, root, files),
-                   blocked=looked["blocked"], lines=lines, note=note, source={**src, "commit": src_sha})
+                   blocked=looked["blocked"], lines=lines, note=note, source={**src, "commit": src_sha},
+                   review=review({"repo": src_repo, "sha": src_sha}, files, hits, looked,
+                                 prefix="" if src["path"] == "." else f"{src['path']}/"))
         return out
 
 

@@ -7,6 +7,10 @@ step and then the scope, and installs only after both. Where `user` is the only 
 MCP servers), the first dialog says where it installs and the scope dialog's install option says it
 again in the server's words. The dialogs show the facts the server found and the model's wording in
 the user's language (see dialog.py); what the tools answer is for the model, in English.
+
+`check` runs install's pre-install check without a dialog, so that when it found a danger or warn
+finding a subagent can review the files it covered through `file` (docs/adr/0002); install then takes
+the review's result, and decides from its own check whether one was needed.
 """
 import json
 import os
@@ -16,11 +20,12 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from dialog import CANCEL, SCOPES, next_options, read_dialog
+from dialog import CANCEL, SCOPES, next_options, read_dialog, read_review, review_note
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+PACKAGE_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 # A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
 GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                         r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
@@ -71,11 +76,33 @@ TOOLS = [
     },
     {
         "name": "file",
-        "description": "One file of a repo at a commit, raw: for reading a hit the install tool's scan reported. "
-                       "ref is the full commit sha the scan names.",
+        "description": "One file at the commit or package the pre-install check covered, raw: for reading a hit the "
+                       "scan reported, or for the model review. For a repo, pass repo and ref, the full commit sha. For "
+                       "an MCP server's package, pass package and ref as the check tool's read gives them (ref is the "
+                       "sha256 of the archive checked) and path inside the package.",
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"}, "path": {"type": "string"}, "ref": {"type": "string"},
-        }, "required": ["repo", "path", "ref"]},
+            "package": {"type": "object", "properties": {
+                "ecosystem": {"type": "string", "enum": ["npm", "PyPI"]}, "name": {"type": "string"},
+                "version": {"type": "string"},
+            }},
+        }, "required": ["path", "ref"]},
+        "annotations": READS,
+    },
+    {
+        "name": "check",
+        "description": "Run the pre-install check of what install would install, without a dialog, as JSON: review "
+                       "(needed, not needed, or not possible), read (what to pass the file tool, with each path) and "
+                       "files (the files the check covered) when a review is needed, findings (the dialog's facts) and "
+                       "blocked. Takes the same repo, kind and folder, plugin or mcp_args as install. When review is "
+                       "needed, the inhale skill says how to have the files reviewed.",
+        "inputSchema": {"type": "object", "properties": {
+            "repo": {"type": "string"},
+            "kind": {"type": "string", "enum": ["skill", "plugin", "mcp"]},
+            "folder": {"type": "string"},
+            "plugin": {"type": "string"},
+            "mcp_args": STRINGS,
+        }, "required": ["repo", "kind"]},
         "annotations": READS,
     },
     {
@@ -87,7 +114,8 @@ TOOLS = [
                        "everything that follows `codex mcp add`, e.g. [\"github\", \"--\", \"npx\", \"-y\", "
                        "\"@modelcontextprotocol/server-github\"]. force replaces an existing skill folder of the same "
                        "name. dialog is the wording of both dialogs in the user's language, in the format the "
-                       "inhale skill gives; without it they are in English.",
+                       "inhale skill gives; without it they are in English. When the check tool said a review is "
+                       "needed, pass the model review's result as review and the check's read.ref as sha.",
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"},
             "kind": {"type": "string", "enum": ["skill", "plugin", "mcp"]},
@@ -95,6 +123,13 @@ TOOLS = [
             "plugin": {"type": "string"},
             "mcp_args": STRINGS,
             "force": {"type": "boolean"},
+            "sha": {"type": "string"},
+            "review": {"type": "object", "properties": {
+                "findings": {"type": "array", "items": {"type": "object", "properties": {
+                    "file": {"type": "string"}, "line": {"type": "integer"}, "reason": {"type": "string"},
+                }}},
+                "could_not_run": {"type": "string"},
+            }},
             "dialog": {"type": "object", "properties": {
                 "about": {"type": "string"},
                 "next": {"type": "string"},
@@ -236,14 +271,26 @@ def readme(a):
 
 
 def file(a):
-    repo, path, ref = a.get("repo"), a.get("path"), a.get("ref")
-    if not isinstance(repo, str) or not REPO_RE.match(repo):
-        return False, f"not an owner/repo: {json.dumps(repo)}"
+    repo, path, ref, package = a.get("repo"), a.get("path"), a.get("ref"), a.get("package")
     if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
-        return False, f"not a path inside the repo: {json.dumps(path)}"
-    if not isinstance(ref, str) or not SHA_RE.match(ref):
-        return False, "ref must be the full 40-character commit sha"
-    ok, out = run(["gh", "api", f"repos/{repo}/contents/{quote(path)}?ref={ref}", "-H", "Accept: application/vnd.github.raw"])
+        return False, f"not a path inside the {'package' if package is not None else 'repo'}: {json.dumps(path)}"
+    if package is not None:
+        # An MCP server's package, read from the archive the check unpacked, which ref names by its sha256.
+        if repo is not None:
+            return False, "give repo or package, not both"
+        if (not isinstance(package, dict) or set(package) != {"ecosystem", "name", "version"}
+                or package["ecosystem"] not in ("npm", "PyPI")
+                or not all(isinstance(package[k], str) and package[k] for k in ("name", "version"))):
+            return False, 'package must be {"ecosystem": "npm" or "PyPI", "name", "version"}, as the check tool gives it'
+        if not isinstance(ref, str) or not PACKAGE_SHA_RE.match(ref):
+            return False, "ref must be the sha256 the check tool gave for the package"
+        ok, out = script("check_mcp.py", "--read", json.dumps({**package, "sha": ref, "path": path}))
+    else:
+        if not isinstance(repo, str) or not REPO_RE.match(repo):
+            return False, f"not an owner/repo: {json.dumps(repo)}"
+        if not isinstance(ref, str) or not SHA_RE.match(ref):
+            return False, "ref must be the full 40-character commit sha"
+        ok, out = run(["gh", "api", f"repos/{repo}/contents/{quote(path)}?ref={ref}", "-H", "Accept: application/vnd.github.raw"])
     if ok and len(out) > README_MAX:
         out = out[:README_MAX] + f"\n\n[truncated at {README_MAX} characters]"
     return ok, out
@@ -294,8 +341,9 @@ def marketplace_head(added):
 
 
 def preview(kind, a, project):
-    """What the install would do: the facts for the dialog, the scopes on offer, and anything the
-    command needs."""
+    """What the install would do: the facts for the dialog (lines, then where it installs), the scopes on
+    offer, what the model review reads and whether it is needed (review, the check's own), and anything
+    the command needs."""
     repo = a["repo"]
     if kind == "skill":
         folder = a.get("folder")
@@ -313,11 +361,10 @@ def preview(kind, a, project):
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
         lines += c["check_lines"]
-        if not project:
-            lines.append(SKILL_USER_ONLY)
         # The commit shown is the one installed.
-        return {"lines": lines, "scopes": SCOPES if project else ("user",), "scan": f"{c['scan_note']}\n{c['lookup_note']}",
-                "commit": c["sha"], "blocked": c["blocked"] is True}
+        return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
+                "scan": f"{c['scan_note']}\n{c['lookup_note']}", "commit": c["sha"], "blocked": c["blocked"] is True,
+                "review": c["review"]}
     if kind == "plugin":
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
@@ -336,8 +383,8 @@ def preview(kind, a, project):
             scan.append(about[-1])
         if c["marketplace_file"].startswith(".claude-plugin/"):
             about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
-        return {"lines": [c["lines"][0], *about, *c["lines"][1:], USER_ONLY], "scopes": ("user",), "scan": "\n".join(scan),
-                "commit": c["sha"], "blocked": c["blocked"] is True,
+        return {"lines": [c["lines"][0], *about, *c["lines"][1:]], "where": [USER_ONLY], "scopes": ("user",),
+                "scan": "\n".join(scan), "commit": c["sha"], "blocked": c["blocked"] is True, "review": c["review"],
                 "marketplace": added["name"] if added else c["marketplace"], "added": added}
     args = a.get("mcp_args")
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
@@ -348,8 +395,9 @@ def preview(kind, a, project):
     if not ok:
         raise Refusal(out)
     c = json.loads(out)
-    return {"lines": [f"MCP server: codex mcp add {' '.join(c['mcp_args'])}", *c["lines"], USER_ONLY],
-            "scopes": ("user",), "scan": c["note"], "mcp_args": c["mcp_args"], "blocked": c["blocked"] is True}
+    return {"lines": [f"MCP server: codex mcp add {' '.join(c['mcp_args'])}", *c["lines"]], "where": [USER_ONLY],
+            "scopes": ("user",), "scan": c["note"], "mcp_args": c["mcp_args"], "blocked": c["blocked"] is True,
+            "review": c["review"]}
 
 
 def commands(kind, a, scope, plan):
@@ -365,13 +413,44 @@ def commands(kind, a, scope, plan):
     return [["codex", "mcp", "add", *plan["mcp_args"]]]
 
 
-def install(peer, a, meta):
+def target(a):
+    """The repo and the kind asked for; a Refusal if either is not one."""
     repo = a.get("repo")
-    kind = a.get("kind") if a.get("kind") in ("skill", "plugin", "mcp") else None
     if not isinstance(repo, str) or not REPO_RE.match(repo):
-        return f"not installed: not an owner/repo: {json.dumps(repo)}"
-    if not kind:
-        return "not installed: kind must be skill, plugin or mcp"
+        raise Refusal(f"not an owner/repo: {json.dumps(repo)}")
+    if a.get("kind") not in ("skill", "plugin", "mcp"):
+        raise Refusal("kind must be skill, plugin or mcp")
+    return repo, a["kind"]
+
+
+FILES_SHOWN = 200
+NO_FILES = "not possible: kirby has no files of it to read; call install without review"
+
+
+def check(a, meta):
+    """The pre-install check that install runs, without a dialog, for the model review (docs/adr/0002): whether
+    a review is needed, what the file tool reads it from and which files, and the dialog's facts."""
+    try:
+        _, kind = target(a)
+        plan = preview(kind, a, project_dir(meta))
+    except Refusal as e:
+        return False, f"not checked: {e}"
+    r = plan["review"]
+    out = {"review": "not needed" if not r["needed"] else "needed" if r["files"] else NO_FILES}
+    if out["review"] == "needed":
+        out["read"] = {"repo": r["repo"], "ref": r["sha"]} if "repo" in r else {"package": r["package"], "ref": r["sha"]}
+        out["files"] = r["files"][:FILES_SHOWN]
+        if len(r["files"]) > FILES_SHOWN:
+            out["more_files"] = len(r["files"]) - FILES_SHOWN
+    out.update(findings=[*plan["lines"], *plan["where"]], blocked=plan["blocked"])
+    return True, json.dumps(out, ensure_ascii=False)
+
+
+def install(peer, a, meta):
+    try:
+        repo, kind = target(a)
+    except Refusal as e:
+        return f"not installed: {e}"
     if not peer.can_elicit:
         return "not installed: this Codex client cannot show dialogs (no MCP elicitation), so the user cannot choose."
 
@@ -381,6 +460,10 @@ def install(peer, a, meta):
         plan = preview(kind, a, project)
     except Refusal as e:
         return f"not installed: {e}"
+    # Whether a review was needed is the check's own finding, not the model's (docs/adr/0002).
+    reviewed, problem = read_review(a.get("review"), a.get("sha"), plan["review"])
+    if problem:
+        return f"not installed: {problem}; call this tool again with review as the inhale skill describes."
 
     d, problem = read_dialog(a.get("dialog"))
     cancel, readme_, other, go = d["options"]
@@ -388,11 +471,11 @@ def install(peer, a, meta):
     note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
 
     # Every answer from here on also tells the model what the pre-install check showed the user.
-    tail = f"\n{plan['scan']}{note}"
+    tail = f"\n{plan['scan']}" + (f"\n{review_note(reviewed)}" if reviewed else "") + note
 
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
-    nxt = peer.ask(f"{header}\n" + "\n".join(plan["lines"]) + f"{about}\n\n{d['next']}",
+    nxt = peer.ask(f"{header}\n" + "\n".join([*plan["lines"], *reviewed, *plan["where"]]) + f"{about}\n\n{d['next']}",
                    next_options(d, plan.get("blocked", False)))
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:
@@ -451,6 +534,8 @@ def call(peer, params):
     name, a = params.get("name"), params.get("arguments") or {}
     if name == "install":
         text, ok = install(peer, a, params.get("_meta")), True
+    elif name == "check":
+        ok, text = check(a, params.get("_meta"))
     elif name in SEARCHES:
         ok, text = SEARCHES[name](a)
     else:

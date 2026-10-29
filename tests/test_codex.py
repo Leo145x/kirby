@@ -1,5 +1,6 @@
 """Tests for the Codex MCP server's pure parts: python3 -m unittest discover -s tests"""
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex"))
 
-from dialog import CANCEL, SCOPES, english, next_options, read_dialog  # noqa: E402
+from dialog import CANCEL, REVIEW_MAX, SCOPES, english, next_options, read_dialog, read_review  # noqa: E402
 import server  # noqa: E402
 
 GOOD = {
@@ -51,6 +52,76 @@ class Dialog(unittest.TestCase):
         self.assertEqual(next_options(d, blocked=True), ["取消", "先讀 README", "換一個"])
 
 
+SHA = "a" * 40
+NEEDED = {"needed": True, "repo": "o/r", "sha": SHA, "files": ["s/SKILL.md", "s/run.sh"]}
+
+
+class Review(unittest.TestCase):
+    """The model review's result as the install tool takes it (docs/adr/0002): only when the check asked for one
+    does it reach the dialog, checked against a fixed structure, cleaned and within the limits."""
+
+    def test_findings_are_warn_lines_labelled_as_the_models(self):
+        lines, problem = read_review({"findings": [{"file": "s/run.sh", "line": 3, "reason": "Sends the token to a host."}]},
+                                     SHA, NEEDED)
+        self.assertIsNone(problem)
+        self.assertEqual(lines, ["warn: s/run.sh:3: Sends the token to a host. (model review, as reported by the model)"])
+        self.assertEqual(read_review({"findings": []}, SHA, NEEDED),
+                         (["model review: nothing found (as reported by the model)"], None))
+
+    def test_a_missing_review_or_one_that_could_not_run_is_one_unchecked_line(self):
+        self.assertEqual(read_review(None, None, NEEDED), (["model review: unchecked (no review result was passed)"], None))
+        self.assertEqual(read_review({"could_not_run": "no subagent tool"}, None, NEEDED),
+                         (["model review: unchecked (no subagent tool)"], None))
+        self.assertEqual(read_review(None, None, {"needed": True, "files": []}),
+                         (["model review: unchecked (kirby had no files of it to read)"], None))
+
+    def test_a_review_of_another_commit_is_unchecked(self):
+        self.assertEqual(read_review({"findings": []}, "b" * 40, NEEDED),
+                         (["model review: unchecked (it read bbbbbbb, not aaaaaaa, the one checked here)"], None))
+
+    def test_without_a_danger_or_warn_finding_no_review_reaches_the_dialog(self):
+        quiet = {**NEEDED, "needed": False}
+        for raw in (None, {"findings": [{"file": "s/run.sh", "line": 1, "reason": "x"}]}, {"could_not_run": "x"}, "junk"):
+            self.assertEqual(read_review(raw, SHA, quiet), ([], None), raw)
+
+    def test_hidden_and_control_characters_are_stripped(self):
+        reason = "Reads​ ~/.ssh‮ and\nposts\tit."
+        lines, _ = read_review({"findings": [{"file": "s/run.sh", "line": 1, "reason": reason}]}, SHA, NEEDED)
+        self.assertEqual(lines, ["warn: s/run.sh:1: Reads ~/.ssh and posts it. (model review, as reported by the model)"])
+        lines, _ = read_review({"could_not_run": "timed\x1b[2J out"}, None, NEEDED)
+        self.assertEqual(lines, ["model review: unchecked (timed [2J out)"])
+
+    def test_anything_outside_the_structure_or_the_limits_is_refused(self):
+        ok = {"file": "s/run.sh", "line": 1, "reason": "Runs a download."}
+        for raw, sha, problem in [
+            ("could not run: x", SHA, 'review must be {"findings": [...]} or {"could_not_run": "<reason>"}'),
+            ({"findings": [], "could_not_run": "x"}, SHA, 'review must be {"findings": [...]} or {"could_not_run": "<reason>"}'),
+            ({"findings": [ok] * 6}, SHA, "review.findings must be a list of at most 5"),
+            ({"findings": [{**ok, "reason": "x" * 121}]}, SHA, "review.findings[0].reason must be one sentence of at most 120 characters"),
+            ({"findings": [{**ok, "reason": " ​ "}]}, SHA, "review.findings[0].reason must be one sentence of at most 120 characters"),
+            ({"findings": [ok, {**ok, "file": "s/other.sh"}]}, SHA, "review.findings[1].file must be one of the files the check tool listed"),
+            ({"findings": [{**ok, "line": 0}]}, SHA, "review.findings[0].line must be a line number"),
+            ({"findings": [{**ok, "line": True}]}, SHA, "review.findings[0].line must be a line number"),
+            ({"findings": [{**ok, "quote": "x"}]}, SHA, "review.findings[0] must have exactly file, line and reason"),
+            ({"could_not_run": "x" * 121}, SHA, "review.could_not_run must be a reason of at most 120 characters"),
+            ({"findings": [ok]}, None, "sha must be the one the check tool returned, which the review read"),
+        ]:
+            self.assertEqual(read_review(raw, sha, NEEDED), ([], problem), raw)
+        # The limits count characters, not bytes.
+        self.assertIsNone(read_review({"findings": [{**ok, "reason": "讀" * 120}]}, SHA, NEEDED)[1])
+
+    def test_both_skills_ask_the_subagent_for_the_structure_and_limits_the_tool_takes(self):
+        root = Path(__file__).resolve().parent.parent
+        for skill in ("skills/inhale/SKILL.md", "codex/skills/inhale/SKILL.md"):
+            prompt = (root / skill).read_text().split("You review the files of an agent tool", 1)[1].split("```", 1)[0]
+            self.assertIn('{"findings": [{"file": "<a path from FILES>", "line": <line number>, "reason": "<one sentence in '
+                          f'your own words, at most {REVIEW_MAX["reason"]} characters', prompt, skill)
+            self.assertIn(f'At most {REVIEW_MAX["findings"]} findings', prompt, skill)
+            self.assertIn('{"could_not_run": "<why, at most 120 characters>"}', prompt, skill)
+            # The subagent reviews on its own: what the main model fills in is where the files are, and which.
+            self.assertEqual(set(re.findall(r"<[A-Z]+>", prompt)), {"<READ>", "<FILES>"}, skill)
+
+
 class Server(unittest.TestCase):
     def test_project_dir_needs_exactly_one_existing_workspace(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
@@ -74,6 +145,21 @@ class Server(unittest.TestCase):
         self.assertFalse(server.file({"repo": "o/r", "path": "/etc/passwd", "ref": sha})[0])
         self.assertFalse(server.file({"repo": "o/r", "path": "a.sh", "ref": "main"})[0])
         self.assertFalse(server.file({"repo": "o/r/x", "path": "a.sh", "ref": sha})[0])
+
+    def test_the_file_tool_reads_an_mcp_servers_package_through_the_check(self):
+        ran, script = [], server.script
+        server.script = lambda name, *args, cwd=None: ran.append((name, *args)) or (True, "fetch(u)\n")
+        package = {"ecosystem": "npm", "name": "@o/srv", "version": "1.2.3"}
+        digest = "e" * 64
+        try:
+            self.assertEqual(server.file({"package": package, "path": "dist/index.js", "ref": digest}), (True, "fetch(u)\n"))
+            for bad in [{"ref": SHA}, {"path": "../x"}, {"package": {**package, "ecosystem": "cargo"}},
+                        {"package": {**package, "version": ""}}, {"repo": "o/r"}]:
+                ok, out = server.file({"package": package, "path": "dist/index.js", "ref": digest, **bad})
+                self.assertFalse(ok, bad)
+        finally:
+            server.script = script
+        self.assertEqual(ran, [("check_mcp.py", "--read", json.dumps({**package, "sha": digest, "path": "dist/index.js"}))])
 
     def test_stars_passes_only_the_options_it_was_given(self):
         ran, script = [], server.script
@@ -117,7 +203,9 @@ class OneScope(unittest.TestCase):
                        "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
                        "checked when the server starts",
                        "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"],
-             "note": "scan: the dialog showed the user no pattern hits in the npm package probe@1.0.0"}
+             "note": "scan: the dialog showed the user no pattern hits in the npm package probe@1.0.0",
+             "review": {"needed": False, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
+                        "files": ["dist/index.js"]}}
 
     def install(self, *answers, dialog=GOOD, check=None):
         ran, scripts, run, script = [], [], server.run, server.script
@@ -178,6 +266,8 @@ class Blocked(unittest.TestCase):
         "scan_note": "scan: the dialog showed the user no pattern hits",
         "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
+        # A malware finding is danger, so the check asks for a model review; none is passed here.
+        "review": {"needed": True, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
     }
 
     def install(self, check, *answers):
@@ -197,11 +287,100 @@ class Blocked(unittest.TestCase):
         self.assertEqual(options, ["取消", "先讀 README", "換一個"])
         self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["check_lines"]), question)
         self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
-                            + self.CHECK["lookup_note"])
+                            + self.CHECK["lookup_note"] + "\nreview: the dialog showed the user these model review lines:\n"
+                            "  model review: unchecked (no review result was passed)")
 
     def test_without_a_block_install_is_offered(self):
         peer, _ = self.install({**self.CHECK, "blocked": False}, "取消")
         self.assertEqual(peer.asked[0][1], GOOD["options"])
+
+
+class ModelReview(unittest.TestCase):
+    """check → the model review, when the check asks for one → install with the sha checked and the review's
+    result (docs/adr/0002). install decides from its own check whether a review was needed."""
+
+    CHECK = {
+        "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh"], "exists": False,
+        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
+        "scan_note": "scan: the dialog showed the user these pattern hits", "lookup_note": "lookups: none", "blocked": False,
+        "review": NEEDED,
+    }
+    FINDING = {"file": "s/run.sh", "line": 1, "reason": "Reads the SSH key."}
+    LINE = "warn: s/run.sh:1: Reads the SSH key. (model review, as reported by the model)"
+
+    def call(self, a, *answers, check=None, tool="install"):
+        run, script = server.run, server.script
+        server.run = lambda argv, cwd=None: (True, '[1, "2026-01-01T00:00:00Z", false]')
+        server.script = lambda name, *args, cwd=None: (True, json.dumps(check or self.CHECK))
+        try:
+            peer = OneScope.Peer(*answers)
+            r = server.check(a, None) if tool == "check" else server.install(peer, a, None)
+        finally:
+            server.run, server.script = run, script
+        return peer, r
+
+    SKILL = {"repo": "o/r", "kind": "skill", "folder": "s", "dialog": GOOD}
+
+    def test_check_gives_what_the_review_reads_and_the_other_findings(self):
+        _, (ok, out) = self.call(self.SKILL, tool="check")
+        self.assertTrue(ok)
+        self.assertEqual(json.loads(out), {
+            "review": "needed", "read": {"repo": "o/r", "ref": SHA}, "files": ["s/SKILL.md", "s/run.sh"],
+            "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["check_lines"],
+                         server.SKILL_USER_ONLY],
+            "blocked": False})
+
+    def test_check_says_when_no_review_is_needed_or_possible(self):
+        _, (_, out) = self.call(self.SKILL, check={**self.CHECK, "review": {**NEEDED, "needed": False}}, tool="check")
+        self.assertEqual(json.loads(out)["review"], "not needed")
+        self.assertNotIn("files", json.loads(out))
+        _, (_, out) = self.call(self.SKILL, check={**self.CHECK, "review": {"needed": True, "files": []}}, tool="check")
+        self.assertEqual(json.loads(out)["review"], "not possible: kirby has no files of it to read; call install without review")
+
+    def test_check_lists_at_most_200_files_and_counts_the_rest(self):
+        many = {**NEEDED, "files": [f"s/{i}.md" for i in range(250)]}
+        _, (_, out) = self.call(self.SKILL, check={**self.CHECK, "review": many}, tool="check")
+        self.assertEqual((len(json.loads(out)["files"]), json.loads(out)["more_files"]), (200, 50))
+
+    def test_check_refuses_what_install_refuses(self):
+        _, (ok, out) = self.call({"repo": "o/r", "kind": "skill"}, tool="check")
+        self.assertEqual((ok, out), (False, "not checked: kind=skill needs folder"))
+
+    def test_the_reviews_findings_follow_the_check_in_the_dialog_and_in_every_result(self):
+        peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消")
+        self.assertIn("\n".join([*self.CHECK["check_lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
+        self.assertEqual(peer.asked[0][1], GOOD["options"])
+        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user these pattern hits\n"
+                            f"lookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
+
+    def test_without_a_review_the_dialog_says_so_and_install_stays(self):
+        peer, r = self.call(self.SKILL, "取消")
+        self.assertIn("warn: credentials ×1 (run.sh:1)\nmodel review: unchecked (no review result was passed)\n",
+                      peer.asked[0][0])
+        self.assertEqual(peer.asked[0][1], GOOD["options"])
+        self.assertTrue(r.endswith("\n  model review: unchecked (no review result was passed)"), r)
+
+    def test_a_review_the_check_did_not_ask_for_is_left_out(self):
+        quiet = {**self.CHECK, "review": {**NEEDED, "needed": False}}
+        peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消", check=quiet)
+        self.assertNotIn("model review", peer.asked[0][0] + r)
+
+    def test_a_review_outside_the_structure_opens_no_dialog(self):
+        peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING] * 6}})
+        self.assertEqual(peer.asked, [])
+        self.assertEqual(r, "not installed: review.findings must be a list of at most 5; call this tool again with "
+                            "review as the inhale skill describes.")
+
+    def test_an_mcp_servers_review_line_comes_before_where_it_installs(self):
+        package = {"needed": True, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
+                   "files": ["dist/index.js"]}
+        check = {**OneScope.CHECK, "review": package}
+        a = {"repo": "o/r", "kind": "mcp", "mcp_args": OneScope.ARGS, "dialog": GOOD}
+        _, (_, out) = self.call(a, check=check, tool="check")
+        self.assertEqual(json.loads(out)["read"], {"package": package["package"], "ref": "e" * 64})
+        peer, _ = self.call({**a, "sha": "e" * 64, "review": {"findings": []}}, "取消", check=check)
+        self.assertIn(f"{OneScope.CHECK['lines'][-1]}\nmodel review: nothing found (as reported by the model)\n{server.USER_ONLY}",
+                      peer.asked[0][0])
 
 
 class Plugin(unittest.TestCase):
@@ -212,7 +391,8 @@ class Plugin(unittest.TestCase):
     CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
              "blocked": False, "lines": ["plugin: p · marketplace mk · commit aaaaaaa · 2 files", "source: plugins/p/ in this repo",
                                          "scan: 2 files, the ones installed; a pattern match, not a safety review"],
-             "note": "scan: the dialog showed the user no pattern hits in o/mk at commit " + SHA}
+             "note": "scan: the dialog showed the user no pattern hits in o/mk at commit " + SHA,
+             "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}}
 
     def install(self, *answers, listed=([],), heads=(), check=None):
         """listed: the marketplaces Codex lists, call by call (the last stays); heads: what git rev-parse HEAD

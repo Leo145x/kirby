@@ -74,6 +74,9 @@ class InTheMarketplace(unittest.TestCase):
             "  warn download-run: may download and run code (network + exec)\n  info network plugins/p/scripts/run.sh:1\n  info exec plugins/p/scripts/run.sh:1\n"
             f"lookups: the dialog showed the user no findings from the advisory and malware lookups for o/mk at commit {MK_SHA}"),
             c["note"])
+        # The warn combination asks for a model review of the plugin's files, as paths in the marketplace repo.
+        self.assertEqual(c["review"], {"needed": True, "repo": "o/mk", "sha": MK_SHA,
+                                       "files": ["plugins/p/.claude-plugin/plugin.json", "plugins/p/scripts/run.sh"]})
 
 
     def test_a_plugin_with_nothing_found_gets_one_check_line(self):
@@ -83,6 +86,7 @@ class InTheMarketplace(unittest.TestCase):
             "scripts: 1, e.g. scripts/run.sh",
             "check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)",
         ])
+        self.assertFalse(c["review"]["needed"])
 
     def test_a_marketplace_already_added_is_checked_at_the_commit_it_is_at(self):
         c, git = check({MK: {OLD_SHA: (OLD_SHA, self.FILES)}}, commit=OLD_SHA)
@@ -153,6 +157,9 @@ class InAnotherRepo(unittest.TestCase):
         self.assertTrue(c["note"].startswith(f"scan: the dialog showed the user no pattern hits in x/src at commit {SRC_SHA}"))
         self.assertNotIn("not pinned", c["note"])
         self.assertEqual(c["source"]["commit"], SRC_SHA)
+        # The review reads the source repo at the source's commit, not the marketplace.
+        self.assertEqual({k: c["review"][k] for k in ("repo", "sha", "files")},
+                         {"repo": "x/src", "sha": SRC_SHA, "files": ["tools/p/run.py"]})
 
     def test_without_a_sha_it_is_checked_as_it_stands_and_said_to_be_unpinned(self):
         for source, ref in [({"source": "github", "repo": "x/src"}, None), ({"source": "url", "url": self.SRC, "ref": "main"}, "main")]:
@@ -176,6 +183,7 @@ class InAnotherRepo(unittest.TestCase):
             ])
             self.assertFalse(c["blocked"])
             self.assertIsNone(c["mcp_servers"])
+            self.assertEqual(c["review"], {"needed": False, "files": []})
         self.assertEqual(check_plugin.source_of({"source": "./../x"}, {})["in"], None)
 
 

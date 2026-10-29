@@ -128,6 +128,9 @@ class AnNpmServer(unittest.TestCase):
             f"\npackage: the command runs @o/srv@1.2.3 (npm), which this repo's server.json names at commit {SHA}; "
             "nobody verified that the repo publishes it. kirby pinned the command to that version; its dependencies "
             "are not pinned."), c["note"])
+        # The warn combination asks for a model review of the package's files, named by the archive's sha256.
+        self.assertEqual(c["review"], {"needed": True, "package": {"ecosystem": "npm", "name": "@o/srv", "version": "1.2.3"},
+                                       "sha": hashlib.sha256(SERVER_TGZ).hexdigest(), "files": ["dist/index.js", "package.json"]})
 
 
     def test_in_a_monorepo_the_package_the_command_runs_is_found_in_its_folder(self):
@@ -217,6 +220,10 @@ class APythonServer(unittest.TestCase):
 
 
 class Unchecked(unittest.TestCase):
+    def test_nothing_to_review_when_nothing_was_checked(self):
+        c = check(["e", "--url", "https://x.example/mcp"], Net())
+        self.assertEqual(c["review"], {"needed": False, "files": []})
+
     def assert_unchecked(self, args, why, repo=None, pinned=True):
         c = check(args, Net(repo=repo if repo is not None else {"package.json": json.dumps({"name": "srv"})}))
         self.assertEqual(c["lines"], [f"unchecked: pattern scan, advisory lookup and malware lookup ({why})"
@@ -260,6 +267,42 @@ class Findings(unittest.TestCase):
         c = check(["srv", "--", "npx", "-y", "srv"], Net(repo=self.REPO, web=web, resolve={"npm": lock(("srv", "1.0.0"))}))
         self.assertEqual(c["lines"][2], "unchecked: pattern scan (the download does not match the registry's hash)")
         self.assertEqual(c["mcp_args"][-1], "srv@1.0.0")
+        # Nothing was unpacked, so a review would have nothing to read.
+        self.assertEqual(c["review"], {"needed": False, "files": []})
+
+    def test_a_lookup_finding_asks_for_a_review_even_when_nothing_was_unpacked(self):
+        web = npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest")
+        web[f"{NPM}/srv/-/srv-1.0.0.tgz"] = b"not the archive"
+        net = Net(repo=self.REPO, web=web, resolve={"npm": lock(("srv", "1.0.0"), ("lodash", "4.17.20"))},
+                  vulns={("npm", "lodash", "4.17.20"): ["GHSA-35jh-r3h4-6jhm"]})
+        self.assertEqual(check(["srv", "--", "npx", "-y", "srv"], net)["review"], {"needed": True, "files": []})
+
+
+class ReadForTheReview(unittest.TestCase):
+    """The file tool's way into an MCP server's package: one file of the same archive the check unpacked, which
+    the review names by its sha256."""
+
+    ARCHIVE = tgz({"package.json": "{}", "dist/index.js": "fetch(u)\n"})
+    PACKAGE = {"ecosystem": "npm", "name": "srv", "version": "1.0.0"}
+
+    def read(self, path, sha=None, archive=None):
+        web = npm_web("srv", "1.0.0", archive or self.ARCHIVE)
+        return check_mcp.read({**self.PACKAGE, "sha": sha or hashlib.sha256(self.ARCHIVE).hexdigest(), "path": path},
+                              Net(web=web))
+
+    def test_a_file_of_the_checked_archive_is_read(self):
+        self.assertEqual(self.read("dist/index.js"), "fetch(u)\n")
+
+    def test_another_archive_a_missing_file_or_a_path_outside_is_refused(self):
+        other = tgz({"package.json": "{}", "dist/index.js": "eval(x)\n"})
+        for path, archive, why in [
+            ("dist/index.js", other, "the registry now gives another archive than the one checked"),
+            ("dist/nope.js", None, "srv@1.0.0 has no file dist/nope.js"),
+            ("../package.json", None, "not a path inside the package: '../package.json'"),
+        ]:
+            with self.assertRaises(check_mcp.Failed) as e:
+                self.read(path, archive=archive)
+            self.assertEqual(str(e.exception), why)
 
 
 class Unpacking(unittest.TestCase):
