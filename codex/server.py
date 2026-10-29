@@ -473,21 +473,21 @@ def install(peer, a, meta):
     if not peer.can_elicit:
         return "not installed: this Codex client cannot show dialogs (no MCP elicitation), so the user cannot choose."
 
+    d, problem = read_dialog(a.get("dialog"))
+    cancel, readme_, other, go = d["options"]
+    # Tells the model why its wording was not used, so the next call can fix it.
+    note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
+
     project = project_dir(meta)
     try:
         header = repo_header(repo)
         plan = preview(kind, a, project)
     except Refusal as e:
-        return f"not installed: {e}"
+        return f"not installed: {e}{note}"
     # Whether a review was needed is the check's own finding, not the model's (docs/adr/0002).
-    reviewed, problem = read_review(a.get("review"), a.get("sha"), plan["review"])
-    if problem:
-        return f"not installed: {problem}; call this tool again with review as the inhale skill describes."
-
-    d, problem = read_dialog(a.get("dialog"))
-    cancel, readme_, other, go = d["options"]
-    # Tells the model why its wording was not used, so the next call can fix it.
-    note = f"\nnote: the dialogs were in English because {problem}; pass dialog as the inhale skill describes." if problem else ""
+    reviewed, bad_review = read_review(a.get("review"), a.get("sha"), plan["review"])
+    if bad_review:
+        return f"not installed: {bad_review}; call this tool again with review as the inhale skill describes.{note}"
 
     # Every answer from here on also tells the model what the pre-install check showed the user.
     tail = f"\n{plan['scan']}" + (f"\n{review_note(reviewed)}" if reviewed else "") + note
