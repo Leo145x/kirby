@@ -21,6 +21,9 @@ from dialog import CANCEL, SCOPES, next_options, read_dialog
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
+GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
 TIMEOUT = 120
 README_MAX = 20000
 
@@ -103,8 +106,6 @@ TOOLS = [
     },
 ]
 
-PLUGIN_NOT_SCANNED = ("scan: not scanned; a plugin installs from its marketplace as it is when the install runs, "
-                      "not pinned to a commit")
 MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
 # Where user is the only scope, the first dialog says where it goes, and the scope dialog's install option
 # says it again in the server's own words: a mislabelled first dialog cannot install without the user seeing it.
@@ -266,6 +267,33 @@ def repo_header(repo):
     return f"{repo} ★{count} · pushed {(pushed or '?')[:10]}" + (" · ARCHIVED" if archived else "")
 
 
+def added_marketplace(repo):
+    """The marketplace Codex already has from this GitHub repo, as `codex plugin marketplace list` gives it
+    ({name, root, …}), or None."""
+    ok, out = run(["codex", "plugin", "marketplace", "list", "--json"])
+    if not ok:
+        raise Refusal(f"codex plugin marketplace list failed: {out}")
+    try:
+        # run() joins stdout and stderr, and codex can print a warning on either side of the JSON.
+        listed = json.JSONDecoder().raw_decode(out[out.index("{"):])[0].get("marketplaces") or []
+    except (ValueError, AttributeError):
+        raise Refusal("codex plugin marketplace list --json did not give JSON") from None
+    for m in listed:
+        source = (m.get("marketplaceSource") or {}).get("source") if isinstance(m, dict) else None
+        found = GITHUB_URL.match(source.strip()) if isinstance(source, str) else None
+        if found and found.group(1).lower() == repo.lower() and isinstance(m.get("name"), str) and isinstance(m.get("root"), str):
+            return m
+    return None
+
+
+def marketplace_head(added):
+    """The commit an added marketplace is at."""
+    ok, out = run(["git", "-C", added["root"], "rev-parse", "HEAD"])
+    if not ok or not SHA_RE.match(out):
+        raise Refusal(f"could not read the commit of the marketplace {added['name']} in {added['root']}: {out}")
+    return out
+
+
 def preview(kind, a, project):
     """What the install would do: the facts for the dialog, the scopes on offer, and anything the
     command needs."""
@@ -295,22 +323,23 @@ def preview(kind, a, project):
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
             raise Refusal("kind=plugin needs plugin")
-        ok, out = script("detect.py", "--agent", "codex", "--", repo)
+        # `codex plugin add` does not refresh a marketplace already added, so the check is of the commit it is
+        # at, which is the one Codex installs from (docs/adr/0003).
+        added = added_marketplace(repo)
+        head = marketplace_head(added) if added else None
+        ok, out = script("check_plugin.py", "--agent", "codex", *(["--commit", head] if head else []), "--", repo, name)
         if not ok:
             raise Refusal(out)
-        units = (json.loads(out)[0] or {}).get("install") or []
-        unit = next((u for u in units if u.get("type") == "plugin" and u.get("name") == name), None)
-        if not unit:
-            raise Refusal(f"{repo} has no marketplace plugin named {name}")
-        if not unit.get("marketplace"):
-            raise Refusal(f"{repo}'s {unit.get('marketplaceFile')} has no name")
-        lines = [f"plugin: {name}"]
-        if unit.get("description"):
-            lines.append(f"description: {unit['description'][:160]}")
-        if unit.get("marketplaceFile", "").startswith(".claude-plugin/"):
-            lines.append(f"marketplace: {unit['marketplaceFile']} (Claude Code format)")
-        lines += [PLUGIN_NOT_SCANNED, USER_ONLY]
-        return {"lines": lines, "scopes": ("user",), "scan": PLUGIN_NOT_SCANNED, "marketplace": unit["marketplace"]}
+        c = json.loads(out)
+        about, scan = [], [c["note"]]
+        if added:
+            about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it is")
+            scan.append(about[-1])
+        if c["marketplace_file"].startswith(".claude-plugin/"):
+            about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
+        return {"lines": [c["lines"][0], *about, *c["lines"][1:], USER_ONLY], "scopes": ("user",), "scan": "\n".join(scan),
+                "commit": c["sha"], "blocked": c["blocked"] is True,
+                "marketplace": added["name"] if added else c["marketplace"], "added": added}
     args = a.get("mcp_args")
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
     if not args:
@@ -325,8 +354,10 @@ def commands(kind, a, scope, plan):
                 "--scope", scope, "--agent", "codex", "--commit", plan["commit"]]
         return [argv + ["--force"] if a.get("force") is True else argv]
     if kind == "plugin":
-        return [["codex", "plugin", "marketplace", "add", a["repo"]],
-                ["codex", "plugin", "add", f"{a['plugin']}@{plan['marketplace']}"]]
+        # No --ref, so `codex plugin marketplace upgrade` keeps working; install() checks the commit afterwards
+        # (docs/adr/0003).
+        add = [] if plan["added"] else [["codex", "plugin", "marketplace", "add", a["repo"]]]
+        return add + [["codex", "plugin", "add", f"{a['plugin']}@{plan['marketplace']}"]]
     return [["codex", "mcp", "add", *plan["mcp_args"]]]
 
 
@@ -381,12 +412,28 @@ def install(peer, a, meta):
         return f"not installed: the user {'dismissed the scope dialog' if answer is None else 'cancelled at the scope step'}.{tail}"
 
     shown, outs = [], []
-    for argv in commands(kind, a, picked, plan):
+
+    def do(argv):
         ok, out = run(argv, cwd=project or str(Path.home()))
         shown.append(" ".join(json.dumps(x) if " " in x else x for x in argv))
         outs.append(out)
-        if not ok:
-            return f"install failed (scope {picked}): {shown[-1]}\n{out}{tail}"
+        return ok
+
+    for argv in commands(kind, a, picked, plan):
+        if not do(argv):
+            return f"install failed (scope {picked}): {shown[-1]}\n{outs[-1]}{tail}"
+    if kind == "plugin":
+        # The plugin stays only if it came from the commit the dialog showed (docs/adr/0003).
+        try:
+            added = plan["added"] or added_marketplace(repo)
+            head = marketplace_head(added) if added else None
+        except Refusal:
+            head = None
+        if head != plan["commit"]:
+            do(["codex", "plugin", "remove", f"{a['plugin']}@{plan['marketplace']}"])
+            why = (f"the marketplace {plan['marketplace']} has moved on: it is at commit {head[:7] if head else 'unknown'} "
+                   f"after the install, not {plan['commit'][:7]} as shown to the user; the plugin was removed again")
+            return f"install failed (scope {picked}): " + "\n".join([*shown, *filter(None, outs), why]) + tail
     after = f"\nnext: {AFTER[kind]}" if kind in AFTER else ""
     return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after + tail
 
