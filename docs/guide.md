@@ -2,7 +2,7 @@
 
 English | [繁體中文](guide.zh-TW.md) | [简体中文](guide.zh-CN.md)
 
-The details behind the [README](../README.md): how kirby is built, what each step of an install does, and how the Codex version differs.
+The details behind the [README](../README.md): how kirby is built, how it searches, what the pre-install check does, what each step of an install does, and how the Codex version differs.
 
 ## How it is built
 
@@ -26,35 +26,86 @@ Every repo comes with its star count and last push date, as `owner/repo ★N · 
 
 Public search only finds repos tagged with an agent-tooling topic (`agent-skills`, `claude-code-plugin`, `mcp-server`, …).
 
-## Install flow
+## Pre-install check
 
-Once you pick a repo, the mod shows two dialogs:
+Before the first install dialog opens, kirby checks what would be installed, so that you know what you are installing. The check has four parts:
 
-1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (the scan, the lookups and, when they found something, the model review below). When the check finds nothing and nothing went unscanned or unchecked, that is one line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines. When the malware lookup finds a known-malicious package, Install is left out.
-2. **Scope** (only after Install):
+- **Pattern scan**: matches the files that would be installed against fixed text patterns.
+- **Advisory lookup**: published vulnerabilities and security advisories for the tool and the packages it depends on.
+- **Malware lookup**: whether the tool or a package it depends on is a known-malicious package.
+- **Model review**: a model reads the files and reports what looks harmful. It runs only when another part found something.
 
-| scope | skill | plugin | MCP |
-| --- | --- | --- | --- |
-| `local` | the project's `.claude/skills/`, added to `.gitignore` | `--scope local` (`.claude/settings.local.json`) | `--scope local` |
-| `project` | the project's `.claude/skills/`, committed to git | `--scope project` (`.claude/settings.json`) | `--scope project` (`.mcp.json`) |
-| `user` | `~/.claude/skills/` (`$CLAUDE_CONFIG_DIR/skills/` when that is set) | `--scope user` | `--scope user` |
+The check installs nothing and runs none of the tool's code. The lookups use only public services that need nothing beyond your `gh` login: [OSV.dev](https://osv.dev) and GitHub. Its findings appear in the first dialog, and the model gets the same findings in every result, so you can ask about one.
 
-Whatever the scope, a plugin's marketplace is recorded in your user settings.
+### What each kind of tool is checked on
 
-### Scan
+**Skills.** The skill's folder at the commit the dialog shows: the same files that get installed. The scan reads them, and the lookups read their dependency files and look up that commit itself.
 
-Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a `warn` finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload). Each of those rules alone stays `info`, so a skill that reads a secret and sends it out is not all `info` ([ADR 0005](adr/0005-one-click-by-default.md)); these findings are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below), and so is the published package an MCP server's command runs (see MCP servers below). The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. The model reads that file at that commit with kirby's read-only `file` tool.
+**Plugins.** A plugin is checked where its marketplace entry says it comes from, at the marketplace's commit (which commit that is, for a marketplace you already added, is under What is pinned below):
+
+- **A folder of the marketplace repo** (`"source": "./plugins/x"`): that folder, at the commit the dialog shows.
+- **Another GitHub repo** (`github`, `url` or `git-subdir`): that repo, at the entry's `sha` when it gives one. Without a `sha` it is checked as it stands, and the dialog says the source is not pinned, so what installs may differ from what was checked.
+- **Anything else** (an npm package, an archive, a command, a git host other than GitHub): not fetched, so the scan and both lookups are unchecked.
+
+The dialog's `source:` line says which it is. The scan and the lookups then run on those files as for a skill. A plugin can depend on other plugins, which the agent CLI installs along with it. kirby does not check those; the dialog lists them in one `installed along with it, not checked:` line.
+
+**MCP servers.** An MCP server runs the package its command fetches when it starts (`npx -y <package>`, `uvx <package>`), so the check is of that package, not of the repo's files:
+
+- **Which package.** The repo is read only to learn which packages it names: the `packages` of a `server.json`, then the `name` of a `package.json` (not a private one), then that of a `pyproject.toml`, at the root or up to two folders down, so a repo that holds several servers works too. kirby checks the one the command runs. Nothing ties a package to a repo (the MCP registry checks a package against the server's name, not against its repo), so the dialog's `package:` line says which file names it and that it is not verified to come from this repo.
+- **Which version.** The one the command asks for (`pkg@1.2.3`, `pkg==1.2.3`, a tag such as `pkg@next`), else the one `server.json` gives, else the registry's latest.
+- **What is checked.** That version's npm tarball, or its PyPI wheel for every platform (else its sdist), downloaded from the registry, checked against the registry's hash and unpacked into a temporary folder: regular files only, nothing outside that folder, and nothing installed, imported or run. The scan runs on those files. The lookups run on the package itself at that version and on what it depends on, resolved as for a skill ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). Of the advisories the repo published for itself, only those that name this package, or no package, count.
+
+The hits are paths inside the package. When the model has the `check` tool's answer for it, it reads them with the `file` tool from the package checked (see Model review below); otherwise it tells you where to read the file (unpkg for npm, inspector.pypi.io for PyPI).
+
+### Pattern scan
+
+The scan reads every file it checks for patterns worth a look. In any file: hidden Unicode (`hidden-unicode`), phrases aimed at the model (`injection-phrase`), mentions of agent settings (`agent-config`) and of credential files (`credentials`), and long base64 runs (`long-base64`). In Markdown: broad `allowed-tools` (`broad-tools`) and HTML comments (`html-comment`). In scripts: network calls (`network`), shell execution (`exec`), decoding (`decode`), secret environment variables (`env-secret`) and shell startup files (`startup-files`). Files that are binary or larger than 2 MB are not scanned, and the scan line counts them.
+
+One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a combination finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload).
+
+The dialog lists the combination findings first, then each flagged rule with where it hit. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does; the model reads that file at that commit with kirby's read-only `file` tool.
 
 ### Advisory and malware lookups
 
-For a skill, a plugin or an MCP server, the pre-install check also looks up published vulnerabilities and known-malicious packages, using only public services that need nothing beyond your `gh` login: [OSV.dev](https://osv.dev) and GitHub.
+- **Dependencies.** For a skill or a plugin, the lookups read the `package-lock.json` (or `package.json`), `uv.lock`, `requirements.txt` and `pyproject.toml` among the checked files; for an MCP server, they take what installing its package at that version brings. Where there is no lockfile, they work out the versions with `npm install --package-lock-only --ignore-scripts` or `uv pip compile --no-build`, which install nothing and run no package code ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). The dialog then says the versions were resolved at check time: they may differ when the tool runs. Without npm or uv only the package names are known, so the malware lookup runs on the names and the advisory lookup is unchecked.
+- **Advisory lookup.** OSV.dev for each dependency at its version and for the subject itself: the commit checked (OSV matches a commit against the git ranges of its records), or an MCP server's package at the version checked. GitHub for the advisories the repo published for itself.
+- **Malware lookup.** OSV.dev records with a `MAL-` id, which come from OpenSSF Malicious Packages, for the subject and each dependency.
 
-- **Dependencies.** The tool reads the skill's `package-lock.json` (or `package.json`), `uv.lock`, `requirements.txt` and `pyproject.toml` at the pinned commit. Where there is no lockfile, it works out the versions with `npm install --package-lock-only --ignore-scripts` or `uv pip compile --no-build`, which install nothing and run no package code ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). The dialog then says the versions were resolved at check time: they may differ when the skill runs. Without npm or uv only the package names are known, so the malware lookup runs on the names and the advisory lookup is marked unchecked.
-- **Advisory lookup.** OSV.dev for each dependency at its version and for the pinned commit itself (OSV matches a commit against the git ranges of its records), and GitHub for the advisories the repo published for itself. A critical or high vulnerability in a dependency, and any record OSV places on the commit, is `danger`; any other vulnerability is `warn`, and so is a repo advisory that cannot be placed on the commit, for which the dialog says it could not tell whether it affects this commit.
-- **Malware lookup.** OSV.dev records with a `MAL-` id, which come from OpenSSF Malicious Packages. A hit is `danger` and **blocks** the install: the first dialog offers only Cancel, Read README first and Pick another, and the model tells you why. To install such a tool anyway, you do it by hand. Nothing else blocks: scan hits and vulnerabilities, however severe, are for you to weigh ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
-- **Unchecked.** A lookup that fails or runs out of time shows as `unchecked`, never as nothing found, and Install stays available.
+### Severities
 
-The model gets the same findings in every result, so you can ask about one.
+Every finding is led by its severity: how much weight it deserves.
+
+| Severity | Findings |
+| --- | --- |
+| `danger` | a known-malicious package (this one also blocks, below); a critical or high vulnerability in a dependency; any record OSV places on the commit checked; any advisory for an MCP server's package itself |
+| `warn` | the scan rules `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest tools; the combination findings; any other vulnerability in a dependency; a repo advisory that cannot be placed on the commit or package checked, for which the dialog says it could not tell whether it affects it; each model-review finding |
+| `info` | the other scan rules |
+
+The combination findings are why a tool that reads a secret and sends it out is not all `info`, though each of those rules alone is ([ADR 0005](adr/0005-one-click-by-default.md)). Within the scan, combination findings and warn rules come first; among the lookups, malware first, then the subject's own advisories, then the worst-rated dependencies.
+
+### Blocking
+
+Only a known-malicious package blocks: the malware lookup finds the tool or one of its dependencies in OpenSSF Malicious Packages. The dialog then says `blocked:` and offers only Cancel, Read README first and Pick another, the model tells you why, and no model review runs. To install such a tool anyway, you do it by hand. Nothing else blocks: scan hits, vulnerabilities and model-review findings, however severe, are for you to weigh, because plenty of honest tools fetch URLs, run shell commands or depend on a package with a known CVE ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
+
+### Unchecked
+
+A part that could not run is shown as `unchecked`, with why, never as nothing found, and Install stays available:
+
+- a lookup that fails or runs out of time;
+- the advisory lookup of dependencies whose versions could not be resolved (npm or uv is missing or failed, or some come from outside the npm registry);
+- a plugin whose source is not on GitHub (the scan and both lookups);
+- an MCP server run from a container image (`docker run …`) or a remote server at a URL, a repo that names no npm or PyPI package, or a command that runs none of the packages the repo names: one `unchecked:` line says why, and the command stays as given;
+- an MCP server whose version kirby cannot tell (the registry does not answer, or the command asks for a range such as `pkg@^1.2`): the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name;
+- in Claude Code, whether a marketplace you already added is behind its repo, when GitHub does not answer;
+- a model review that should have run and did not (see Model review below).
+
+### One click by default
+
+The check is there so that you know what you are installing, not to make installing a chore ([ADR 0005](adr/0005-one-click-by-default.md)). Each limit kirby runs into is one line in the dialog, never a refusal or an extra step: a part that could not run, a version that is not pinned, a package the repo only claims as its own, a marketplace that installing will refresh. The one exception is a block.
+
+When the check finds nothing and nothing went unscanned or unchecked, it is a single line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines.
+
+Where kirby can remove a stop by doing more work itself, it does: a skill installs the commit the dialog showed even if the repo has moved on, and a plugin is checked after the install rather than refused before it (see What is pinned below).
 
 ### Model review
 
@@ -65,47 +116,48 @@ When the scan or the lookups find a `danger` or `warn` finding (a combination fi
 - **What is reviewed.** What gets installed: a skill's files, a plugin's source (also in another repo), or, for an MCP server, the published package the check unpacked. For a package, `file` downloads the same archive again, checks it against the registry's hash and against the sha256 the check gave, and unpacks it into a temporary folder; nothing in it is installed or run.
 - **The result.** At most 5 findings, each a file the check listed, a line number, and a one-sentence reason of at most 120 characters that does not quote the file; or `could_not_run` with a reason. The install tool checks that structure, strips hidden and control characters, and refuses a result outside it before any dialog opens, so the model sends it again.
 - **In the dialog.** Each finding is a `warn` line after the check's lines, labelled `(model review, as reported by the model)`, or one line says the review found nothing. A review finding only adds: it never removes or lowers another finding, and it never blocks.
-- **Missing review.** The install tool decides from its own check whether a review was needed. If one was and none was passed, the review could not run, or it read another commit than the one checked, the dialog says `model review: unchecked (…)` in one line, and Install stays available ([ADR 0005](adr/0005-one-click-by-default.md)).
+- **Missing review.** The install tool decides from its own check whether a review was needed. If one was and none was passed, the review could not run, or it read another commit or package than the one checked, the dialog says `model review: unchecked (…)` in one line, and Install stays available.
 
 The model passes the result on, so kirby cannot prove that the review was not edited on the way or skipped; that is why its findings are labelled as reported by the model.
 
-### Plugins
+### What is pinned
 
-A plugin is checked where its marketplace entry says it comes from, at the marketplace's commit:
+What you were shown is what installs, as far as each kind of tool allows:
 
-- **A folder of the marketplace repo** (`"source": "./plugins/x"`): that folder, at the commit the dialog shows.
-- **Another GitHub repo** (`github`, `url` or `git-subdir`): that repo, at the entry's `sha` when it gives one. Without a `sha` it is checked as it stands, and the dialog says the source is not pinned, so what installs may differ from what was checked.
-- **Anything else** (an npm package, an archive, a command, a git host other than GitHub): not fetched, and the dialog marks the scan and both lookups unchecked.
+| Kind | Pinned | Not pinned |
+| --- | --- | --- |
+| skill | its files, at the commit the dialog showed | dependencies without a lockfile: resolved at check time, they may differ when the skill runs |
+| plugin | the marketplace's commit, checked after the install; a source in another repo, when the marketplace entry gives a `sha` | a source in another repo without a `sha`; the plugins installed along with it; dependencies without a lockfile, as for a skill |
+| MCP server | the package the command runs, at the version checked | that package's dependencies ([#13](https://github.com/Leo145x/kirby/issues/13)); a container image, or a command whose version kirby cannot tell, which install as given |
 
-The dialog's `source:` line says which it is. The scan and the lookups then run on those files as for a skill, and a known-malicious package blocks the install in the same way.
+**Skills.** kirby copies the files itself, so a skill installs exactly the commit the dialog showed, even if the repo gets a new commit before the install runs: you do not have to answer the dialogs again ([ADR 0005](adr/0005-one-click-by-default.md)). Only if that commit can no longer be fetched (a force-push can remove one) does the install fail; nothing is installed, the result says why, and if you still want it, the model shows the dialogs again with the current commit.
 
-### MCP servers
+**Plugins.** The commit is the marketplace's ([ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)):
 
-An MCP server runs the package its command fetches when it starts (`npx -y <package>`, `uvx <package>`), so the check is of that package, not of the repo's files:
+- **In both CLIs**, neither installs a given commit in a way kirby can use, so the install tool adds the marketplace if you do not have it yet (without a ref), installs the plugin, and then reads the commit of the marketplace's clone. If that is not the commit checked, it removes the plugin again and says so; the marketplace stays.
+- **Claude Code**, marketplace already added: Claude Code refreshes a marketplace that is behind its repo when it installs from it. So kirby checks the repo's current commit, which is what the install brings, and the dialog says so: `installs from it as it is`, or `behind its repo; installing refreshes it to <commit>`. If kirby cannot tell whether it is behind (GitHub did not answer), the dialog says that as an `unchecked:` line and the check is of the commit your marketplace is at.
+- **Codex**, marketplace already added: `codex plugin add` does not refresh it, so kirby checks the commit it is at and installs from it.
 
-- **Which package.** The repo is read only to learn which packages it names: the `packages` of a `server.json`, then the `name` of a `package.json` (not a private one), then that of a `pyproject.toml`, at the root or up to two folders down, so a repo that holds several servers works too. The tool checks the one the command runs. Nothing ties a package to a repo (the MCP registry checks a package against the server's name, not against its repo), so the dialog's `package:` line says which file names it and that it is not verified to come from this repo.
-- **Which version.** The one the command asks for (`pkg@1.2.3`, `pkg==1.2.3`, a tag such as `pkg@next`), else the one `server.json` gives, else the registry's latest.
-- **What is checked.** That version's npm tarball, or its PyPI wheel for every platform (else its sdist), downloaded from the registry, checked against the registry's hash and unpacked into a temporary folder: regular files only, nothing outside that folder, and nothing installed, imported or run. The scan runs on those files. The lookups run on the package itself at that version (any advisory for it is `danger`) and on what it depends on, resolved as for a skill ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). Of the advisories the repo published for itself, only those that name this package, or no package, count.
-- **Pinning.** The command is rewritten to that version (`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`), and the dialog shows the rewritten command. Only that package is pinned: its dependencies are resolved when the check runs and may differ when the server starts, and the dialog's `pinned:` line says so. An MCP server therefore does not install exactly what was checked, as a skill does.
-- **Unchecked.** A container image (`docker run …`), a remote server at a URL, a repo that names no npm or PyPI package, and a command that runs none of the packages the repo names are not checked: one `unchecked:` line says why, and the command stays as given. If the tool cannot tell which version the command gets (the registry does not answer, or the command asks for a range such as `pkg@^1.2`), the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name.
+**MCP servers.** The command is rewritten to the version checked (`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`), and the dialog shows the rewritten command. Only that package is pinned: its dependencies are usually given as ranges, resolved when the check runs, and npm or uv may pick other versions when the server starts. The dialog's `pinned:` line says so. An MCP server therefore does not install exactly what was checked, as a skill does.
 
-The hits are paths inside the package. When the model has the `check` tool's answer for it, it reads them with the `file` tool from the package checked (see Model review above); otherwise it tells you where to read the file (unpkg for npm, inspector.pypi.io for PyPI).
+## Install flow
 
-### Pinned commit
+Once you pick a repo, the mod shows two dialogs:
 
-A skill installs exactly the commit the dialog showed, even if the repo gets a new commit before the install runs: kirby fetches that commit itself, so you do not have to answer the dialogs again ([ADR 0005](adr/0005-one-click-by-default.md)). Only if that commit can no longer be fetched (a force-push can remove one) does the install fail; nothing is installed, the result says why, and if you still want it, the model shows the dialogs again with the current commit. A plugin installs from the marketplace commit the dialog showed (below). An MCP server's command is pinned to the package version checked, but not its dependencies (see MCP servers above).
+1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (above). When the check blocks the install, Install is left out.
+2. **Scope** (only after Install):
 
-For a plugin, the commit is the marketplace's ([ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)):
+| scope | skill | plugin | MCP |
+| --- | --- | --- | --- |
+| `local` | the project's `.claude/skills/`, added to `.gitignore` | `--scope local` (`.claude/settings.local.json`) | `--scope local` |
+| `project` | the project's `.claude/skills/`, committed to git | `--scope project` (`.claude/settings.json`) | `--scope project` (`.mcp.json`) |
+| `user` | `~/.claude/skills/` (`$CLAUDE_CONFIG_DIR/skills/` when that is set) | `--scope user` | `--scope user` |
 
-- **In both**, neither CLI installs a given commit in a way kirby can use, so the tool adds the marketplace if you do not have it yet (without a ref), installs the plugin, and then reads the commit of the marketplace's clone. If that is not the commit checked, it removes the plugin again and says so; the marketplace stays.
-- **Claude Code**, marketplace already added: Claude Code refreshes a marketplace that is behind its repo when it installs from it. So the tool checks the repo's current commit, which is what the install brings, and the dialog says so: `installs from it as it is`, or `behind its repo; installing refreshes it to <commit>`. If the tool cannot tell whether it is behind (GitHub did not answer), the dialog says that as an `unchecked:` line and the check is of the commit your marketplace is at.
-- **Codex**, marketplace already added: `codex plugin add` does not refresh it, so the tool checks the commit it is at and installs from it.
-
-A plugin can depend on other plugins, which install along with it. The tool does not check those; the dialog lists them in one `installed along with it, not checked:` line.
+Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Dialog language
 
-The model writes the dialogs' wording in the language you write in, in the format the skill gives. The facts above it (repo, stars, commit, files, scripts, an existing folder, the scan and the lookups) and the prompt-cache note below the scope question come from the tool, in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing or incomplete, the dialogs are in English.
+The model writes the dialogs' wording in the language you write in, in the format the skill gives. The facts above it (repo, stars, commit, files, scripts, an existing folder, the pre-install check) and the prompt-cache note below the scope question come from the tool, in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing or incomplete, the dialogs are in English.
 
 ### Installs and the prompt cache
 

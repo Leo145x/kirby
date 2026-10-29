@@ -2,7 +2,7 @@
 
 [English](guide.md) | [繁體中文](guide.zh-TW.md) | 简体中文
 
-[README](../README.zh-CN.md) 背后的细节：kirby 的组成、安装每一步在做什么，以及 Codex 版的差异。
+[README](../README.zh-CN.md) 背后的细节：kirby 的组成、怎么搜索、安装前检查做了什么、安装每一步在做什么，以及 Codex 版的差异。
 
 ## 组成
 
@@ -26,35 +26,86 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 公开搜索只会找到带有 agent 工具类 topic（`agent-skills`、`claude-code-plugin`、`mcp-server` 等）的 repo。
 
-## 安装流程
+## 安装前检查
 
-你选定要安装的 repo 后，mod 会弹出两层对话框：
+第一层安装对话框出现之前，kirby 会先检查要安装的东西，让你知道自己装的是什么。检查分为四个部分：
 
-1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和安装前检查的结果（下面的扫描、查询，以及有发现时的模型审查）。检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否则每个部分各自列出。恶意包查询找到已知的恶意包时，不会提供“安装”。
-2. **scope**（选择“安装”后才会出现）：
+- **pattern 扫描**：拿要安装的文件匹配固定的文本模式。
+- **漏洞查询**：查工具本身和它依赖的包有没有已公开的漏洞和安全公告（advisory）。
+- **恶意包查询**：查工具本身或它依赖的包是不是已知的恶意包。
+- **模型审查**：由模型读取文件，报告看起来有害的地方。只有其他部分有发现时才会运行。
 
-| scope | skill | plugin | MCP |
-| --- | --- | --- | --- |
-| `local` | 项目的 `.claude/skills/`，并自动加入 `.gitignore` | `--scope local`（`.claude/settings.local.json`） | `--scope local` |
-| `project` | 项目的 `.claude/skills/`，会进 git | `--scope project`（`.claude/settings.json`） | `--scope project`（`.mcp.json`） |
-| `user` | `~/.claude/skills/`（设置了 `CLAUDE_CONFIG_DIR` 时是 `$CLAUDE_CONFIG_DIR/skills/`） | `--scope user` | `--scope user` |
+检查不会安装任何东西，也不会运行工具的任何代码。查询只用除了你的 `gh` 登录之外不需要任何密钥的公开服务：[OSV.dev](https://osv.dev) 和 GitHub。检查的发现会列在第一层对话框，每个结果也都会把同样的发现交给模型，你可以直接问它某一项。
 
-无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
+### 各类工具检查的对象
 
-### 扫描
+**skill。** 对话框显示的那个 commit 里的 skill 文件夹，也就是实际要安装的那份文件。扫描读取这些文件；查询读取其中的依赖文件，也查这个 commit 本身。
 
-在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置，前面标上严重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 里较少见，标 `warn`，其他标 `info`；`warn` 的规则排在前面。同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项标 `warn` 的发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。这几条规则单独命中时仍是 `info`，所以读取机密再发送出去的 skill 不会全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；这些发现排在最前面。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全，所以任何命中都不会拦下安装。plugin 的文件也用同样的方式扫描（见下面的 plugin），MCP server 的命令所运行的已发布包也一样（见下面的 MCP server）。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。模型用 kirby 的只读 `file` tool 读取那个 commit 的那个文件。
+**plugin。** 按它在 marketplace 里的条目所写的来源检查，用的是 marketplace 的 commit（你已经添加的 marketplace 用的是哪个 commit，见下面的“哪些有锁定”）：
+
+- **marketplace repo 里的文件夹**（`"source": "./plugins/x"`）：检查那个文件夹，commit 就是对话框显示的那个。
+- **另一个 GitHub repo**（`github`、`url` 或 `git-subdir`）：条目有 `sha` 时，检查那个 repo 的这个 commit。没有 `sha` 时检查它当前的样子，对话框会注明来源没有锁定，实际安装的可能和检查的不同。
+- **其他来源**（npm 包、压缩包、命令、GitHub 以外的 git 主机）：不会获取，所以扫描和两项查询都是 unchecked。
+
+对话框的 `source:` 那行会说明是哪一种。之后扫描和查询跟 skill 一样运行在这些文件上。plugin 可以依赖其他 plugin，agent CLI 会把它们一起装上。kirby 不检查这些 plugin，对话框用一行 `installed along with it, not checked:` 列出。
+
+**MCP server。** MCP server 每次启动时运行的是它的命令获取的包（`npx -y <package>`、`uvx <package>`），所以检查的是那个包，不是 repo 的文件：
+
+- **哪个包。** repo 只用来得知它写了哪些包：`server.json` 的 `packages`，其次是 `package.json`（不含 private 的）的 `name`，再其次是 `pyproject.toml` 的 name，位置可以在根目录或往下最多两层文件夹，所以一个 repo 放了好几个 server 也行。kirby 检查其中命令实际运行的那一个。包和 repo 之间没有任何绑定（MCP registry 验证的是包和 server 名称的对应，不是和 repo 的对应），所以对话框的 `package:` 那行会写明是哪个文件写了它，并注明没有验证它出自这个 repo。
+- **哪个版本。** 命令指定的版本（`pkg@1.2.3`、`pkg==1.2.3`，或 `pkg@next` 这类 tag）；没有的话用 `server.json` 给的版本；再没有就用 registry 上的最新版。
+- **检查什么。** 那个版本的 npm tarball，或它适用所有平台的 PyPI wheel（没有的话用 sdist），从 registry 下载、和 registry 给的 hash 比对后，解开到一个临时文件夹：只解出普通文件，不会写到那个文件夹之外，也不会安装、import 或运行其中任何东西。扫描运行在这些文件上。查询则查包本身的这个版本，以及它的依赖，版本的算法和 skill 一样（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。repo 自己发布的安全公告，只算写到这个包或没写任何包的那些。
+
+命中的位置是包里的路径。模型有那个包的 `check` tool 响应时，会用 `file` tool 从检查过的包读取（见下面的模型审查）；否则它会告诉你去哪里看那个文件（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
+
+### pattern 扫描
+
+扫描会读取每个要检查的文件，查找值得留意的模式。任何文件里的：隐藏 Unicode（`hidden-unicode`）、针对模型的语句（`injection-phrase`）、提到 agent 配置文件（`agent-config`）和凭据文件（`credentials`），以及很长的 base64 字符串（`long-base64`）。Markdown 里的：范围很广的 `allowed-tools`（`broad-tools`）和 HTML 注释（`html-comment`）。脚本里的：网络调用（`network`）、shell 执行（`exec`）、解码（`decode`）、读取机密环境变量（`env-secret`）和修改 shell 启动文件（`startup-files`）。二进制文件和超过 2 MB 的文件不扫描，扫描那行会写明有几个。
+
+同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项组合发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。
+
+对话框先列组合发现，再列每条命中的规则和位置。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么；模型用 kirby 的只读 `file` tool 读取那个 commit 的那个文件。
 
 ### 漏洞查询和恶意包查询
 
-对 skill、plugin 和 MCP server，安装前检查还会查询已公开的漏洞和已知的恶意包，只用除了你的 `gh` 登录之外不需要任何密钥的公开服务：[OSV.dev](https://osv.dev) 和 GitHub。
+- **依赖包。** 对于 skill 和 plugin，查询读取检查文件里的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`；对于 MCP server，则是安装那个版本的包时会一并装上的依赖。没有 lockfile 时，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不会安装任何东西，也不会运行包的代码（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。这时对话框会注明版本是检查时算出的，实际运行时可能不同。没有 npm 或 uv 时只知道包名，恶意包查询仍会按包名查，漏洞查询则是 unchecked。
+- **漏洞查询。** 向 OSV.dev 查每个依赖包的那个版本，以及检查对象本身：检查的那个 commit（OSV 会把 commit 对应到记录里的 git 范围），或 MCP server 那个版本的包。向 GitHub 查 repo 为自己发布的安全公告。
+- **恶意包查询。** 查 OSV.dev 里 id 以 `MAL-` 开头的记录，这些来自 OpenSSF Malicious Packages；检查对象本身和每个依赖包都会查。
 
-- **依赖包。** tool 读取 skill 在锁定 commit 的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`。没有 lockfile 时，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不会安装任何东西，也不会运行包的代码（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。这时对话框会注明版本是检查时算出的，实际运行时可能不同。没有 npm 或 uv 时只知道包名，恶意包查询仍会按包名查，漏洞查询则标为 unchecked。
-- **漏洞查询。** 向 OSV.dev 查每个依赖包的那个版本，以及锁定的 commit 本身（OSV 会把 commit 对应到记录里的 git 范围）；向 GitHub 查 repo 为自己发布的 advisory。依赖包有 critical 或 high 的漏洞，或 OSV 对应到这个 commit 的任何记录，是 `danger`；其他漏洞是 `warn`，无法对应到这个 commit 的 repo advisory 也是 `warn`，对话框会说无法判断它是否影响这个 commit。
-- **恶意包查询。** OSV.dev 里 id 以 `MAL-` 开头的记录，来自 OpenSSF Malicious Packages。查到就是 `danger`，而且会**拦下**安装：第一层对话框只剩取消、先看 README 和换一个，模型会告诉你原因。仍然要装的话，只能自己手动安装。其他情况都不会拦：扫描命中和漏洞不论多严重，都由你判断（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
-- **unchecked。** 查询失败或超时，会显示为 `unchecked`，不会当成没找到，“安装”也仍然可选。
+### 严重度
 
-每个结果都会把同样的发现交给模型，你可以直接问它某一项。
+每项发现前面都标着严重度，表示它值得多少关注：
+
+| 严重度 | 哪些发现 |
+| --- | --- |
+| `danger` | 已知的恶意包（这一种还会拦下安装，见下方）；依赖包有 critical 或 high 的漏洞；OSV 对应到检查的这个 commit 的任何记录；MCP server 的包本身的任何安全公告 |
+| `warn` | 扫描规则 `hidden-unicode`、`injection-phrase`、`credentials`、`startup-files`，这些在正常的工具里较少见；组合发现；依赖包的其他漏洞；无法对应到检查的 commit 或包的 repo 安全公告，对话框会说无法判断它是否有影响；模型审查的每一项发现 |
+| `info` | 其他扫描规则 |
+
+有了组合发现，读取机密再发送出去的工具就不会全部只是 `info`，尽管这几条规则单独命中时都是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）。扫描部分，组合发现和 warn 的规则排在前面；查询部分，恶意包排在最前面，接着是检查对象本身的安全公告，再是评级最严重的依赖包。
+
+### 拦下安装
+
+只有已知的恶意包会拦下安装：恶意包查询在 OpenSSF Malicious Packages 里找到工具本身或它的某个依赖包。这时对话框会显示 `blocked:`，只剩取消、先看 README 和换一个，模型会告诉你原因，也不会做模型审查。仍然要装的话，只能自己手动安装。其他情况都不会拦：扫描命中、漏洞和模型审查的发现不论多严重，都由你判断，因为很多正常的工具也会请求 URL、执行 shell 命令，或依赖有已知 CVE 的包（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
+
+### unchecked
+
+没能运行的部分会显示为 `unchecked` 并附上原因，不会当成没找到，“安装”也仍然可选：
+
+- 查询失败或超时；
+- 算不出版本的依赖包的漏洞查询（没有 npm 或 uv、它们运行失败，或有些包不是来自 npm registry）；
+- 来源不在 GitHub 上的 plugin（扫描和两项查询）；
+- 用 container image（`docker run …`）运行或通过 URL 连接的远程 MCP server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包：一行 `unchecked:` 说明原因，命令保持原样；
+- kirby 无法确定会拿到哪个版本的 MCP server（registry 没有响应，或命令指定的是 `pkg@^1.2` 这类范围）：对话框会显示 `not pinned:`，扫描是 unchecked，只用包名做恶意包查询；
+- 在 Claude Code 里，GitHub 没有响应，无法判断你已经添加的 marketplace 是否落后于它的 repo；
+- 该做却没做成的模型审查（见下面的模型审查）。
+
+### 默认点一下就能装
+
+这个检查是为了让你知道自己装的是什么，不是为了让安装变麻烦（[ADR 0005](adr/0005-one-click-by-default.md)）。kirby 遇到的每个限制都只是对话框里的一行，不会因此拒绝安装，也不会多一个步骤：没能运行的部分、没有锁定的版本、只是 repo 自称是自己的包、安装时会一并更新的 marketplace，都是如此。唯一的例外是拦下安装。
+
+检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否则每个部分各自列出。
+
+kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之后有了新的 commit，skill 仍安装对话框显示的那个；plugin 则是在安装后检查，而不是事先拒绝（见下面的“哪些有锁定”）。
 
 ### 模型审查
 
@@ -65,47 +116,48 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 - **审查的对象。** 就是要安装的东西：skill 的文件、plugin 的来源（在另一个 repo 也一样），MCP server 则是检查时解开的已发布包。读取包时，`file` 会重新下载同一个归档文件，比对 registry 的哈希和检查给出的 sha256，再解开到临时文件夹；里面的东西都不会安装或运行。
 - **结果。** 最多 5 项发现，每项是检查列出的某个文件、行号，以及一句不超过 120 个字符、不引用文件内容的理由；或是附上理由的 `could_not_run`。安装 tool 会检查这个结构、去掉隐藏字符和控制字符；不符合的结果在任何对话框出现前就会被拒绝，让模型重新发送。
 - **在对话框里。** 每项发现是一行 `warn`，排在检查的各行之后，标上 `(model review, as reported by the model)`；没有发现时则用一行说明。审查的发现只会增加：不会移除或降低其他发现，也不会拦下安装。
-- **没有审查。** 需不需要审查由安装 tool 按自己的检查决定。需要却没有传入、审查无法运行，或审查读取的不是检查的那个 commit 时，对话框用一行 `model review: unchecked (…)` 说明，“安装”仍然保留（[ADR 0005](adr/0005-one-click-by-default.md)）。
+- **没有审查。** 需不需要审查由安装 tool 按自己的检查决定。需要却没有传入、审查无法运行，或审查读取的不是检查的那个 commit 或包时，对话框用一行 `model review: unchecked (…)` 说明，“安装”仍然保留。
 
 结果是由模型转交的，kirby 无法证明审查途中没有被改动或被跳过，所以这些发现都标为模型报告。
 
-### plugin
+### 哪些有锁定
 
-plugin 按它在 marketplace 里的条目所写的来源检查，用的是 marketplace 的 commit：
+在每类工具允许的范围内，装的就是你看到的那一份：
 
-- **marketplace repo 里的文件夹**（`"source": "./plugins/x"`）：检查那个文件夹，commit 就是对话框显示的那个。
-- **另一个 GitHub repo**（`github`、`url` 或 `git-subdir`）：条目有 `sha` 时，检查那个 repo 的这个 commit。没有 `sha` 时检查它当前的样子，对话框会注明来源没有锁定，实际安装的可能和检查的不同。
-- **其他来源**（npm 包、压缩包、命令、GitHub 以外的 git 主机）：不会获取，对话框会把扫描和两项查询标为 unchecked。
+| 类型 | 有锁定 | 没有锁定 |
+| --- | --- | --- |
+| skill | 它的文件，锁定在对话框显示的 commit | 没有 lockfile 的依赖包：版本是检查时算出的，skill 运行时可能不同 |
+| plugin | marketplace 的 commit，安装后检查；另一个 repo 的来源，在 marketplace 条目给了 `sha` 时 | 没有 `sha` 的另一个 repo 来源；跟着一起装的 plugin；没有 lockfile 的依赖包，和 skill 一样 |
+| MCP server | 命令运行的包，锁定在检查过的版本 | 这个包的依赖（[#13](https://github.com/Leo145x/kirby/issues/13)）；container image，以及 kirby 无法确定版本的命令，这些都按原样安装 |
 
-对话框的 `source:` 那行会说明是哪一种。之后扫描和查询跟 skill 一样运行在这些文件上，查到已知的恶意包也同样会拦下安装。
+**skill。** 文件是 kirby 自己复制的，所以 skill 会安装对话框显示的那个 commit，即使在实际安装前 repo 有了新的 commit 也一样：你不必再回答一次对话框（[ADR 0005](adr/0005-one-click-by-default.md)）。只有那个 commit 已经获取不到时（force-push 可能把它移除），安装才会失败；不会安装任何东西，结果会说明原因，你仍然想装的话，模型会重新弹出对话框，显示当前的 commit。
 
-### MCP server
+**plugin。** 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
-MCP server 每次启动时运行的是它的命令获取的包（`npx -y <package>`、`uvx <package>`），所以检查的是那个包，不是 repo 的文件：
+- **两个 CLI 都一样**：两边都没有 kirby 能用的方式安装指定的 commit，所以安装 tool 在你还没添加 marketplace 时照常添加（不指定 ref），安装 plugin，再读取 marketplace 的 clone 在哪个 commit。不是检查过的那个 commit，就把 plugin 移除并说明原因；marketplace 保留。
+- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 kirby 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。kirby 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
+- **Codex**，已经添加 marketplace：`codex plugin add` 不会更新它，所以 kirby 检查它当前所在的 commit，并从它安装。
 
-- **哪个包。** repo 只用来得知它写了哪些包：`server.json` 的 `packages`，其次是 `package.json`（不含 private 的）的 `name`，再其次是 `pyproject.toml` 的 name，位置可以在根目录或往下最多两层文件夹，所以一个 repo 放了好几个 server 也行。tool 检查其中命令实际运行的那一个。包和 repo 之间没有任何绑定（MCP registry 验证的是包和 server 名称的对应，不是和 repo 的对应），所以对话框的 `package:` 那行会写明是哪个文件写了它，并注明没有验证它出自这个 repo。
-- **哪个版本。** 命令指定的版本（`pkg@1.2.3`、`pkg==1.2.3`，或 `pkg@next` 这类 tag）；没有的话用 `server.json` 给的版本；再没有就用 registry 上的最新版。
-- **检查什么。** 那个版本的 npm tarball，或它适用所有平台的 PyPI wheel（没有的话用 sdist），从 registry 下载、和 registry 给的 hash 比对后，解开到一个临时文件夹：只解出普通文件，不会写到那个文件夹之外，也不会安装、import 或运行其中任何东西。扫描运行在这些文件上。查询则查包本身的这个版本（针对它的任何漏洞公告都是 `danger`），以及它的依赖，版本的算法和 skill 一样（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。repo 自己发布的漏洞公告，只算写到这个包或没写任何包的那些。
-- **锁定版本。** 命令会改写成那个版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖是在检查时算出版本的，server 启动时可能不同，对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。
-- **unchecked。** container image（`docker run …`）、通过 URL 连接的远程 server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包，都不会检查：一行 `unchecked:` 说明原因，命令保持原样。tool 无法确定命令会拿到哪个版本时（registry 没有响应，或命令指定的是 `pkg@^1.2` 这类范围），对话框会显示 `not pinned:`，扫描标为 unchecked，只用包名做恶意包查询。
+**MCP server。** 命令会改写成检查过的版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖通常写成版本范围，版本是检查时算出的，server 启动时 npm 或 uv 可能会选到别的版本。对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。
 
-命中的位置是包里的路径。模型有那个包的 `check` tool 响应时，会用 `file` tool 从检查过的包读取（见上面的模型审查）；否则它会告诉你去哪里看那个文件（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
+## 安装流程
 
-### 锁定 commit
+你选定要安装的 repo 后，mod 会弹出两层对话框：
 
-skill 会安装对话框显示的那个 commit，即使在实际安装前 repo 有了新的 commit 也一样：kirby 会自己去获取那个 commit，你不必再回答一次对话框（[ADR 0005](adr/0005-one-click-by-default.md)）。只有那个 commit 已经获取不到时（force-push 可能把它移除），安装才会失败；不会安装任何东西，结果会说明原因，你仍然想装的话，模型会重新弹出对话框，显示当前的 commit。plugin 则从对话框显示的 marketplace commit 安装（见下方）。MCP server 的命令会锁定在检查过的包版本，但它的依赖不会（见上面的 MCP server）。
+1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和安装前检查的结果（见上方）。检查拦下安装时，不会提供“安装”。
+2. **scope**（选择“安装”后才会出现）：
 
-plugin 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
+| scope | skill | plugin | MCP |
+| --- | --- | --- | --- |
+| `local` | 项目的 `.claude/skills/`，并自动加入 `.gitignore` | `--scope local`（`.claude/settings.local.json`） | `--scope local` |
+| `project` | 项目的 `.claude/skills/`，会进 git | `--scope project`（`.claude/settings.json`） | `--scope project`（`.mcp.json`） |
+| `user` | `~/.claude/skills/`（设置了 `CLAUDE_CONFIG_DIR` 时是 `$CLAUDE_CONFIG_DIR/skills/`） | `--scope user` | `--scope user` |
 
-- **两边都一样**：两个 CLI 都没有 kirby 能用的方式安装指定的 commit，所以 tool 在你还没添加 marketplace 时照常添加（不指定 ref），安装 plugin，再读取 marketplace 的 clone 在哪个 commit。不是检查过的那个 commit，就把 plugin 移除并说明原因；marketplace 保留。
-- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 tool 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。tool 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
-- **Codex**，已经添加 marketplace：`codex plugin add` 不会更新它，所以 tool 检查它当前所在的 commit，并从它安装。
-
-plugin 可以依赖其他 plugin，这些会跟着一起安装。tool 不检查它们；对话框用一行 `installed along with it, not checked:` 列出。
+无论装在哪个 scope，plugin 的 marketplace 都会记录在 user settings 中。
 
 ### 对话框语言
 
-对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、扫描和查询结果），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
 
 ### 安装与 prompt cache
 

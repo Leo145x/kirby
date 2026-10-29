@@ -4,23 +4,36 @@
 
 English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-Ask your agent for a tool, and kirby finds the right skill, plugin or MCP server among your GitHub stars, then installs it once you confirm.
+Ask your agent for a tool: kirby finds the right skill, plugin or MCP server among your GitHub stars, and checks what it would install before you confirm.
 
 ## What it's for
 
-You star agent tools on GitHub and sort them into star lists. When a task needs one, just ask in Claude Code or Codex: kirby searches your stars and star lists (or public GitHub), recommends what fits the task, and installs your pick without you leaving the session.
+kirby does two things, one after the other.
+
+**It finds the tool.** You star agent tools on GitHub and sort them into star lists. When a task needs one, just ask in Claude Code or Codex: kirby searches your stars and star lists (or public GitHub), recommends what fits the task, and installs your pick without you leaving the session.
+
+**It checks the tool before you install it.** Before the install dialog opens, kirby looks at what would be installed: it scans the files, looks up known vulnerabilities and malware in the tool and its dependencies, and, when that turns something up, has a model review the files. You see each finding in the dialog, so you know what you are installing. Installing stays one click; only a known-malicious package stops it.
 
 ## Features
+
+### Finding a tool
 
 - **Searches your stars first**: your GitHub stars and star lists, public GitHub (repos tagged with an agent-tooling topic), or both.
 - **Recommends what fits**: the model judges each candidate against your task, and every repo comes with its star count and last push date.
 - **Knows what it is installing**: tells a marketplace, plugin, skill or MCP server apart, and what installing it needs.
+
+### Checking it before install
+
+- **Scans the files that would be installed**: a skill's files, a plugin's own files (also in another repo), or the published npm or PyPI package an MCP server's command runs, downloaded but never installed or run. It looks for patterns worth a look, such as hidden Unicode, phrases aimed at the model, network calls or secret environment variables. It is a pattern match, not a safety review; ask the model what a flagged line does.
+- **Looks up known vulnerabilities and malware**: in the tool and its dependencies, on OSV.dev and in the repo's own GitHub advisories.
+- **Has a model review the files when something was found**: when the scan or the lookups find a danger or warn finding, a subagent that can only read (in Claude Code, kirby's reviewer agent) reports up to five findings, labelled as reported by the model.
+- **Each finding is one line, with its severity**: danger, warn or info. A part that could not run says unchecked, never nothing found, and a clean tool gets a single `check: nothing found` line.
+- **One click by default**: no finding asks for an extra step. Only a known-malicious package blocks the install.
+- **Installs what you saw**: a skill installs the commit the dialog showed, even if the repo has moved on; a plugin is removed again if its marketplace is not at the commit checked; an MCP server's command is pinned to the package version checked (its dependencies are not).
+
+### Installing
+
 - **Asks before installing**: nothing is installed until you pick Install in a dialog, where you can also read the README first or pick another. Then you choose the scope: `local`, `project` or `user`.
-- **Scans a skill, plugin or MCP server before installing**: looks for patterns worth a look, such as hidden Unicode, phrases aimed at the model, network calls or secret environment variables, and lists each hit in the dialog. Network calls together with secrets, shell execution or decoding are marked warn. When the whole check finds nothing, the dialog says so in one line. For a plugin it follows the marketplace entry to the plugin's own files, also in another repo. For an MCP server it scans the published npm or PyPI package the command runs, downloaded but never installed or run. Ask the model what a flagged line does. It is a pattern match, not a safety review.
-- **Looks up known vulnerabilities and malware**: checks a skill's or plugin's dependencies and its commit, or an MCP server's package and its dependencies, against OSV.dev, and the repo's own GitHub advisories, and marks each finding danger, warn or info. Only a known-malicious package blocks the install; a lookup that could not run shows as unchecked.
-- **Has a model review the files when something was found**: when the check finds a danger or warn finding, a subagent reads the files that would be installed (in Claude Code, kirby's reviewer agent, which can only read them), without being told what the other checks found, and reports up to five findings, each one sentence. The dialog labels them as reported by the model; they only add to the other findings. If no review was passed, or it could not run, the dialog says so in one line and Install stays.
-- **Pins an MCP server's package**: the install command is rewritten to the package version checked (`npx -y pkg@1.2.3`). Only that package is pinned, not its dependencies.
-- **Installs the commit you saw**: a skill installs exactly the commit the dialog showed, even if the repo has moved on since; it fails only if that commit is gone (after a force-push, say). A plugin installs from the marketplace commit the dialog showed; if the marketplace changes before the install runs, the plugin is removed again. When installing a plugin also refreshes a marketplace you already added, the dialog says so.
 - **Speaks your language**: the dialogs are written in the language you write in.
 - **Keeps your prompt cache**: in Claude Code, installing a skill, plugin or MCP server does not cost you the prompt cache (tested). The one exception, a plugin that brings an MCP server and is loaded with `/reload-plugins` while tool search is off, is flagged in the dialog, and Claude Code itself warns before that reload.
 - **Works in Claude Code and Codex**.
@@ -58,7 +71,7 @@ In Claude Code you can also call it with `/kirby:inhale`.
 
 ## Learn more
 
-The [guide](docs/guide.md) covers the details: the search source setting, each step of the install flow, where each scope installs, what the scan matches, the advisory and malware lookups, the model review, the prompt cache, how the Codex version differs, and the scripts.
+The [guide](docs/guide.md) covers the details: the search source setting; the pre-install check, with what each part checks, the severities, what blocks, the model review and what is pinned; each step of the install flow and where each scope installs; the prompt cache; how the Codex version differs; and the scripts.
 
 ## Development
 
