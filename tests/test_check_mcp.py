@@ -110,7 +110,7 @@ class AnNpmServer(unittest.TestCase):
             "package: @o/srv@1.2.3 (npm), named by this repo's server.json; not verified to come from this repo",
             "pinned: only @o/srv, to 1.2.3; its dependencies are not pinned, so they may differ from those checked "
             "when the server starts",
-            "scan: 2 files, those in srv-1.2.3.tgz; a pattern match, not a safety review",
+            "pattern scan: 2 files, those in srv-1.2.3.tgz; a pattern match, not a safety review",
             "warn: send-secrets: may send secrets out (network + env-secret)",
             "info: env-secret ×1 (dist/index.js:1)",
             "info: network ×1 (dist/index.js:2)",
@@ -121,7 +121,7 @@ class AnNpmServer(unittest.TestCase):
         self.assertFalse(c["blocked"])
         self.assertEqual(c["package"], {"ecosystem": "npm", "name": "@o/srv", "version": "1.2.3", "declared_in": "server.json"})
         self.assertTrue(c["note"].startswith(
-            "scan: the dialog showed the user these pattern hits in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), "
+            "pattern scan: the dialog showed the user these pattern-scan findings in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), "
             "as paths inside it:\n  warn send-secrets: may send secrets out (network + env-secret)\n"
             "  info env-secret dist/index.js:1\n  info network dist/index.js:2\nlookups: "), c["note"])
         self.assertTrue(c["note"].endswith(
@@ -242,7 +242,7 @@ class APythonServer(unittest.TestCase):
                   resolve={"uv": "mcp-server-time==1.0\nmcp==1.2.0\n"})
         c = check(["time", "--", "uvx", "mcp-server-time", "--local-timezone=UTC"], net)
         self.assertEqual(c["mcp_args"], ["time", "--", "uvx", "mcp-server-time==1.0", "--local-timezone=UTC"])
-        self.assertEqual(c["lines"][2:5], ["scan: 2 files, those in mcp_server_time-1.0-py3-none-any.whl; a pattern match, "
+        self.assertEqual(c["lines"][2:5], ["pattern scan: 2 files, those in mcp_server_time-1.0-py3-none-any.whl; a pattern match, "
                                            "not a safety review", "info: exec ×1 (mcp_server_time/__init__.py:2)",
                                            "dependencies: mcp-server-time@1.0: 1 PyPI, versions resolved at check time"])
 

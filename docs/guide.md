@@ -55,15 +55,15 @@ The dialog's `source:` line says which it is. The scan and the lookups then run 
 - **Which version.** The one the command asks for (`pkg@1.2.3`, `pkg==1.2.3`, a tag such as `pkg@next`), else the one `server.json` gives, else the registry's latest.
 - **What is checked.** That version's npm tarball, or its PyPI wheel for every platform (else its sdist), downloaded from the registry, checked against the registry's hash and unpacked into a temporary folder: regular files only, nothing outside that folder, and nothing installed, imported or run. The scan runs on those files. The lookups run on the package itself at that version and on what it depends on, resolved as for a skill ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). Of the advisories the repo published for itself, only those that name this package, or no package, count.
 
-The hits are paths inside the package. When the model has the `check` tool's answer for it, it reads them with the `file` tool from the package checked (see Model review below); otherwise it tells you where to read the file (unpkg for npm, inspector.pypi.io for PyPI).
+The findings are paths inside the package. When the model has the `check` tool's answer for it, it reads them with the `file` tool from the package checked (see Model review below); otherwise it tells you where to read the file (unpkg for npm, inspector.pypi.io for PyPI).
 
 ### Pattern scan
 
 The scan reads every file it checks for patterns worth a look. In any file: hidden Unicode (`hidden-unicode`), phrases aimed at the model (`injection-phrase`), mentions of agent settings (`agent-config`) and of credential files (`credentials`), and long base64 runs (`long-base64`). In Markdown: broad `allowed-tools` (`broad-tools`) and HTML comments (`html-comment`). In scripts: network calls (`network`), shell execution (`exec`), decoding (`decode`), secret environment variables (`env-secret`) and shell startup files (`startup-files`). Files that are binary or larger than 2 MB are not scanned, and the scan line counts them.
 
-One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a combination finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload).
+One tool matching `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a combination finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload).
 
-The dialog lists the combination findings first, then each flagged rule with where it hit. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does; the model reads that file at that commit with kirby's read-only `file` tool.
+The dialog lists the combination findings first, then each flagged rule with where it matched. It is a pattern match, not a safety review: a finding is not proof of harm, and no finding is not proof of safety. The tool also gives the model the findings with the scanned commit, so you can ask it what a flagged line does; the model reads that file at that commit with kirby's read-only `file` tool.
 
 ### Advisory and malware lookups
 
@@ -85,7 +85,7 @@ The combination findings are why a tool that reads a secret and sends it out is 
 
 ### Blocking
 
-Only a known-malicious package blocks: the malware lookup finds the tool or one of its dependencies in OpenSSF Malicious Packages. The dialog then says `blocked:` and offers only Cancel, Read README first and Pick another, the model tells you why, and no model review runs. To install such a tool anyway, you do it by hand. Nothing else blocks: scan hits, vulnerabilities and model-review findings, however severe, are for you to weigh, because plenty of honest tools fetch URLs, run shell commands or depend on a package with a known CVE ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
+Only a known-malicious package blocks: the malware lookup finds the tool or one of its dependencies in OpenSSF Malicious Packages. The dialog then says `blocked:` and offers only Cancel, Read README first and Pick another, the model tells you why, and no model review runs. To install such a tool anyway, you do it by hand. Nothing else blocks: pattern-scan findings, vulnerabilities and model-review findings, however severe, are for you to weigh, because plenty of honest tools fetch URLs, run shell commands or depend on a package with a known CVE ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
 
 ### Unchecked
 
@@ -112,7 +112,7 @@ Where kirby can remove a stop by doing more work itself, it does: a skill instal
 
 ### Model review
 
-When the scan or the lookups find a `danger` or `warn` finding (a combination finding included), a model also reads the files and reports what looks harmful ([ADR 0002](adr/0002-model-review-in-a-subagent.md)). A tool where they find nothing, or only `info` hits, gets no review, so it costs no extra wait or tokens. Neither does a blocked install: Install is not offered anyway.
+When the scan or the lookups find a `danger` or `warn` finding (a combination finding included), a model also reads the files and reports what looks harmful ([ADR 0002](adr/0002-model-review-in-a-subagent.md)). A tool where they find nothing, or only `info` findings, gets no review, so it costs no extra wait or tokens. Neither does a blocked install: Install is not offered anyway.
 
 - **The flow.** Before the install tool, the model calls the `check` tool, which runs the same pre-install check without a dialog and says whether a review is needed, where the files are (the repo at the commit checked, or an MCP server's package) and which files they are. If a review is needed, the model starts a subagent: in Claude Code kirby's reviewer agent `kirby:reviewer` with the Agent tool, in Codex a subagent with its multi-agent tools and a fixed prompt from the skill. The subagent reads the files only through the `file` tool, at that commit or from that package, and is not told what the other checks found, so it reviews the files on its own. Then the model calls the install tool with the review's result and the sha the check gave.
 - **The reviewer in Claude Code.** `kirby:reviewer` can use only `check` and `file`, so even if a reviewed file carries instructions aimed at it, it has no Bash or write tool to misuse. Its instructions are its own; the model gives it only where the files are and which. kirby's hook allows `check` and `file` without a permission prompt, and nothing else: they only read GitHub and package contents and write nothing to your machine. A deny rule in your settings or your organization's still stops them. In Codex the tools declare themselves read-only, so Codex runs them without asking.
@@ -121,7 +121,7 @@ When the scan or the lookups find a `danger` or `warn` finding (a combination fi
 - **In the dialog.** Each finding is a `warn` line after the check's lines, labelled `(model review, as reported by the model)`, or one line says the review found nothing. A review finding only adds: it never removes or lowers another finding, and it never blocks.
 - **Missing review.** The install tool decides from its own check whether a review was needed. If one was and none was passed, the review could not run, or it read another commit or package than the one checked, the dialog says `model review: unchecked (…)` in one line, and Install stays available.
 
-The model passes the result on, so kirby cannot prove that the review was not edited on the way or skipped; that is why its findings are labelled as reported by the model.
+The model passes the result on, so kirby cannot prove that the review was not edited on the way or never run; that is why its findings are labelled as reported by the model.
 
 ### What is pinned
 
@@ -206,7 +206,7 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `stars.py` | Reads your stars and star lists (GraphQL), cached in `~/.cache/kirby/stars.json` for 24 hours |
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
-| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `check_lines`, and `review` says whether the model review runs and which files it reads); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
+| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `lines`, what the model is told about them is `note`, and `review` says whether the model review runs and which files it reads); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
 | `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON, with `review` as above; installs nothing. Called by the mod and the Codex MCP server |
 | `check_mcp.py` | The pre-install check of an MCP server: `check_mcp.py owner/repo '<mcp_args as JSON>'` finds which package the repo names and the command runs, downloads and unpacks that version without installing it, and runs the scan and the lookups on it. Prints JSON, with the command pinned to that version as `mcp_args` and `review` as above (its `sha` is the archive's sha256). `check_mcp.py --read '<JSON>'` prints one file of such a package for the `file` tool. Installs nothing. Called by the mod and the Codex MCP server |
 | `lookups.py` | The advisory and malware lookups `install_skill.py --check`, `check_plugin.py` and `check_mcp.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |

@@ -578,7 +578,7 @@ def check(repo, args, net=None):
 
     def unchecked(why, pin=True):
         out.update(lines=[f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")],
-                   note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
+                   note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
                         f"server{', and that its command is not pinned' if pin else ''}: {why}",
                    review=dict(NO_REVIEW))
         return out
@@ -647,7 +647,7 @@ def check(repo, args, net=None):
                                files, hits, looked)
     else:
         lines += [f"unchecked: pattern scan ({why})", *looked["lines"]]
-        scan_text = f"scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
+        scan_text = f"pattern scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
         out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
            f"kirby could not pin it ({why}), so the command installs as given.")

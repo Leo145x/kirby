@@ -209,7 +209,7 @@ class OneScope(unittest.TestCase):
                        "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
                        "checked when the server starts",
                        "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"],
-             "note": "scan: the dialog showed the user no pattern hits in the npm package probe@1.0.0",
+             "note": "pattern scan: the dialog showed the user no pattern-scan findings in the npm package probe@1.0.0",
              "review": {"needed": False, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
                         "files": ["dist/index.js"]}}
 
@@ -265,12 +265,12 @@ class Blocked(unittest.TestCase):
 
     CHECK = {
         "name": "s", "commit": "aaaaaaa", "sha": "a" * 40, "files": 2, "scripts": [], "exists": False,
-        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
-                        "dependencies: package-lock.json: 1 npm",
-                        "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-                        "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
-        "scan_note": "scan: the dialog showed the user no pattern hits",
-        "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
+        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
+                  "dependencies: package-lock.json: 1 npm",
+                  "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+                  "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
+        "note": "pattern scan: the dialog showed the user no pattern-scan findings\n"
+                "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
         # A blocked install gets no model review: Install is not offered anyway.
         "review": {"needed": False, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
@@ -291,9 +291,8 @@ class Blocked(unittest.TestCase):
         peer, r = self.install(self.CHECK, "取消")
         question, options = peer.asked[0]
         self.assertEqual(options, ["取消", "先讀 README", "換一個"])
-        self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["check_lines"]), question)
-        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
-                            + self.CHECK["lookup_note"])
+        self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["lines"]), question)
+        self.assertEqual(r, "not installed: the user cancelled.\n" + self.CHECK["note"])
         self.assertNotIn("model review", question)
 
     def test_without_a_block_install_is_offered(self):
@@ -307,8 +306,8 @@ class ModelReview(unittest.TestCase):
 
     CHECK = {
         "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh"], "exists": False,
-        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
-        "scan_note": "scan: the dialog showed the user these pattern hits", "lookup_note": "lookups: none", "blocked": False,
+        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
+        "note": "pattern scan: the dialog showed the user these pattern-scan findings\nlookups: none", "blocked": False,
         "review": NEEDED,
     }
     FINDING = {"file": "s/run.sh", "line": 1, "reason": "Reads the SSH key."}
@@ -332,7 +331,7 @@ class ModelReview(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(json.loads(out), {
             "review": "needed", "read": {"repo": "o/r", "ref": SHA}, "files": ["s/SKILL.md", "s/run.sh"],
-            "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["check_lines"],
+            "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["lines"],
                          server.SKILL_USER_ONLY],
             "blocked": False})
 
@@ -354,10 +353,10 @@ class ModelReview(unittest.TestCase):
 
     def test_the_reviews_findings_follow_the_check_in_the_dialog_and_in_every_result(self):
         peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消")
-        self.assertIn("\n".join([*self.CHECK["check_lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
+        self.assertIn("\n".join([*self.CHECK["lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
         self.assertEqual(peer.asked[0][1], GOOD["options"])
-        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user these pattern hits\n"
-                            f"lookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
+        self.assertEqual(r, "not installed: the user cancelled.\npattern scan: the dialog showed the user these pattern-scan "
+                            f"findings\nlookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
 
     def test_without_a_review_the_dialog_says_so_and_install_stays(self):
         peer, r = self.call(self.SKILL, "取消")
@@ -407,8 +406,8 @@ class Plugin(unittest.TestCase):
     SHA, OLD = "a" * 40, "c" * 40
     CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
              "blocked": False, "lines": ["plugin: p · marketplace mk · commit aaaaaaa · 2 files", "source: plugins/p/ in this repo",
-                                         "scan: 2 files, the ones installed; a pattern match, not a safety review"],
-             "note": "scan: the dialog showed the user no pattern hits in o/mk at commit " + SHA,
+                                         "pattern scan: 2 files, the ones installed; a pattern match, not a safety review"],
+             "note": "pattern scan: the dialog showed the user no pattern-scan findings in o/mk at commit " + SHA,
              "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}}
 
     def install(self, *answers, listed=([],), heads=(), check=None):
