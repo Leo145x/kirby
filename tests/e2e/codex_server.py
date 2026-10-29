@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive codex/server.py's install() and file() with a fake peer in place of Codex's dialogs (H1–H13).
+"""Drive codex/server.py's install(), check() and file() with a fake peer in place of Codex's dialogs (H1–H14).
 
     python3 -I tests/e2e/codex_server.py FIXTURE_DIR PROJECT_DIR
 
@@ -28,6 +28,9 @@ REPO, FOLDER = fixture.REPO, fixture.FOLDER
 ENGLISH = ["Cancel", "Read README first", "Pick another", "Install"]
 ZH = {"about": "測試用。", "next": "下一步？", "options": ["取消", "先讀 README", "換一個", "安裝"], "scope": "裝在哪個範圍？"}
 NO_DIALOG = "\nnote: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes."
+# A check that found a danger or warn finding asks for a model review; an install without one says so.
+UNREVIEWED = "model review: unchecked (no review result was passed)"
+REVIEW_NOTE = "\nreview: the dialog showed the user these model review lines:\n  "
 failures = []
 
 
@@ -82,8 +85,9 @@ def preview(cwd):
                           "--scope", "project", "--agent", "codex", "--check", "--json"],
                          cwd=cwd, capture_output=True, text=True, check=True).stdout
     c = json.loads(out)
-    # What every result after the dialog opens ends with: the pattern scan, then the lookups.
-    c["note"] = f"{c['scan_note']}\n{c['lookup_note']}"
+    # What every result after the dialog opens ends with: the pattern scan, then the lookups, then (the fixture
+    # always has warn findings) the line saying no model review was passed.
+    c["note"] = f"{c['scan_note']}\n{c['lookup_note']}" + (REVIEW_NOTE + UNREVIEWED if c["review"]["needed"] else "")
     return c
 
 
@@ -107,8 +111,9 @@ def main():
     p = Peer("Cancel")
     r = server.install(p, skill, meta)
     q, opts = p.asked[0]
-    check("H1 dialog lists commit and every check line",
-          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n" + "\n".join(c["check_lines"]) in q, q)
+    scripts = f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}\n" if c["scripts"] else ""
+    check("H1 dialog lists commit, scripts and every check line",
+          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n{scripts}" + "\n".join(c["check_lines"]) in q, q)
     check("H1 lookups: no dependency files, nothing found, each on its own line as the scan found something",
           c["check_lines"][-3:] == ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
                                     "malware lookup: nothing found"] and c["blocked"] is False, c["check_lines"])
@@ -122,6 +127,8 @@ def main():
                                         "warn: download-decode: may download and decode a payload (network + decode)"],
           c["check_lines"][:4])
     check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
+    check("H1 warn findings and no review passed -> one unchecked line, Install offered",
+          c["review"]["needed"] is True and f"\n{UNREVIEWED}\n" in q and "Install" in opts, q)
 
     # H2: the model's wording is used; each choice in the first dialog gives its result.
     for answer, start in [("先讀 README", "not installed: the user wants to read the README first. Summarise it for "
@@ -220,6 +227,9 @@ def main():
     head = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     listed = [{"name": mk_name, "root": str(clone), "marketplaceSource": {"sourceType": "git", "source": f"https://github.com/{mk_repo}.git"}}]
     pc = plugin_check(mk_repo, "agent-sdk-dev")
+    ok, out = server.check({k: plugin[k] for k in ("repo", "kind", "plugin")}, meta)
+    check("H9 check: nothing found -> no review", ok and pc["review"]["needed"] is False
+          and json.loads(out)["review"] == "not needed" and "files" not in json.loads(out), out[:300])
     p = Peer("安裝", server.USER_OPTION)
     with Held(then=listed) as held:
         r = server.install(p, plugin, meta)
@@ -286,11 +296,26 @@ def main():
     p = Peer("安裝", server.USER_OPTION)
     with Held() as held:
         r = server.install(p, {**mcp, "mcp_args": args}, meta)
+    unreviewed = [UNREVIEWED] if c["review"]["needed"] else []
     check("H10 mcp facts, scope dialog, then install the pinned command",
-          "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], server.USER_ONLY]) in p.asked[0][0]
+          "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], *unreviewed, server.USER_ONLY]) in p.asked[0][0]
           and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
           and r == f"installed (scope user): codex mcp add {' '.join(pinned)}\n(held)\n"
-                   f"next: The user starts a new Codex session to use it.\n{c['note']}", r)
+                   f"next: The user starts a new Codex session to use it.\n{c['note']}"
+                   + (REVIEW_NOTE + UNREVIEWED if unreviewed else ""), r)
+    # The review of an MCP server reads the package the check unpacked, through the file tool.
+    ok, out = server.check({**{k: mcp[k] for k in ("repo", "kind")}, "mcp_args": args}, meta)
+    got = json.loads(out) if ok else {}
+    read = got.get("read") or {}
+    check("H10 check: the package's files, named by the archive's sha256",
+          got.get("review") == "needed" and read.get("package") == c["review"]["package"]
+          and re.fullmatch(r"[0-9a-f]{64}", read.get("ref", "")) is not None and "package.json" in got.get("files", []), out[:400])
+    ok, out = server.file({**read, "path": "package.json"})
+    check("H12 file tool reads a file of the checked package",
+          ok and json.loads(out).get("name") == "@modelcontextprotocol/server-everything", out[:200])
+    ok, out = server.file({**read, "ref": "0" * 64, "path": "package.json"})
+    check("H12 file tool refuses another archive than the one checked",
+          not ok and out == "the registry now gives another archive than the one checked", out)
     docker = ["kirby-e2e", "--", "docker", "run", "-i", "--rm", "mcp/everything"]
     p = Peer("取消")
     with Held() as held:
@@ -327,6 +352,42 @@ def main():
     for case, a in [("..", {"path": "../x"}), ("abs", {"path": "/etc/passwd"}), ("ref", {"ref": "main"})]:
         ok, out = server.file({"repo": REPO, "path": "a.sh", "ref": fixture.BASE, **a})
         check(f"H12 file tool refuses {case}", not ok, out)
+
+    # H14: check, then the model review's result into install: the check says a review is needed and what it
+    # reads; the review's findings follow the check in the dialog and in the result, labelled as the model's; a
+    # review of another commit or one that could not run is one unchecked line; one outside the limits opens no
+    # dialog. The fixture has warn findings, so a review is needed.
+    c = preview(project)
+    ok, out = server.check(skill, meta)
+    got = json.loads(out) if ok else {}
+    check("H14 check: review needed, the fixture's files at the commit checked, the dialog's facts",
+          got.get("review") == "needed" and got.get("read") == {"repo": REPO, "ref": c["sha"]}
+          and f"{FOLDER}/e2e-setup.sh" in got.get("files", []) and got.get("findings", [])[-len(c["check_lines"]):] == c["check_lines"]
+          and got.get("blocked") is False, out[:400])
+    finding = {"file": f"{FOLDER}/e2e-setup.sh", "line": 5, "reason": "Reads the​ user's SSH key.\nSends it out."}
+    line = f"warn: {FOLDER}/e2e-setup.sh:5: Reads the user's SSH key. Sends it out. (model review, as reported by the model)"
+    base = f"{c['scan_note']}\n{c['lookup_note']}"
+    p = Peer("取消")
+    r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [finding]}}, meta)
+    check("H14 findings follow the check, cleaned and labelled, and reach the result",
+          "\n".join([*c["check_lines"], line]) + "\n\n測試用。" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
+          and r == f"not installed: the user cancelled.\n{base}{REVIEW_NOTE}{line}", r)
+    for case, a, want in [
+        ("another commit", {"sha": "f" * 40, "review": {"findings": []}},
+         f"model review: unchecked (it read fffffff, not {c['sha'][:7]}, the one checked here)"),
+        ("could not run", {"review": {"could_not_run": "no subagent tool in this session"}},
+         "model review: unchecked (no subagent tool in this session)"),
+        ("nothing found", {"sha": c["sha"], "review": {"findings": []}}, "model review: nothing found (as reported by the model)"),
+    ]:
+        p = Peer("取消")
+        r = server.install(p, {**skill, "dialog": ZH, **a}, meta)
+        check(f"H14 {case} -> one line, Install offered", f"\n{want}\n" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
+              and r.endswith(f"{REVIEW_NOTE}{want}"), r)
+    p = Peer()
+    r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [{**finding, "reason": "x" * 121}]}}, meta)
+    check("H14 a reason over 120 characters -> refused, no dialog", not p.asked and r == (
+        "not installed: review.findings[0].reason must be one sentence of at most 120 characters; call this tool again "
+        "with review as the inhale skill describes."), r)
 
     # H13: a known-malicious dependency blocks: the dialog shows the lookups and offers no Install, and the
     # result tells the model why. A lodash with a high advisory is danger but blocks nothing by itself.

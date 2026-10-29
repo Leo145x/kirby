@@ -14,7 +14,7 @@ claude plugin test .
 python3 -B -m unittest discover -s tests
 ```
 
-`claude plugin test .` runs `tests/dialog.test.ts`, `tests/plugin.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py`, `tests/test_install_skill.py`, `tests/test_lookups.py` and `tests/test_check_plugin.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
+`claude plugin test .` runs `tests/dialog.test.ts`, `tests/check.test.ts`, `tests/plugin.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py`, `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py` and `tests/test_check_mcp.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
 
 ## Before Every Commit
 
@@ -23,7 +23,7 @@ python3 -B -m unittest discover -s tests
    | Agent CLI | Unit tests (always) | End-to-end cases to pick from (`tests/e2e/RUNBOOK.md`) |
    |-----------|-------|------------|
    | Claude Code | `claude plugin validate .`, `claude plugin test .` | section A + section B |
-   | Codex | `python3 -B -m unittest discover -s tests` (`tests/test_codex.py`, plus `tests/test_install_skill.py`, `tests/test_lookups.py` and `tests/test_check_plugin.py` for the shared scripts) | section A + section C |
+   | Codex | `python3 -B -m unittest discover -s tests` (`tests/test_codex.py`, plus `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py` and `tests/test_check_mcp.py` for the shared scripts) | section A + section C |
 
    When kirby adds support for another agent CLI, add a row for it here, its tests to the Tests section, and its section to `tests/e2e/RUNBOOK.md` (see Adding an agent CLI there).
 
@@ -31,30 +31,30 @@ python3 -B -m unittest discover -s tests
 
 ## Tool Change Checklist
 
-kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__install`, and the Codex MCP server provides `stars`, `public`, `detect`, `readme`, `file` and `install`. Whenever a tool is added, removed or renamed, or its parameters change, update all of these files together:
+kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__check`, `mcp__kirby__file` and `mcp__kirby__install`, and the Codex MCP server provides `stars`, `public`, `detect`, `readme`, `file`, `check` and `install`. Whenever a tool is added, removed or renamed, or its parameters change, update all of these files together:
 
 | # | File | What to update |
 |---|------|---------|
-| 1 | `hooks/register.ts` | `TOOL` (name, description, inputSchema) + the tool name bound in `tool.call` |
+| 1 | `hooks/register.ts`, `hooks/check.ts` | `TOOL`, `CHECK`, `FILE` (name, description, inputSchema) + the tool names bound in `tool.call`; `check.ts`'s input checks and the `check` result |
 | 2 | `codex/server.py` | the `TOOLS` list + the dispatch (`if name == …` / `SEARCHES`) |
-| 3 | `skills/inhale/SKILL.md` | frontmatter `allowed-tools` + how section 4 calls the tool and its parameters |
-| 4 | `codex/skills/inhale/SKILL.md` | the tool list in the opening **Tools.** paragraph + how each step calls the tools |
-| 5 | `tests/test_codex.py` | tests of the server's input checks |
-| 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H13 |
+| 3 | `skills/inhale/SKILL.md` | frontmatter `allowed-tools` + how section 4 calls the tools and their parameters, and the review prompt |
+| 4 | `codex/skills/inhale/SKILL.md` | the tool list in the opening **Tools.** paragraph + how each step calls the tools, and the review prompt |
+| 5 | `tests/test_codex.py`, `tests/check.test.ts` | tests of each side's input checks and of the `check` result |
+| 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H14 |
 | 7 | `tests/e2e/RUNBOOK.md` | the tool list in A4 + each case's calls and expected results |
 | 8 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the three parts under How it is built + the tool description in the Codex section |
 
 ## Install Results and Dialogs Checklist
 
-The strings the install tool returns to the model (`not installed: …`, `installed (scope …)`, `install failed …`, `scan:`) and the dialog rules exist once on each side; change one side, change the other:
+The strings the install tool returns to the model (`not installed: …`, `installed (scope …)`, `install failed …`, `scan:`, `review:`) and the dialog rules, the model review's among them, exist once on each side; change one side, change the other:
 
 | # | File | What to update |
 |---|------|---------|
 | 1 | `hooks/register.ts`, `hooks/plugin.ts` ↔ `codex/server.py` | result strings, notes such as `*_NOT_SCANNED` |
 | 1a | `hooks/rows.ts`, `tests/rows.test.ts` | the result line shown in Claude Code's transcript, which reads the start of each result |
-| 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` length limits, the rules in `readDialog` / `read_dialog` |
-| 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog rules and of a plugin's install steps |
-| 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the `dialog` format, Limits, and each result under Act on the result |
+| 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` and `REVIEW_MAX` limits, the rules in `readDialog` / `read_dialog` and `readReview` / `read_review`, `clean`, `reviewNote` / `review_note` |
+| 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog and review rules and of a plugin's install steps |
+| 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the `dialog` format, the review prompt's result format, Limits, and each result under Act on the result |
 | 5 | `tests/e2e/codex_server.py`, `tests/e2e/RUNBOOK.md` | expected results checked word for word |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Install flow section (and the README Features list, if a feature it names changes) |
 
@@ -78,10 +78,10 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 | # | File | What to update |
 |---|------|---------|
 | 1 | `skills/inhale/scripts/*.py` | arguments and output |
-| 2 | `hooks/register.ts` | the arguments it passes to `install_skill.py` and `check_plugin.py`, and the JSON fields it reads |
+| 2 | `hooks/register.ts`, `hooks/check.ts` | the arguments they pass to `install_skill.py`, `check_plugin.py` and `check_mcp.py` (its `--read` too), and the JSON fields they read (`review` among them) |
 | 3 | `codex/server.py` | the arguments it passes to each script, and how it parses the output |
 | 4 | `skills/inhale/SKILL.md` | usage and output in sections 1a, 1b and 2 |
-| 5 | `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
+| 5 | `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py`, `tests/test_check_mcp.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Scripts table |
 
 ## Plugin Metadata Checklist

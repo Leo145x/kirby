@@ -324,7 +324,8 @@ def plural(n, one, many):
 
 def check(repo, sha, root, files, net=None):
     """The lookups for a skill: {"lines": the dialog's facts, "note": the same for the model, "blocked":
-    whether the malware lookup found something, so Install is not offered, "nothing_found": when both
+    whether the malware lookup found something, so Install is not offered, "found": whether either lookup
+    found anything (each such finding is danger or warn), "nothing_found": when both
     lookups found nothing and nothing went unchecked, the dependencies they covered (for the one line
     install_skill.check_lines makes), else None}."""
     net = net or Net()
@@ -422,8 +423,9 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None):
     findings.sort(key=lambda f: (f["severity"] != "danger", f["lookup"] != MALWARE, f.get("rank", 0)))
     blocked = any(f["lookup"] == MALWARE for f in findings)
     none = "not known" if unknown else "no npm or Python dependency files"
+    # Every lookup finding is danger or warn, so any of them is one the model review runs for (docs/adr/0002).
     return {"lines": dialog_lines(deps, findings, unchecked, parts, blocked, none),
-            "note": note(about, deps, findings, unchecked, blocked, none), "blocked": blocked,
+            "note": note(about, deps, findings, unchecked, blocked, none), "blocked": blocked, "found": bool(findings),
             "nothing_found": None if findings or unchecked else covered(deps, versioned)}
 
 
