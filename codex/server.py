@@ -106,7 +106,6 @@ TOOLS = [
     },
 ]
 
-MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
 # Where user is the only scope, the first dialog says where it goes, and the scope dialog's install option
 # says it again in the server's own words: a mislabelled first dialog cannot install without the user seeing it.
 USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
@@ -344,8 +343,13 @@ def preview(kind, a, project):
     args = [x for x in args if isinstance(x, str)] if isinstance(args, list) else []
     if not args:
         raise Refusal("kind=mcp needs mcp_args")
-    return {"lines": [f"MCP server: codex mcp add {' '.join(args)}", MCP_NOT_SCANNED, USER_ONLY],
-            "scopes": ("user",), "scan": MCP_NOT_SCANNED, "mcp_args": args}
+    # The check gives back the command with the package it checked pinned to the version checked.
+    ok, out = script("check_mcp.py", "--", repo, json.dumps(args))
+    if not ok:
+        raise Refusal(out)
+    c = json.loads(out)
+    return {"lines": [f"MCP server: codex mcp add {' '.join(c['mcp_args'])}", *c["lines"], USER_ONLY],
+            "scopes": ("user",), "scan": c["note"], "mcp_args": c["mcp_args"], "blocked": c["blocked"] is True}
 
 
 def commands(kind, a, scope, plan):

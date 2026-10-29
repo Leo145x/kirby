@@ -80,12 +80,14 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
 }
 
 // The facts about what the install would do, the prompt-cache note for the scope dialog, the
-// pre-install check as the model reads it in every result (so it can explain a finding), and for a
-// skill or a plugin the commit shown, which is the one installed, and whether the malware lookup blocked
-// it; for a plugin also its marketplace's name and, if the user already added it, where it is.
-type Plan = { lines: string; cache: string; scan: string; commit?: string; blocked?: boolean; marketplace?: string; added?: Added | null }
-
-const MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
+// pre-install check as the model reads it in every result (so it can explain a finding), and whether
+// the malware lookup blocked it; for a skill or a plugin the commit shown, which is the one installed;
+// for a plugin also its marketplace's name and, if the user already added it, where it is; for an MCP
+// server the command to run, with the package checked pinned to the version checked.
+type Plan = {
+  lines: string; cache: string; scan: string; commit?: string; blocked?: boolean; marketplace?: string; added?: Added | null
+  mcpArgs?: string[]
+}
 
 async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   const repo = String(input.repo)
@@ -143,7 +145,14 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   if (args.some(a => a === '--scope' || a === '-s' || a.startsWith('--scope='))) {
     throw new Refusal('mcp_args must not set the scope; the user picks it')
   }
-  return { lines: `MCP server: claude mcp add --scope <scope> ${args.join(' ')}\n${MCP_NOT_SCANNED}`, cache: '', scan: MCP_NOT_SCANNED }
+  // The check gives back the command with the package it checked pinned to the version checked.
+  const r = await run($, ['python3', '-I', `${scripts}/check_mcp.py`, '--', repo, JSON.stringify(args)])
+  if (!r.ok) throw new Refusal(r.out)
+  const c = JSON.parse(r.out) as { mcp_args: string[]; lines: string[]; note: string; blocked: boolean }
+  return {
+    lines: [`MCP server: claude mcp add --scope <scope> ${c.mcp_args.join(' ')}`, ...c.lines].join('\n'), cache: '', scan: c.note,
+    blocked: c.blocked === true, mcpArgs: c.mcp_args,
+  }
 }
 
 function command($: $, kind: Kind, input: Input, scope: Scope, plan: Plan): string[] {
@@ -152,7 +161,7 @@ function command($: $, kind: Kind, input: Input, scope: Scope, plan: Plan): stri
     const argv = ['python3', '-I', `${$.plugin.root}/skills/inhale/scripts/install_skill.py`, repo, String(input.folder), '--scope', scope, '--commit', String(plan.commit)]
     return input.force === true ? [...argv, '--force'] : argv
   }
-  return ['claude', 'mcp', 'add', '--scope', scope, ...(input.mcp_args as string[])]
+  return ['claude', 'mcp', 'add', '--scope', scope, ...(plan.mcpArgs ?? [])]
 }
 
 async function ask($: $, question: string, options: readonly string[]): Promise<string | null> {

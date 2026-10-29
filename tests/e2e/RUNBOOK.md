@@ -67,7 +67,6 @@ Commit. The shared parts below stay as they are.
 | `PLUGIN_DESC` | `Development kit for working with the Claude Agent SDK` |
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
 | `PLUGIN_MK` | `claude-plugins-official`, the name of `PLUGIN_REPO`'s marketplace |
-| `NOT_SCANNED_MCP` | `scan: not scanned; the server runs what this command fetches when it starts, not this repo's files` |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
 
 Constants only one agent CLI uses are in its section.
@@ -131,6 +130,24 @@ and lookups line by line, note it); `PLUGIN_NOTE` is a `scan:` block and a `look
 `anthropics/claude-plugins-official at commit <PLUGIN_SHA>`. `mcp_servers` is `false` for `agent-sdk-dev`
 and `true` for `context7`; `blocked` is `false` for both. The marketplace moves often, so record the
 values again if a case runs much later.
+
+For the MCP server, also run:
+
+```
+python3 -I $KIRBY/skills/inhale/scripts/check_mcp.py -- modelcontextprotocol/servers '["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]'
+```
+
+Record `MCP_VERSION` (`package.version`), `MCP_PINNED` (`mcp_args` joined with spaces, i.e. `MCP_ARGS`
+with its last word now `@modelcontextprotocol/server-everything@<MCP_VERSION>`), `MCP_LINES` (`lines`)
+and `MCP_NOTE` (`note`). `MCP_LINES` starts
+`package: @modelcontextprotocol/server-everything@<MCP_VERSION> (npm), named by this repo's src/everything/package.json; not verified to come from this repo`
+and `pinned: only @modelcontextprotocol/server-everything, to <MCP_VERSION>; its dependencies are not pinned, so they may differ from those checked when the server starts`,
+then the scan of the package's files (`scan: <n> files, those in server-everything-<MCP_VERSION>.tgz; …`) and the lookups
+(`dependencies: @modelcontextprotocol/server-everything@<MCP_VERSION>: <n> npm, versions resolved at check time`). At the time of
+writing (2.1.0) the scan flagged `send-secrets` and `download-decode`, and the lookups one repo advisory for that package. `MCP_NOTE`
+is a `scan:` block for `the npm package @modelcontextprotocol/server-everything@<MCP_VERSION> (server-everything-<MCP_VERSION>.tgz)`,
+a `lookups:` block, and a last line starting `package: the command runs @modelcontextprotocol/server-everything@<MCP_VERSION> (npm)`.
+`blocked` is `false`. A new release changes all of these; record them again if a case runs much later.
 
 `HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`.
 
@@ -238,6 +255,8 @@ before anything else; it lists every place a case can leave something behind.
 | A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
 | A11 | both | `python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py -- anthropics/claude-plugins-official 42crunch-api-security-testing` (a source in another repo, pinned by its entry) | exit 0; `lines[2]` matches `^source: 42Crunch-AI/claude-plugins:plugins/api-security-testing at commit [0-9a-f]{7}, pinned by the marketplace entry$`; `source.commit` equals the entry's `sha` (`gh api repos/anthropics/claude-plugins-official/contents/.claude-plugin/marketplace.json -H 'Accept: application/vnd.github.raw'`); `note` starts `scan: ` and names `42Crunch-AI/claude-plugins at commit <that sha>`, and holds no `source: not pinned` line. If the entry changed, pick another `git-subdir` entry with a `sha` and note it |
 | A12 | both | `check_plugin.py -- anthropics/claude-plugins-official nope-not-a-plugin`; `check_plugin.py --commit abc -- anthropics/claude-plugins-official agent-sdk-dev` | exit 1 with `anthropics/claude-plugins-official has no marketplace plugin named nope-not-a-plugin`; exit non-zero with `--commit needs a full 40-character sha: 'abc'` |
+| A15 | both | `check_mcp.py -- modelcontextprotocol/servers '["time", "--", "uvx", "mcp-server-time"]'` (a PyPI server in a folder of the repo) | exit 0; `mcp_args[3]` matches `^mcp-server-time==\S+$` and `package.version` is that version; `lines[0]` is `package: mcp-server-time@<version> (PyPI), named by this repo's src/time/pyproject.toml; not verified to come from this repo`; `lines[1]` starts `pinned: only mcp-server-time, to <version>; `; the scan line or the one `check: nothing found (…)` line names `mcp_server_time-<version>-py3-none-any.whl` or counts its files, and `dependencies:` (or the `check:` line) counts PyPI dependencies; `blocked` `false`; nothing is left in the scratch directory |
+| A16 | both | `check_mcp.py -- modelcontextprotocol/servers '["e", "--", "docker", "run", "-i", "mcp/time"]'`; then `'["e", "--url", "https://mcp.example/mcp"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@^1"]'`; then `check_mcp.py -- modelcontextprotocol/servers 'not json'` | the first: `lines` is exactly `["unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which kirby does not check); not pinned"]` and `mcp_args` unchanged; the second: `["unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL; its code does not install here)"]`; the third: `lines[1]` is `not pinned: kirby could not tell which version of @modelcontextprotocol/server-everything the command installs (the command asks for @modelcontextprotocol/server-everything@^1, a range kirby does not resolve); it installs as given` and `mcp_args` unchanged; the last exits 1 with `mcp_args must be a JSON list of strings` |
 
 What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and check lines
 (the scan's, then the lookups': no dependency files, nothing found, each on its own line as the scan found something), English options and `ENGLISH_NOTE`, all 12 rules and the 3 combinations fired, the zero-width name shown as `we?ird.py`;
@@ -253,7 +272,9 @@ H9 a plugin's facts (`check_plugin.py`'s lines, the marketplace format and `USER
 are out of order; a marketplace already added: the dialog's `marketplace: already added as …` line (also at the end of the result),
 the check at the clone's commit, only `codex plugin add` run, and a commit made in the clone while the scope dialog is open:
 `codex plugin add` then `codex plugin remove` and the `has moved on … the plugin was removed again` line; H10 an MCP
-server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
+server: `check_mcp.py` finding `@modelcontextprotocol/server-everything` in the repo's `src/everything/package.json` and pinning it,
+dialog 1 with the pinned command, the check's lines and `USER_ONLY`, `USER_OPTION` running `codex mcp add` with the pinned command and
+the result ending with the check's note; a container image (`docker run …`) shown as one `unchecked: …; not pinned` line;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
 flagged line at the scanned commit and refusing `..`, an absolute path and a branch name; H13 after
 `fixture.py malware`: `blocked` and the lookup lines naming `flatmap-stream@0.1.1` and `lodash@4.17.20`,
@@ -544,11 +565,12 @@ can add it on its own in a fresh config directory. If it does, remove it
 
 **B19 MCP server.** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: the README is read first (`gh api repos/modelcontextprotocol/servers/readme`); the install call has `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]` (other names or flags: note them and adapt the expectations and the cleanup).
-- Dialog 1 facts: `HEADER(modelcontextprotocol/servers)`, `MCP server: claude mcp add --scope <scope> kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, `NOT_SCANNED_MCP`. The model's `about` says it takes effect after a restart and does not affect this session's prompt cache.
+- Dialog 1 facts: `HEADER(modelcontextprotocol/servers)`, `MCP server: claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_LINES`. The model's `about` says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
 - Answer Install, `local`. Result first line exactly
-  `installed (scope local): claude mcp add --scope local kirby-e2e -- npx -y @modelcontextprotocol/server-everything`,
-  then the command's output, `next: The server connects in the next session; tell the user to restart Claude Code to use it.`, `NOT_SCANNED_MCP`.
-- `claude mcp get kirby-e2e` in the project shows it with local scope.
+  `installed (scope local): claude mcp add --scope local <MCP_PINNED>`,
+  then the command's output, `next: The server connects in the next session; tell the user to restart Claude Code to use it.`, `MCP_NOTE`.
+- The model's reply says that only that package is pinned (its dependencies are not) and that the repo names the package without anyone verifying it; it does not say the server installs exactly what was checked.
+- `claude mcp get kirby-e2e` in the project shows it with local scope and the command ending `@modelcontextprotocol/server-everything@<MCP_VERSION>`.
 - Cleanup at once, in the project: `claude mcp remove --scope local kirby-e2e`; `claude mcp get kirby-e2e` no longer finds it.
 
 ### Refused before any dialog
@@ -681,10 +703,10 @@ Each followed by `SCAN_NOTE`; nothing written.
 
 **C9 MCP server (opt-in).** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: `mcp__kirby__readme` first; install with `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]`.
-- Dialog 1 facts: header, `MCP server: codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, `NOT_SCANNED_MCP`, `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
-- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_MCP`; the real `codex mcp list` unchanged.
-- Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add kirby-e2e -- npx -y @modelcontextprotocol/server-everything`, then output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_MCP`.
-  `codex mcp get kirby-e2e` without `iso.sh` shows it. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.
+- Dialog 1 facts: header, `MCP server: codex mcp add <MCP_PINNED>`, then `MCP_LINES`, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
+- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `MCP_NOTE`; the real `codex mcp list` unchanged.
+- Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add <MCP_PINNED>`, then output, `next: The user starts a new Codex session to use it.`, `MCP_NOTE`.
+  `codex mcp get kirby-e2e` without `iso.sh` shows it, with the pinned package. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.
 
 **C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1 ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.
 

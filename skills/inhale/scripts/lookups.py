@@ -11,6 +11,9 @@ lockfile does not give without installing or running anything (docs/adr/0004), a
 - on GitHub: the advisories the repo published for itself. Those OSV did not match to the commit are
   warn, as nobody can tell whether they affect it.
 
+check_mcp.py calls check_package() instead, for an MCP server's published package: the subject is the
+package at the version checked rather than a commit, and its dependencies are those resolving it brings.
+
 A lookup that fails or runs out of time is reported as unchecked, never as nothing found.
 """
 import json
@@ -48,6 +51,8 @@ DANGER_RATINGS = ("critical", "high")
 RATINGS = ("critical", "high", "moderate", "low")
 LABELS = {"critical": "critical", "high": "high", "moderate": "moderate", "medium": "moderate", "low": "low"}
 NPM_DEPS = ("dependencies", "devDependencies", "optionalDependencies")
+# OSV's ecosystem names as GitHub's advisories spell them.
+GH_ECOSYSTEMS = {"npm": "npm", "PyPI": "pip"}
 # Specs npm would fetch from somewhere other than the registry (git, a URL, a path, a GitHub shorthand).
 NOT_REGISTRY = re.compile(r"^(git|https?:|file:|link:|github:|gitlab:|bitbucket:|gist:|[.~/])|^[^@\s]+/[^\s]+$")
 NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$")
@@ -324,19 +329,61 @@ def check(repo, sha, root, files, net=None):
     install_skill.check_lines makes), else None}."""
     net = net or Net()
     deps = [read(root, rel, net) for rel in sources(files)]
+    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net)
+
+
+def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
+    """The lookups for an MCP server's published package (check_mcp.py), as check() gives them: the package
+    itself at the version the install command is pinned to, and the packages it depends on, resolved as its
+    package manager would resolve them now, without installing anything (docs/adr/0004). direct are the names
+    it depends on, looked up by name for malware when the versions cannot be resolved. With version None
+    (why says why it is not known), only the package itself is looked up, by name, for malware."""
+    net = net or Net()
+    what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
+    subject = f"the package {what} ({ecosystem})"
+    query = {"package": {"name": name, "ecosystem": ecosystem}, **({"version": version} if version else {})}
+    if version is None:
+        return looked_up(repo, query, subject, subject, [], net, unknown=(f"the dependencies of {what}", why))
+    own = name if ecosystem == "npm" else py_name(name)
+    with tempfile.TemporaryDirectory() as tmp:
+        # A manifest of kirby's own that asks for just this package, so the tree is the one installing it brings.
+        if ecosystem == "npm":
+            rel = "package.json"
+            text = json.dumps({"name": "kirby-check", "version": "0.0.0", "private": True, "dependencies": {name: version}})
+        else:
+            rel, text = "requirements.txt", f"{name}=={version}\n"
+        (Path(tmp) / rel).write_text(text)
+        src = read(Path(tmp), rel, net)
+    src.update(file=what, part=f"the dependencies of {what}")
+    src["packages"] = {(n, v) for n, v in src["packages"] if n != own}
+    if not src["resolved"]:
+        src["names"] = {n for n in (direct if ecosystem == "npm" else map(py_name, direct)) if n != own}
+    return looked_up(repo, query, subject, subject, [src], net)
+
+
+def looked_up(repo, query, subject, about, deps, net, unknown=None):
+    """The lookups of a subject (a commit, or a package; query is its OSV query) and of deps, as check()
+    describes them. about names the subject for the model; unknown is (part, why) for dependencies that
+    could not be listed at all."""
     findings, unchecked = [], []
-    parts = {ADVISORY: ["this commit", "this repo's advisories"], MALWARE: ["this commit"]}
+    parts = {ADVISORY: [subject, "this repo's advisories"], MALWARE: [subject]}
+    if unknown:
+        part, why = unknown
+        parts[ADVISORY].append(part)
+        parts[MALWARE].append(part)
+        unchecked += [(ADVISORY, subject, why), (ADVISORY, part, why), (MALWARE, part, why)]
     for d in deps:
-        parts[ADVISORY].append(d["file"])
-        parts[MALWARE].append(d["file"])
+        part = d.get("part", d["file"])
+        parts[ADVISORY].append(part)
+        parts[MALWARE].append(part)
         if d["why"]:
-            unchecked.append((ADVISORY, d["file"], d["why"]))
+            unchecked.append((ADVISORY, part, d["why"]))
             if d.get("unreadable"):
-                unchecked.append((MALWARE, d["file"], d["why"]))
+                unchecked.append((MALWARE, part, d["why"]))
 
     versioned = sorted({(d["ecosystem"], n, v) for d in deps for n, v in d["packages"]})
     by_name = sorted({(d["ecosystem"], n) for d in deps for n in d["names"]} - {(e, n) for e, n, _ in versioned})
-    queries = [{"commit": sha}]
+    queries = [query]
     queries += [{"package": {"name": n, "ecosystem": e}, "version": v} for e, n, v in versioned]
     queries += [{"package": {"name": n, "ecosystem": e}} for e, n in by_name]
     try:
@@ -350,13 +397,15 @@ def check(repo, sha, root, files, net=None):
     commit_aliases = set()
     if results is not None:
         commit_ids, results = results[0], results[1:]
+        if "version" not in query and "commit" not in query:  # a package by name: only a malware record says anything
+            commit_ids = [v for v in commit_ids if v.startswith("MAL-")]
         wanted = {vid for ids in [commit_ids, *results[:len(versioned)]] for vid in ids if not vid.startswith("MAL-")}
         records, missed = fetch(sorted(wanted)[:MAX_RECORDS], net)
         missed += max(0, len(wanted) - MAX_RECORDS)
         if missed:
             unchecked.append((ADVISORY, f"the rating of {plural(missed, 'advisory', 'advisories')}",
                               "OSV.dev did not return the record"))
-        findings += commit_findings(commit_ids, records)
+        findings += commit_findings(commit_ids, records, subject)
         commit_aliases = {a for g in groups([v for v in commit_ids if not v.startswith("MAL-")], records) for a in g["aliases"]}
         for (e, n, v), ids in zip(versioned, results):
             findings += package_findings(e, n, v, ids, records)
@@ -364,15 +413,17 @@ def check(repo, sha, root, files, net=None):
             findings += package_findings(e, n, None, [i for i in ids if i.startswith("MAL-")], {})
 
     try:
-        findings += repo_findings(net.advisories(repo), commit_aliases)
+        package = (query["package"]["ecosystem"], query["package"]["name"]) if "package" in query else None
+        findings += repo_findings(net.advisories(repo), commit_aliases, subject, package)
     except Failed as e:
         unchecked.append((ADVISORY, "this repo's advisories", str(e)))
 
-    # Malware first, then the commit's own advisories, then the worst-rated dependencies.
+    # Malware first, then the subject's own advisories, then the worst-rated dependencies.
     findings.sort(key=lambda f: (f["severity"] != "danger", f["lookup"] != MALWARE, f.get("rank", 0)))
     blocked = any(f["lookup"] == MALWARE for f in findings)
-    return {"lines": dialog_lines(deps, findings, unchecked, parts, blocked),
-            "note": note(repo, sha, deps, findings, unchecked, blocked), "blocked": blocked,
+    none = "not known" if unknown else "no npm or Python dependency files"
+    return {"lines": dialog_lines(deps, findings, unchecked, parts, blocked, none),
+            "note": note(about, deps, findings, unchecked, blocked, none), "blocked": blocked,
             "nothing_found": None if findings or unchecked else covered(deps, versioned)}
 
 
@@ -428,39 +479,54 @@ def described(group):
     return f"{text}: {shown(group['summary'], 120)}" if group["summary"] else text
 
 
-def commit_findings(ids, records):
+def commit_findings(ids, records, subject="this commit"):
+    """The records for the subject itself (the pinned commit, or an MCP server's package at its version): any
+    is danger, as it affects what installs."""
     out = []
     bad = [v for v in ids if v.startswith("MAL-")]
     if bad:
-        out.append({"severity": "danger", "lookup": MALWARE, "what": "this commit",
-                    "line": f"danger: this commit is listed as malicious ({listed(bad)})",
-                    "notes": [f"danger malware this commit {v}: in OpenSSF Malicious Packages" for v in bad]})
+        out.append({"severity": "danger", "lookup": MALWARE, "what": subject,
+                    "line": f"danger: {subject} is listed as malicious ({listed(bad)})",
+                    "notes": [f"danger malware {subject} {v}: in OpenSSF Malicious Packages" for v in bad]})
     vulns = groups([v for v in ids if not v.startswith("MAL-")], records)
     if vulns:
         out.append({"severity": "danger", "lookup": ADVISORY, "rank": -1,
-                    "line": f"danger: this commit is affected by {plural(len(vulns), 'published vulnerability', 'published vulnerabilities')} "
+                    "line": f"danger: {subject} is affected by {plural(len(vulns), 'published vulnerability', 'published vulnerabilities')} "
                             f"({listed([g['ids'][0] for g in vulns])})",
-                    "notes": [f"danger advisory this commit {described(g)}" for g in vulns]})
+                    "notes": [f"danger advisory {subject} {described(g)}" for g in vulns]})
     return out
 
 
-def repo_findings(advisories, commit_aliases):
-    """The repo's own published advisories OSV did not place on this commit."""
+def names_package(advisory, package):
+    """Whether a repo advisory concerns package, (ecosystem, name): it names that package, or none at all."""
+    if package is None:
+        return True
+    eco, name = package
+    named = {((v.get("package") or {}).get("ecosystem"), (v.get("package") or {}).get("name"))
+             for v in advisory.get("vulnerabilities") or [] if isinstance(v, dict) and isinstance(v.get("package"), dict)}
+    key = (lambda n: py_name(n)) if eco == "PyPI" else (lambda n: n.lower())
+    return not named or any(e == GH_ECOSYSTEMS[eco] and isinstance(n, str) and key(n) == key(name) for e, n in named)
+
+
+def repo_findings(advisories, commit_aliases, subject="this commit", package=None):
+    """The repo's own published advisories OSV did not place on the subject; for a package subject, only those
+    that concern it (a repo can publish several packages)."""
     open_ = [a for a in advisories if isinstance(a, dict) and a.get("state") == "published" and not a.get("withdrawn_at")
-             and isinstance(a.get("ghsa_id"), str) and not ({a["ghsa_id"], a.get("cve_id")} & commit_aliases)]
+             and isinstance(a.get("ghsa_id"), str) and not ({a["ghsa_id"], a.get("cve_id")} & commit_aliases)
+             and names_package(a, package)]
     if not open_:
         return []
     named = [f"{shown(a['ghsa_id'], 40)} {shown(str(a.get('severity') or 'not rated'), 20)}" for a in open_]
     affect = "it affects" if len(open_) == 1 else "they affect"
     return [{"severity": "warn", "lookup": ADVISORY,
              "line": f"warn: this repo published {plural(len(open_), 'advisory', 'advisories')} ({listed(named)}); "
-                     f"could not tell whether {affect} this commit",
-             "notes": [f"warn repo-advisory {n}: could not tell whether it affects this commit" for n in named]}]
+                     f"could not tell whether {affect} {subject}",
+             "notes": [f"warn repo-advisory {n}: could not tell whether it affects {subject}" for n in named]}]
 
 
-def deps_text(deps):
+def deps_text(deps, none="no npm or Python dependency files"):
     if not deps:
-        return "dependencies: no npm or Python dependency files"
+        return f"dependencies: {none}"
     parts = []
     for d in deps:
         count = len(d["packages"]) or len(d["names"])
@@ -479,8 +545,8 @@ def unchecked_lines(unchecked, prefix):
             for why, per in by_reason.items()]
 
 
-def dialog_lines(deps, findings, unchecked, parts, blocked):
-    lines = [deps_text(deps)]
+def dialog_lines(deps, findings, unchecked, parts, blocked, none):
+    lines = [deps_text(deps, none)]
     if blocked:
         lines.append("blocked: the malware lookup found a known-malicious package, so Install is not offered")
     lines += [f["line"] for f in findings[:SHOWN]]
@@ -500,18 +566,19 @@ def dialog_lines(deps, findings, unchecked, parts, blocked):
     return lines
 
 
-def note(repo, sha, deps, findings, unchecked, blocked):
-    """The lookups for the model, in every result after the dialog opens."""
+def note(about, deps, findings, unchecked, blocked, none):
+    """The lookups for the model, in every result after the dialog opens. about names what was looked up:
+    "<repo> at commit <sha>" or the package."""
     notes = [n for f in findings for n in f["notes"]]
     if not notes and not unchecked:
-        return (f"lookups: the dialog showed the user no findings from the advisory and malware lookups for {repo} "
-                f"at commit {sha}\n{deps_text(deps)}")
-    lines = [f"lookups: the dialog showed the user these advisory and malware lookup findings for {repo} at commit {sha}:"]
+        return (f"lookups: the dialog showed the user no findings from the advisory and malware lookups for {about}"
+                f"\n{deps_text(deps, none)}")
+    lines = [f"lookups: the dialog showed the user these advisory and malware lookup findings for {about}:"]
     lines += [f"  {n}" for n in notes[:NOTED]]
     if len(notes) > NOTED:
         lines.append(f"  … (+{len(notes) - NOTED} more)")
     lines += unchecked_lines(unchecked, "  unchecked: ")
-    lines.append(deps_text(deps))
+    lines.append(deps_text(deps, none))
     if blocked:
         what = ", ".join(f["what"] for f in findings if f["lookup"] == MALWARE)
         lines.append(f"blocked: the dialog did not offer Install, because the malware lookup lists {what} as known-malicious. "
