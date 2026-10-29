@@ -45,10 +45,11 @@ class Peer:
 
 class Held:
     """In place of server.run: records the commands that would install at user scope (codex plugin/mcp,
-    install_skill.py --scope user) and runs the rest."""
+    install_skill.py --scope user) and runs the rest. `codex plugin marketplace list` answers with
+    `marketplaces`, the marketplaces Codex is to have already."""
 
-    def __init__(self):
-        self.argv, self.run = [], server.run
+    def __init__(self, marketplaces=()):
+        self.argv, self.run, self.marketplaces = [], server.run, list(marketplaces)
 
     def __enter__(self):
         server.run = self
@@ -58,6 +59,8 @@ class Held:
         server.run = self.run
 
     def __call__(self, argv, cwd=None):
+        if argv[:4] == ["codex", "plugin", "marketplace", "list"]:
+            return True, json.dumps({"marketplaces": self.marketplaces})
         if argv[0] == "codex" or ("--scope" in argv and argv[argv.index("--scope") + 1] == "user"
                                   and "--check" not in argv):
             self.argv.append(list(argv))
@@ -79,6 +82,13 @@ def preview(cwd):
     # What every result after the dialog opens ends with: the pattern scan, then the lookups.
     c["note"] = f"{c['scan_note']}\n{c['lookup_note']}"
     return c
+
+
+def plugin_check(repo, plugin, commit=None):
+    out = subprocess.run([sys.executable, "-I", str(ROOT / "skills/inhale/scripts/check_plugin.py"), "--agent", "codex",
+                          *(["--commit", commit] if commit else []), "--", repo, plugin],
+                         capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
 
 
 def main():
@@ -176,28 +186,57 @@ def main():
     check("H8 project scope leaves .gitignore alone",
           (project / ".gitignore").read_text().splitlines().count("/.agents/skills/security-audit/") == 1)
 
-    # H9: a plugin: facts, not-scanned line, where it installs; the scope dialog's install option, in the
-    # server's words, runs the two commands; cancel there runs none, even when dialog 1's options are out of order.
-    plugin = {"repo": "anthropics/claude-plugins-official", "kind": "plugin", "plugin": "agent-sdk-dev", "dialog": ZH}
+    # H9: a plugin: the pre-install check of its files, the marketplace format, where it installs; the scope
+    # dialog's install option, in the server's words, adds the marketplace pinned to the commit shown and
+    # installs; cancel there runs none, even when dialog 1's options are out of order.
+    mk_repo, mk_name = "anthropics/claude-plugins-official", "claude-plugins-official"
+    plugin = {"repo": mk_repo, "kind": "plugin", "plugin": "agent-sdk-dev", "dialog": ZH}
+    pc = plugin_check(mk_repo, "agent-sdk-dev")
     p = Peer("安裝", server.USER_OPTION)
     with Held() as held:
         r = server.install(p, plugin, meta)
     q = p.asked[0][0]
-    check("H9 plugin facts", "plugin: agent-sdk-dev" in q
-          and "description: Development kit for working with the Claude Agent SDK" in q
-          and "marketplace: .claude-plugin/marketplace.json (Claude Code format)" in q
-          and f"{server.PLUGIN_NOT_SCANNED}\n{server.USER_ONLY}" in q, q)
-    check("H9 plugin: scope dialog, then install", p.asked[1] == ("裝在哪個範圍？", ["cancel", server.USER_OPTION])
-          and held.argv == [
-        ["codex", "plugin", "marketplace", "add", "anthropics/claude-plugins-official"],
-        ["codex", "plugin", "add", "agent-sdk-dev@claude-plugins-official"]]
-          and r.startswith("installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official\n")
-          and r.endswith("\nnext: The user starts a new Codex session to use it.\n" + server.PLUGIN_NOT_SCANNED), r)
+    check("H9 plugin facts: the check's lines, the format, where it installs",
+          "\n".join([pc["lines"][0], "marketplace: .claude-plugin/marketplace.json (Claude Code format)", *pc["lines"][1:],
+                     server.USER_ONLY]) in q
+          and pc["lines"][1:3] == ["description: Development kit for working with the Claude Agent SDK",
+                                   "source: plugins/agent-sdk-dev/ in this repo"], q)
+    check("H9 plugin: scope dialog, then the marketplace pinned with --ref and the install",
+          p.asked[1] == ("裝在哪個範圍？", ["cancel", server.USER_OPTION]) and held.argv == [
+              ["codex", "plugin", "marketplace", "add", mk_repo, "--ref", pc["sha"]],
+              ["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
+          and r.startswith(f"installed (scope user): codex plugin marketplace add {mk_repo} --ref {pc['sha']}\n")
+          and r.endswith("\nnext: The user starts a new Codex session to use it.\n" + pc["note"]), r)
     p = Peer("安裝", "cancel")
     with Held() as held:
         r = server.install(p, plugin, meta)
     check("H9 plugin cancel at scope", not held.argv
-          and r == "not installed: the user cancelled at the scope step.\n" + server.PLUGIN_NOT_SCANNED, r)
+          and r == "not installed: the user cancelled at the scope step.\n" + pc["note"], r)
+
+    # H9 a marketplace already added: checked at the commit its clone is at, not added again; moved on
+    # while the scope dialog is open, it installs nothing.
+    clone = project.parent / "codex-marketplace-clone"
+    shutil.rmtree(clone, ignore_errors=True)
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"https://github.com/{mk_repo}.git", str(clone)], check=True)
+    head = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    listed = [{"name": mk_name, "root": str(clone), "marketplaceSource": {"sourceType": "git", "source": f"https://github.com/{mk_repo}.git"}}]
+    pc = plugin_check(mk_repo, "agent-sdk-dev", head)
+    p = Peer("安裝", server.USER_OPTION)
+    with Held(listed) as held:
+        r = server.install(p, plugin, meta)
+    check("H9 added marketplace: its commit, no add, the install", f"marketplace: already added as {mk_name}, at commit "
+          f"{head[:7]}; installs from it as it is, without updating it" in p.asked[0][0]
+          and held.argv == [["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
+          and r.startswith(f"installed (scope user): codex plugin add agent-sdk-dev@{mk_name}\n"), r)
+    p = Peer("安裝", lambda _options: (subprocess.run(["git", "-C", str(clone), "-c", "user.name=e2e", "-c", "user.email=e2e@invalid",
+                                                     "commit", "-q", "--allow-empty", "-m", "moved"], check=True), server.USER_OPTION)[1])
+    with Held(listed) as held:
+        r = server.install(p, plugin, meta)
+    now = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    check("H9 added marketplace moved on -> nothing installed", not held.argv and r == (
+        f"install failed (scope user): the marketplace {mk_name} has moved on: it is now at commit {now[:7]}, not "
+        f"{head[:7]} as shown to the user; nothing installed\n{pc['note']}"), r)
+    shutil.rmtree(clone, ignore_errors=True)
     # The model put cancel last, so the user's 取消 reads as install; the scope dialog still stops it.
     p = Peer("取消", "cancel")
     with Held() as held:
@@ -226,7 +265,8 @@ def main():
         ("no mcp_args", {"repo": "modelcontextprotocol/servers", "kind": "mcp"}, "not installed: kind=mcp needs mcp_args"),
     ]:
         p = Peer()
-        r = server.install(p, a, meta)
+        with Held():
+            r = server.install(p, a, meta)
         check(f"H11 {case}", r == want and not p.asked, r)
     p = Peer()
     p.can_elicit = False
