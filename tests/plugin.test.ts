@@ -48,6 +48,10 @@ test('a marketplace already added is checked at what the install will bring, and
       'installing refreshes it, and the plugin is removed again if it then comes from another commit',
   })
   expect(alreadyAdded(ADDED, null, { why: 'gh api: HTTP 502' }).commit).toBe(null)
+  // The clone's commit could not be read, so kirby does not know it is behind and must not say so.
+  expect(alreadyAdded(ADDED, null, { sha: NEW })).toEqual({
+    commit: NEW, line: 'marketplace: already added as mk, at a commit kirby could not read; installing refreshes it to bbbbbbb, the commit checked',
+  })
 })
 
 test('a new marketplace is added, the plugin installed, and the clone checked against the commit shown', async () => {

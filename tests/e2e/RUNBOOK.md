@@ -610,7 +610,10 @@ can add it on its own in a fresh config directory. If it does, remove it
 `git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
 - Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
   `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`,
-  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`).
+  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`). kirby says `behind its repo` only when it read
+  the clone's commit: if it cannot, the line is instead
+  `marketplace: already added as claude-plugins-official, at a commit kirby could not read; installing refreshes it to <PLUGIN_SHA7>, the commit checked`
+  (covered by `tests/plugin.test.ts`; this case does not need to break the clone to see it).
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`,
   then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `git -C <LOC> rev-parse HEAD` is now `PLUGIN_SHA`.
 - Cleanup: uninstall it as in B17, then `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
