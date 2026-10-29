@@ -15,7 +15,8 @@ SKILL.md is at the repo root. The installed folder is named after the skill's fr
 is installed, even if the repo has moved on since, so the user gets what they were shown; if it can
 no longer be fetched (after a force-push, say), nothing is installed. --check also runs the advisory
 and malware lookups (lookups.py) on the skill's dependency files; its check_lines are the dialog's
-facts, one line when nothing was found.
+facts, one line when nothing was found. With --json, `review` says whether the model review runs and
+which files it reads, at which commit (docs/adr/0002).
 """
 import argparse
 import json
@@ -217,6 +218,17 @@ def scan_note(repo, folder, sha, hits, place=None):
     return "\n".join(lines)
 
 
+def review(where, files, hits, looked, prefix=""):
+    """What the model review needs (docs/adr/0002): whether it runs, which is only when another part of the check
+    found a danger or warn finding, a combination finding included, and the install is not blocked (Install is not
+    offered then, so a review would only cost time and tokens); where it reads the files (where: {"repo",
+    "sha"} for a commit, or {"package", "sha"} for an MCP server's package, as the file tool takes them); and
+    the files there, the ones the check covered, as paths there (prefix: the folder they are in)."""
+    found = any(SEVERITY[h["rule"]] != "info" for h in hits) or bool(combinations(hits)) or looked["found"]
+    needed = found and not looked["blocked"]
+    return {"needed": needed, **where, "files": [shown(prefix + f, 200) for f in files]}
+
+
 def ignore(target):
     entry = f"/{target.as_posix()}/"
     path = Path(".gitignore")
@@ -272,6 +284,8 @@ def main():
                     "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
                     "check_lines": summary, "scan_note": scan_note(args.repo, folder, sha, hits),
                     "lookup_note": looked["note"], "blocked": looked["blocked"],
+                    "review": review({"repo": args.repo, "sha": sha}, files, hits, looked,
+                                     prefix="" if folder == "." else f"{folder}/"),
                 }, ensure_ascii=False))
                 return
             replace = " (exists: needs --force, replaces it)" if exists else ""

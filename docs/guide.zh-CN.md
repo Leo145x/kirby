@@ -9,8 +9,8 @@
 kirby 分为三部分：
 
 - **`inhale` skill**：搜索你的 star 和 star list（也可以搜索公开的 GitHub），判断并推荐合适的 skill、plugin 或 MCP server。
-- **mod**（`hooks/register.ts`，Claude Code 用）：提供安装用的 tool `mcp__kirby__install`。通过这个 tool 安装时，会先弹出两层对话框等你决定。
-- **MCP server**（`codex/server.py`，Codex 用）：提供搜索用的 tool，以及同样会弹出两层对话框的 `install` tool。
+- **mod**（`hooks/register.ts`，Claude Code 用）：提供安装用的 tool `mcp__kirby__install`、两个供模型审查用的只读 tool（`mcp__kirby__check` 不弹对话框、只运行安装前检查，`mcp__kirby__file` 从检查读取的位置读取单个文件），以及只能使用这两个 tool 的审查 agent `kirby:reviewer`。kirby 让这两个只读 tool 不经权限询问就运行。通过安装 tool 安装时，会先弹出两层对话框等你决定。
+- **MCP server**（`codex/server.py`，Codex 用）：提供搜索用的 tool、同样的 `check` 和 `file` tool，以及同样会弹出两层对话框的 `install` tool。
 
 skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬性拦截：模型仍然可以自己执行 `claude mcp add`、`codex mcp add` 之类的安装命令。
 
@@ -30,7 +30,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 你选定要安装的 repo 后，mod 会弹出两层对话框：
 
-1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和安装前检查的结果（下面的扫描和查询）。检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否则每个部分各自列出。恶意包查询找到已知的恶意包时，不会提供“安装”。
+1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和安装前检查的结果（下面的扫描、查询，以及有发现时的模型审查）。检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否则每个部分各自列出。恶意包查询找到已知的恶意包时，不会提供“安装”。
 2. **scope**（选择“安装”后才会出现）：
 
 | scope | skill | plugin | MCP |
@@ -43,7 +43,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 ### 扫描
 
-在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置，前面标上严重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 里较少见，标 `warn`，其他标 `info`；`warn` 的规则排在前面。同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项标 `warn` 的发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。这几条规则单独命中时仍是 `info`，所以读取机密再发送出去的 skill 不会全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；这些发现排在最前面。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全，所以任何命中都不会拦下安装。plugin 的文件也用同样的方式扫描（见下面的 plugin），MCP server 的命令所运行的已发布包也一样（见下面的 MCP server）。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。在 Claude Code 里，模型用 `gh api` 读取那个文件，skill 没有预先允许这个命令，所以除非你的权限模式允许，Claude Code 会先询问你。
+在第一个对话框出现前，tool 会扫描 skill 的文件（就是实际要安装的那份），查找值得留意的模式：Markdown 里的隐藏 Unicode、HTML 注释和针对模型的语句；范围很广的 `allowed-tools`；提到 agent 配置文件和凭据文件；以及脚本里的网络调用、shell 执行、解码、读取机密环境变量和修改 shell 启动文件。对话框会列出每条命中的规则和位置，前面标上严重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 里较少见，标 `warn`，其他标 `info`；`warn` 的规则排在前面。同一个工具在任何文件里命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 时，会再多一项标 `warn` 的发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。这几条规则单独命中时仍是 `info`，所以读取机密再发送出去的 skill 不会全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；这些发现排在最前面。这只是 pattern 匹配，不是安全审查：有命中不代表有害，没命中也不代表安全，所以任何命中都不会拦下安装。plugin 的文件也用同样的方式扫描（见下面的 plugin），MCP server 的命令所运行的已发布包也一样（见下面的 MCP server）。tool 也会把命中位置和扫描的 commit 交给模型，你可以直接问它某一行在做什么。模型用 kirby 的只读 `file` tool 读取那个 commit 的那个文件。
 
 ### 漏洞查询和恶意包查询
 
@@ -55,6 +55,19 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 - **unchecked。** 查询失败或超时，会显示为 `unchecked`，不会当成没找到，“安装”也仍然可选。
 
 每个结果都会把同样的发现交给模型，你可以直接问它某一项。
+
+### 模型审查
+
+扫描或查询找到 `danger` 或 `warn` 的发现（包括组合发现）时，还会由模型读取文件，报告看起来有害的地方（[ADR 0002](adr/0002-model-review-in-a-subagent.md)）。什么都没找到、或只有 `info` 命中的工具不做审查，所以不必多等，也不多花 token。被拦下的安装也不做：反正不会提供“安装”。
+
+- **流程。** 调用安装 tool 之前，模型先调用 `check` tool：它不弹对话框，运行同样的安装前检查，说明需不需要审查、文件在哪里（检查的那个 commit 的 repo，或 MCP server 的包）、是哪些文件。需要审查时，模型启动一个 subagent：Claude Code 用 Agent tool 启动 kirby 的审查 agent `kirby:reviewer`，Codex 用它的多 agent tool 启动 subagent，并给它 skill 里固定的提示。subagent 只通过 `file` tool 读取那个 commit 或那个包里的文件，也不会被告知其他检查找到什么，所以是独立审查。接着模型调用安装 tool，传入审查结果和检查给出的 sha。
+- **Claude Code 的审查 agent。** `kirby:reviewer` 只能使用 `check` 和 `file`，所以即使被审查的文件里有针对它的指令，它也没有 Bash 或写入的 tool 可以滥用。它的指示是它自己的；模型只告诉它文件在哪里、是哪些。kirby 的 hook 让 `check` 和 `file` 不经权限询问就运行，其他 tool 一律不放行：这两个 tool 只读取 GitHub 和包的内容，不会写入你的电脑。你的设置或组织设置里的 deny 规则仍然会拦下它们。在 Codex 里，这些 tool 声明自己只读取，所以 Codex 直接运行、不先询问。
+- **审查的对象。** 就是要安装的东西：skill 的文件、plugin 的来源（在另一个 repo 也一样），MCP server 则是检查时解开的已发布包。读取包时，`file` 会重新下载同一个归档文件，比对 registry 的哈希和检查给出的 sha256，再解开到临时文件夹；里面的东西都不会安装或运行。
+- **结果。** 最多 5 项发现，每项是检查列出的某个文件、行号，以及一句不超过 120 个字符、不引用文件内容的理由；或是附上理由的 `could_not_run`。安装 tool 会检查这个结构、去掉隐藏字符和控制字符；不符合的结果在任何对话框出现前就会被拒绝，让模型重新发送。
+- **在对话框里。** 每项发现是一行 `warn`，排在检查的各行之后，标上 `(model review, as reported by the model)`；没有发现时则用一行说明。审查的发现只会增加：不会移除或降低其他发现，也不会拦下安装。
+- **没有审查。** 需不需要审查由安装 tool 按自己的检查决定。需要却没有传入、审查无法运行，或审查读取的不是检查的那个 commit 时，对话框用一行 `model review: unchecked (…)` 说明，“安装”仍然保留（[ADR 0005](adr/0005-one-click-by-default.md)）。
+
+结果是由模型转交的，kirby 无法证明审查途中没有被改动或被跳过，所以这些发现都标为模型报告。
 
 ### plugin
 
@@ -76,7 +89,7 @@ MCP server 每次启动时运行的是它的命令获取的包（`npx -y <packag
 - **锁定版本。** 命令会改写成那个版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖是在检查时算出版本的，server 启动时可能不同，对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。
 - **unchecked。** container image（`docker run …`）、通过 URL 连接的远程 server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包，都不会检查：一行 `unchecked:` 说明原因，命令保持原样。tool 无法确定命令会拿到哪个版本时（registry 没有响应，或命令指定的是 `pkg@^1.2` 这类范围），对话框会显示 `not pinned:`，扫描标为 unchecked，只用包名做恶意包查询。
 
-命中的位置是包里的路径，模型无法用读取 repo 的工具读取，它会告诉你去哪里看那个文件（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
+命中的位置是包里的路径。模型有那个包的 `check` tool 响应时，会用 `file` tool 从检查过的包读取（见上面的模型审查）；否则它会告诉你去哪里看那个文件（npm 用 unpkg，PyPI 用 inspector.pypi.io）。
 
 ### 锁定 commit
 
@@ -110,7 +123,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 
 和 Claude Code 版的差异：
 
-- **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 则从 GitHub 读取 README 或某个 commit 的单个文件，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。这五个 tool 声明自己只读取，在 Codex 默认的审批设置下，Codex 会直接运行、不先询问。kirby 的 `install` 运行前，Codex 仍会先问；选「Always allow」会记住。
+- **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 从 GitHub 读取 README 或某个 commit 的单个文件（模型审查时也从 MCP server 的包读取），`check` 不弹对话框、只运行安装前检查，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。这六个 tool 声明自己只读取，在 Codex 默认的审批设置下，Codex 会直接运行、不先询问。kirby 的 `install` 运行前，Codex 仍会先问；选「Always allow」会记住。
 - **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
@@ -138,9 +151,9 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `check_lines`）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
-| `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
-| `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `check_lines`，`review` 说明要不要做模型审查、读取哪些文件）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
+| `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，也含上述的 `review`；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
+| `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令，`review` 同上（它的 `sha` 是归档文件的 sha256）。`check_mcp.py --read '<JSON>'` 为 `file` tool 打印这种包里的单个文件。不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。

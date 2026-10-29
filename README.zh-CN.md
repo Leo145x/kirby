@@ -18,6 +18,7 @@
 - **安装前先问你**：要在对话框选择“安装”才会安装，也可以先看 README 或换一个。接着选择 scope：`local`、`project` 或 `user`。
 - **安装 skill、plugin 或 MCP server 前先扫描**：查找值得留意的模式，例如隐藏 Unicode、针对模型的语句、网络调用或机密环境变量，并在对话框列出每个命中。网络调用和机密、shell 执行或解码同时出现时，标为 warn。整个检查什么都没找到时，对话框用一行说明。plugin 会按 marketplace 条目找到它自己的文件，在另一个 repo 也一样。MCP server 扫描的是命令所运行的已发布 npm 或 PyPI 包，只下载，不安装也不运行。可以直接问模型被标出的那一行在做什么。这只是 pattern 匹配，不是安全审查。
 - **查询已知漏洞和恶意包**：向 OSV.dev 查 skill 或 plugin 的依赖包和它的 commit，或 MCP server 的包和它的依赖包，也查 repo 自己在 GitHub 发布的 advisory，每项发现标上 danger、warn 或 info。只有已知的恶意包会拦下安装；没查成的部分会标为 unchecked。
+- **有发现时请模型审查文件**：检查找到 danger 或 warn 的发现时，由一个 subagent 读要安装的文件（Claude Code 里是 kirby 的审查 agent，它只能读取文件），不告诉它其他检查找到什么，报告最多五项发现，每项一句话。对话框把它们标为模型报告；它们只会增加，不会抵消其他发现。没有传入审查结果或审查无法运行时，对话框用一行说明，安装选项仍然保留。
 - **锁定 MCP server 的包版本**：安装命令会改写成检查过的包版本（`npx -y pkg@1.2.3`）。只锁定那个包，不包含它的依赖包。
 - **只装你看到的 commit**：skill 会安装对话框显示的那个 commit，即使 repo 之后又有新的 commit 也一样；只有那个 commit 已经不在（例如被 force-push 覆盖）时才会失败。plugin 从对话框显示的 marketplace commit 安装；实际安装前 marketplace 有变动，plugin 会再被移除。安装 plugin 会一并更新你已经添加的 marketplace 时，对话框会说明。
 - **用你的语言**：对话框用你使用的语言写。
@@ -57,7 +58,7 @@ codex plugin add kirby@kirby
 
 ## 进一步了解
 
-[说明文档](docs/guide.zh-CN.md) 有完整细节：搜索来源设置、安装流程每一步、各 scope 装到哪里、扫描匹配的内容、漏洞和恶意包查询、prompt cache、Codex 版的差异，以及脚本。
+[说明文档](docs/guide.zh-CN.md) 有完整细节：搜索来源设置、安装流程每一步、各 scope 装到哪里、扫描匹配的内容、漏洞和恶意包查询、模型审查、prompt cache、Codex 版的差异，以及脚本。
 
 ## 开发
 

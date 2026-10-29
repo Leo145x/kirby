@@ -172,6 +172,45 @@ class CheckLines(unittest.TestCase):
                                      "blocked: the malware lookup found a known-malicious package, so Install is not offered"])
 
 
+class Review(unittest.TestCase):
+    """What the model review gets from the check: it runs only when another part of the check found a danger or
+    warn finding (docs/adr/0002), and it reads the files the check covered, where the file tool reads them."""
+
+    def review(self, files, net=None, folder="skills/s"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel, content in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(content)
+            names = sorted(files)
+            hits, _ = install_skill.scan(root, names)
+            looked = lookups.check("o/r", "c" * 40, root, names, net or Net())
+            return install_skill.review({"repo": "o/r", "sha": "c" * 40}, names, hits, looked, prefix=f"{folder}/")
+
+    def test_nothing_found_an_info_hit_or_an_unchecked_lookup_needs_no_review(self):
+        self.assertFalse(self.review({"SKILL.md": "hi\n"})["needed"])
+        self.assertFalse(self.review({"run.sh": "curl https://x\n"})["needed"])
+        self.assertFalse(self.review({"SKILL.md": "hi\n"}, Net(fail=("gh", "osv")))["needed"])
+
+    def test_a_warn_rule_a_combination_or_a_lookup_finding_needs_one(self):
+        self.assertTrue(self.review({"run.sh": "cat ~/.ssh/id_rsa\n"})["needed"])
+        # network and exec are info alone; together they make the warn combination download-run.
+        self.assertTrue(self.review({"a.sh": "curl https://x\n", "b.py": "exec(y)\n"})["needed"])
+        net = Net(vulns={("npm", "lodash", "4.17.20"): ["GHSA-35jh-r3h4-6jhm"]})
+        self.assertTrue(self.review({"package-lock.json": lock(("lodash", "4.17.20"))}, net)["needed"])
+
+    def test_a_blocked_install_needs_none(self):
+        # Install is not offered, so a review would only cost time and tokens, whatever else was found.
+        net = Net(vulns={("npm", "flatmap-stream", "0.1.1"): ["MAL-2025-20690"]})
+        r = self.review({"package-lock.json": lock(("flatmap-stream", "0.1.1")), "run.sh": "cat ~/.ssh/id_rsa\n"}, net)
+        self.assertFalse(r["needed"])
+
+    def test_it_reads_the_files_installed_as_repo_paths_at_the_checked_commit(self):
+        r = self.review({"SKILL.md": "hi\n", "scripts/run.sh": "echo\n", "we​ird.py": ""})
+        self.assertEqual({k: r[k] for k in ("repo", "sha")}, {"repo": "o/r", "sha": "c" * 40})
+        self.assertEqual(r["files"], ["skills/s/SKILL.md", "skills/s/scripts/run.sh", "skills/s/we?ird.py"])
+
+
 class Shown(unittest.TestCase):
     def test_author_picked_names_lose_invisible_and_line_breaking_characters(self):
         self.assertEqual(install_skill.shown("a\u200bb\u202ec\nd\te.sh"), "a?b?c?d?e.sh")

@@ -2,6 +2,7 @@
 """The pre-install check of an MCP server: the package its install command runs, at the version it pins.
 
     check_mcp.py owner/repo '<mcp_args as a JSON list>'
+    check_mcp.py --read '{"ecosystem": …, "name": …, "version": …, "sha": …, "path": …}'
 
 mcp_args is what follows `claude mcp add --scope <scope>` or `codex mcp add`, for example
 ["github", "--", "npx", "-y", "@modelcontextprotocol/server-github"]. The repo is read only to learn which
@@ -19,7 +20,11 @@ dependencies are resolved at check time and may differ when the server starts (#
 
 A container image, a remote server (a URL), or a command that runs none of the packages the repo names is
 reported as unchecked, and the command stays as it is. Prints JSON: the dialog's facts (`lines`), the same
-for the model (`note`), `blocked`, the command to install (`mcp_args`) and the `package` checked.
+for the model (`note`), `blocked`, the command to install (`mcp_args`), the `package` checked, and `review`:
+whether the model review runs and which files of the package it reads, with the archive's sha256 (docs/adr/0002).
+
+--read prints one file of such a package for the review (the file tool): the same archive, downloaded again,
+checked against the registry's hash and the review's sha256, and unpacked into a temporary folder.
 """
 import argparse
 import base64
@@ -40,7 +45,7 @@ from urllib.parse import quote, urlparse
 # -I leaves this folder off the import path; these are kirby's own, next to this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
-from install_skill import VALID_REPO, VALID_SHA, check_lines, listing, scan, scan_note  # noqa: E402
+from install_skill import VALID_REPO, VALID_SHA, check_lines, listing, review, scan, scan_note  # noqa: E402
 from lookups import Failed, first_line, py_name, shown  # noqa: E402
 
 try:
@@ -342,7 +347,8 @@ def check(repo, args, net=None):
     def unchecked(why, pin=True):
         out.update(lines=[f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")],
                    note=f"scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
-                        f"server{', and that its command is not pinned' if pin else ''}: {why}")
+                        f"server{', and that its command is not pinned' if pin else ''}: {why}",
+                   review={"needed": False, "files": []})
         return out
 
     _, words = command_of(args)
@@ -391,19 +397,24 @@ def check(repo, args, net=None):
     if rel:
         with tempfile.TemporaryDirectory() as tmp:
             try:
-                root = unpack(verified(net.get(rel["url"], MAX_ARCHIVE), rel["hash"]), rel["file"], tmp)
+                data = verified(net.get(rel["url"], MAX_ARCHIVE), rel["hash"])
+                root = unpack(data, rel["file"], tmp)
                 files = listing(root)
                 hits, unread = scan(root, files)
-                scanned = (hits, unread, len(files))
+                scanned = (hits, unread, files, hashlib.sha256(data).hexdigest())
             except Failed as e:
                 why = str(e)
     if scanned:
-        hits, unread, n = scanned
-        lines += check_lines(hits, unread, n - len(unread), looked, covered=f"those in {shown(rel['file'], 80)}")
+        hits, unread, files, digest = scanned
+        lines += check_lines(hits, unread, len(files) - len(unread), looked, covered=f"those in {shown(rel['file'], 80)}")
         scan_text = scan_note(repo, ".", None, hits, place=place)
+        # The review reads the same archive, which the file tool finds by the package and checks by its sha256.
+        out["review"] = review({"package": {"ecosystem": eco, "name": name, "version": version}, "sha": digest},
+                               files, hits, looked)
     else:
         lines += [f"unchecked: pattern scan ({why})", *looked["lines"]]
         scan_text = f"scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
+        out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
            f"kirby could not pin it ({why}), so the command installs as given.")
     out.update(lines=lines, blocked=looked["blocked"], note="\n".join([
@@ -413,11 +424,55 @@ def check(repo, args, net=None):
     return out
 
 
+def read(want, net=None):
+    """One file of the package the check unpacked, for the model review (the file tool). want is {ecosystem, name,
+    version, sha: the archive's sha256 as the check's review gave it, path: a path inside the package}. The archive
+    is downloaded again, checked against the registry's hash and that sha256, and unpacked into a temporary folder;
+    nothing in it is installed or run. Returns the file's text."""
+    net = net or Net()
+    path = inside(want["path"])
+    if path is None:
+        raise Failed(f"not a path inside the package: {shown(want['path'], 160)!r}")
+    name, version = want["name"], want["version"]
+    rel = release(want["ecosystem"], name, version, net)
+    data = verified(net.get(rel["url"], MAX_ARCHIVE), rel["hash"])
+    if hashlib.sha256(data).hexdigest() != want["sha"]:
+        raise Failed("the registry now gives another archive than the one checked")
+    with tempfile.TemporaryDirectory() as tmp:
+        target = unpack(data, rel["file"], tmp) / path
+        if not target.is_file():
+            raise Failed(f"{shown(name, 80)}@{shown(version, 40)} has no file {shown(path, 160)}")
+        body = target.read_bytes()
+    if b"\0" in body[:8192]:
+        raise Failed(f"{shown(path, 160)} is a binary file")
+    return body.decode("utf-8", errors="replace")
+
+
+READ_KEYS = {"ecosystem", "name", "version", "sha", "path"}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("repo", help="the repo the server comes from, owner/repo")
-    ap.add_argument("mcp_args", help="the install command's arguments, as a JSON list of strings")
+    ap.add_argument("repo", nargs="?", help="the repo the server comes from, owner/repo")
+    ap.add_argument("mcp_args", nargs="?", help="the install command's arguments, as a JSON list of strings")
+    ap.add_argument("--read", metavar="JSON", help="print one file of a checked package instead: "
+                    '{"ecosystem", "name", "version", "sha", "path"}, as the check\'s review gives them')
     args = ap.parse_args()
+    if args.read is not None:
+        try:
+            want = json.loads(args.read)
+        except ValueError:
+            want = None
+        if (not isinstance(want, dict) or set(want) != READ_KEYS or not all(isinstance(v, str) and v for v in want.values())
+                or want["ecosystem"] not in REGISTRY_TYPES.values() or not re.fullmatch(r"[0-9a-f]{64}", want["sha"])):
+            sys.exit('--read needs {"ecosystem": "npm" or "PyPI", "name", "version", "sha": 64 hex, "path"}')
+        try:
+            sys.stdout.write(read(want))
+        except Failed as e:
+            sys.exit(str(e))
+        return
+    if args.repo is None or args.mcp_args is None:
+        ap.error("needs owner/repo and mcp_args, or --read")
     if not VALID_REPO.match(args.repo):
         sys.exit(f"not an owner/repo: {args.repo!r}")
     try:
