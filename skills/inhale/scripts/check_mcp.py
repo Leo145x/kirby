@@ -32,6 +32,7 @@ import base64
 import hashlib
 import io
 import json
+import lzma
 import re
 import stat
 import sys
@@ -39,6 +40,7 @@ import tarfile
 import tempfile
 import urllib.request
 import zipfile
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -290,10 +292,13 @@ def release(eco, name, spec, net):
         integrity = dist.get("integrity") if isinstance(dist.get("integrity"), str) else ""
         algo, _, digest = integrity.partition("-")
         hashed = (algo, digest) if algo in ("sha512", "sha256") else ("sha1", dist.get("shasum"))
-        direct = sorted({n for field in ("dependencies", "optionalDependencies")
-                         for n in (meta.get(field) if isinstance(meta.get(field), dict) else {}) if NPM_NAME.match(n)})
+        deps = {field: meta[field] for field in ("dependencies", "optionalDependencies", "peerDependencies")
+                if isinstance(meta.get(field), dict)}
+        direct = sorted({n for field in ("dependencies", "optionalDependencies") for n in deps.get(field, {}) if NPM_NAME.match(n)})
+        # npm fetches a git, URL or path dependency to resolve it, and may run its prepare script (lookups.read).
+        elsewhere = any(isinstance(v, str) and lookups.NOT_REGISTRY.match(v.strip()) for d in deps.values() for v in d.values())
         return {"version": meta["version"], "url": dist["tarball"], "file": dist["tarball"].rsplit("/", 1)[-1],
-                "hash": hashed, "direct": direct}
+                "hash": hashed, "direct": direct, "elsewhere": elsewhere}
     project = quote(py_name(name))
     meta = registry(net, f"{PYPI}/{project}/{quote(spec)}/json" if spec else f"{PYPI}/{project}/json")
     info = meta.get("info") if isinstance(meta.get("info"), dict) else {}
@@ -306,7 +311,8 @@ def release(eco, name, spec, net):
     f = ranked[0]
     reqs = [r.split(";", 1)[0] for r in info.get("requires_dist") or [] if isinstance(r, str) and "extra ==" not in r]
     return {"version": info["version"], "url": f["url"], "file": f["filename"],
-            "hash": ("sha256", (f.get("digests") or {}).get("sha256")), "direct": sorted(lookups.requirement_names(reqs))}
+            "hash": ("sha256", (f.get("digests") or {}).get("sha256")), "direct": sorted(lookups.requirement_names(reqs)),
+            "elsewhere": False}
 
 
 def matching(eco, name, spec, net):
@@ -515,18 +521,28 @@ def unpack(data, filename, dest):
     dest = Path(dest)
     total, count = 0, 0
 
-    def write(rel, read):
-        nonlocal total, count
+    def member():
+        nonlocal count
         count += 1
         if count > MAX_FILES:
             raise Failed(f"more than {MAX_FILES} files, more than kirby unpacks")
+
+    def charge(size):
+        nonlocal total
+        total += size
+        if total > MAX_UNPACKED:
+            raise Failed(f"it unpacks to more than {MAX_UNPACKED // 1_000_000} MB, more than kirby unpacks")
+
+    def write(rel, read, charged=False):
+        """Write one member's body, read with read(limit); charged: its whole size already counts against the limit."""
         rel = inside(rel)
         if rel is None:
             return
-        body = read(MAX_UNPACKED - total + 1)
-        total += len(body)
-        if total > MAX_UNPACKED:
-            raise Failed(f"it unpacks to more than {MAX_UNPACKED // 1_000_000} MB, more than kirby unpacks")
+        if charged:
+            body = read()
+        else:
+            body = read(MAX_UNPACKED - total + 1)
+            charge(len(body))
         target = dest / rel
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -540,23 +556,25 @@ def unpack(data, filename, dest):
         if filename.endswith((".whl", ".zip")):
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 for info in z.infolist():
+                    member()
                     # Unix file-type bits, when the archive has them: anything but a regular file (a link) is left out.
                     kind = stat.S_IFMT(info.external_attr >> 16)
                     if info.is_dir() or (kind and kind != stat.S_IFREG):
-                        count += 1
                         continue
                     with z.open(info) as f:
                         write(info.filename, f.read)
             return dest
-        # A stream, read once: the sizes the headers claim cannot make it read more than the limits allow.
+        # A stream, read once. Going on to the next member reads through this one's data, whether it was unpacked or
+        # not, so every member's size counts against the limit before anything is read.
         with tarfile.open(fileobj=io.BytesIO(data), mode="r|*") as t:
             for m in t:
-                if not m.isfile():
-                    count += 1
-                    continue
-                f = t.extractfile(m)
-                write(m.name, f.read)
-    except (tarfile.TarError, zipfile.BadZipFile, EOFError, OSError, ValueError) as e:
+                member()
+                charge(m.size)
+                if m.isfile():
+                    write(m.name, t.extractfile(m).read, charged=True)
+    # RuntimeError: an encrypted zip member; NotImplementedError: a compression zipfile does not have.
+    except (tarfile.TarError, zipfile.BadZipFile, EOFError, OSError, ValueError, RuntimeError, NotImplementedError,
+            zlib.error, lzma.LZMAError) as e:
         raise Failed(f"could not unpack {shown(filename, 80)} ({type(e).__name__})") from None
     tops = list(dest.iterdir())
     return tops[0] if len(tops) == 1 and tops[0].is_dir() else dest
@@ -616,7 +634,8 @@ def check(repo, args, net=None):
         lines.append(f"not pinned: kirby could not tell which version of {shown(name, 80)} the command installs ({why}); "
                      "it installs as given")
 
-    looked = lookups.check_package(repo, eco, name, version, rel["direct"] if rel else [], net, why)
+    looked = lookups.check_package(repo, eco, name, version, rel["direct"] if rel else [], net, why,
+                                   elsewhere=bool(rel and rel["elsewhere"]))
     place = f"the {eco} package {what}" + (f" ({shown(rel['file'], 80)})" if rel else "")
     scanned = None
     if rel:
