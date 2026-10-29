@@ -1,5 +1,7 @@
 # kirby
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/leo145x-kirby-1trnl2?v=28c193f5aba552f95702e44af0339b36)](https://m8ven.ai/mcp/leo145x-kirby-1trnl2?s=readme)
+
 English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
 Ask your agent for a tool, and kirby finds the right skill, plugin or MCP server among your GitHub stars, then installs it once you confirm.
