@@ -13,6 +13,7 @@ SKILL.md is at the repo root. The installed folder is named after the skill's fr
 `name` (falling back to the source folder's name). The source commit is recorded in
 <skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) nothing is
 installed unless the repo's HEAD is still that commit, so the user gets what they were shown.
+--check also runs the advisory and malware lookups (lookups.py) on the skill's dependency files.
 """
 import argparse
 import json
@@ -22,8 +23,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import unicodedata
 from pathlib import Path
+
+# -I leaves this folder off the import path; lookups.py is kirby's own, next to this file.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lookups  # noqa: E402
+from lookups import shown  # noqa: E402
 
 # Claude Code reads user skills from $CLAUDE_CONFIG_DIR/skills when that is set; Codex has no such variable.
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -62,13 +67,6 @@ def listing(root):
     return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and ".git" not in p.parts)
 
 
-def shown(path, limit=100):
-    """A repo path as text for the dialog and the model. The repo's author picks file names, so
-    invisible, control and line-breaking characters become ? and a long name is cut."""
-    text = "".join("?" if unicodedata.category(ch)[0] == "C" or (ch.isspace() and ch != " ") else ch for ch in path)
-    return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
 def describe(files):
     top = sorted({shown(f.split("/", 1)[0]) + ("/" if "/" in f else "") for f in files})
     lines = [f"  top level: {', '.join(top)}"]
@@ -80,35 +78,44 @@ def describe(files):
 
 
 # The pattern scan. A hit is a fact for the user to weigh, not a verdict: plenty of honest skills
-# fetch URLs or run shell commands. Rules are (name, pattern, which files: all, md or script).
+# fetch URLs or run shell commands, so no hit blocks an install (docs/adr/0001). Rules are (name,
+# severity, pattern, which files: all, md or script); warn marks the rules whose hits are rarer in
+# honest skills, info the rest.
 RULES = [
     # Characters a reader cannot see but the model reads: zero-width, bidi controls, Unicode tags.
-    ("hidden-unicode", re.compile(
+    ("hidden-unicode", "warn", re.compile(
         "[\U0000200b-\U0000200d\U00002060\U0000feff\U0000202a-\U0000202e\U00002066-\U00002069\U000e0000-\U000e007f]"), "all"),
-    ("injection-phrase", re.compile(
+    ("injection-phrase", "warn", re.compile(
         r"\bignore (all |any )?(the )?(previous|prior|above|earlier) (instructions|prompts?)\b"
         r"|\b(do not|don't|never) (tell|inform|show|mention)\b[^.\n]{0,20}\buser\b", re.I), "all"),
-    ("agent-config", re.compile(
+    ("agent-config", "info", re.compile(
         r"\.claude/settings|settings\.local\.json|\.mcp\.json|\bCLAUDE\.md|\bAGENTS\.md|\.codex/config\.toml"), "all"),
-    ("credentials", re.compile(
+    ("credentials", "warn", re.compile(
         r"\.ssh/|\bid_(rsa|ed25519)\b|\.aws/|\.netrc\b|\.git-credentials|\.config/gh\b|\.npmrc\b|\.pypirc\b"), "all"),
-    ("long-base64", re.compile(r"[A-Za-z0-9+/]{200,}={0,2}"), "all"),
-    ("broad-tools", re.compile(r"^allowed-tools:.*\bBash(?!\()|^allowed-tools:.*\bBash\(\*\)"), "md"),
-    ("html-comment", re.compile(r"<!--"), "md"),
-    ("network", re.compile(
+    ("long-base64", "info", re.compile(r"[A-Za-z0-9+/]{200,}={0,2}"), "all"),
+    ("broad-tools", "info", re.compile(r"^allowed-tools:.*\bBash(?!\()|^allowed-tools:.*\bBash\(\*\)"), "md"),
+    ("html-comment", "info", re.compile(r"<!--"), "md"),
+    ("network", "info", re.compile(
         r"\b(curl|wget|Invoke-WebRequest|urlopen|urllib|http\.client|axios|XMLHttpRequest)\b"
         r"|\brequests\.(get|post|put|patch)\b|\bfetch\(|\bsocket\.(socket|create_connection)\("), "script"),
-    ("exec", re.compile(
+    ("exec", "info", re.compile(
         r"\beval\s*\(|\beval\s+[\"'$]|\bexec\s*\(|\bos\.system\b|shell=True|\bchild_process\b|\|\s*(ba|z)?sh\b"
         r"|Invoke-Expression"), "script"),
-    ("decode", re.compile(r"base64 +(-d|--decode)\b|\bb64decode\b|\batob\(|Buffer\.from\([^)]*base64"), "script"),
-    ("env-secret", re.compile(
+    ("decode", "info", re.compile(r"base64 +(-d|--decode)\b|\bb64decode\b|\batob\(|Buffer\.from\([^)]*base64"), "script"),
+    ("env-secret", "info", re.compile(
         r"(environ|getenv|process\.env|\$\{?)[^\n]{0,20}(TOKEN|SECRET|API_KEY|PASSWORD)"), "script"),
-    ("startup-files", re.compile(r"\.(bashrc|zshrc|bash_profile|profile)\b|\bcrontab\b|\blaunchctl\b"), "script"),
+    ("startup-files", "warn", re.compile(r"\.(bashrc|zshrc|bash_profile|profile)\b|\bcrontab\b|\blaunchctl\b"), "script"),
 ]
+SEVERITY = {name: severity for name, severity, _, _ in RULES}
+RANK = {"danger": 0, "warn": 1, "info": 2}
 SCAN_MAX_BYTES = 2_000_000
 SHOWN_RULES = 6
 NOTED_HITS = 30
+
+
+def by_severity(hits):
+    """Hits with the weightier rules first, otherwise in the order they were found."""
+    return sorted(hits, key=lambda h: RANK[SEVERITY[h["rule"]]])
 
 
 def scan(root, files):
@@ -123,27 +130,29 @@ def scan(root, files):
         kind = "md" if rel.lower().endswith((".md", ".mdx", ".markdown")) else "script" if rel.endswith(SCRIPT) else ""
         text = data.decode("utf-8", errors="replace").removeprefix("\N{BYTE ORDER MARK}")
         for n, line in enumerate(text.splitlines(), 1):
-            for name, pattern, where in RULES:
+            for name, _, pattern, where in RULES:
                 if where in ("all", kind) and pattern.search(line):
                     hits.append({"rule": name, "file": rel, "line": n})
     return hits, unread
 
 
 def scan_lines(hits, unread, scanned):
-    """The scan as dialog facts: what was covered, then each flagged rule with where it hit."""
+    """The scan as dialog facts: what was covered, then each flagged rule, led by its severity, with
+    where it hit; warn rules first."""
     lines = [f"scan: {scanned} files, the ones installed; a pattern match, not a safety review"
              + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
     if not hits:
         return lines + ["flagged: nothing"]
     by_rule = {}
-    for h in hits:
+    for h in by_severity(hits):
         by_rule.setdefault(h["rule"], []).append(f"{shown(h['file'])}:{h['line']}")
     for rule, where in list(by_rule.items())[:SHOWN_RULES]:
         more = f", … (+{len(where) - 2})" if len(where) > 2 else ""
-        lines.append(f"flagged: {rule} ×{len(where)} ({', '.join(where[:2])}{more})")
-    rest = list(by_rule.items())[SHOWN_RULES:]
-    if rest:
-        lines.append("flagged also: " + ", ".join(f"{rule} ×{len(where)}" for rule, where in rest))
+        lines.append(f"{SEVERITY[rule]}: {rule} ×{len(where)} ({', '.join(where[:2])}{more})")
+    rest = {}
+    for rule, where in list(by_rule.items())[SHOWN_RULES:]:
+        rest.setdefault(SEVERITY[rule], []).append(f"{rule} ×{len(where)}")
+    lines += [f"{severity} also: {', '.join(rules)}" for severity, rules in rest.items()]
     return lines
 
 
@@ -153,7 +162,8 @@ def scan_note(repo, folder, sha, hits):
         return f"scan: the dialog showed the user no pattern hits in {repo} at commit {sha} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
     lines = [f"scan: the dialog showed the user these pattern hits in {repo} at commit {sha}:"]
-    lines += [f"  {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}" for h in hits[:NOTED_HITS]]
+    lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
+              for h in by_severity(hits)[:NOTED_HITS]]
     if len(hits) > NOTED_HITS:
         lines.append(f"  … (+{len(hits) - NOTED_HITS} more)")
     return "\n".join(lines)
@@ -211,6 +221,7 @@ def main():
         exists = target.exists()
         hits, unread = scan(src, files)
         summary = scan_lines(hits, unread, len(files) - len(unread))
+        looked = lookups.check(args.repo, sha, src, files) if args.check else None
 
         if args.check and args.json:
             print(json.dumps({
@@ -218,13 +229,14 @@ def main():
                 "exists": exists, "files": len(files), "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
                 "scan": {"hits": hits, "unread": unread}, "scan_lines": summary,
                 "scan_note": scan_note(args.repo, folder, sha, hits),
+                "lookup_lines": looked["lines"], "lookup_note": looked["note"], "blocked": looked["blocked"],
             }, ensure_ascii=False))
             return
         if args.check:
             replace = " (exists: needs --force, replaces it)" if exists else ""
             print(f"would install {args.repo}:{folder}@{sha[:7]} -> {target}{replace} ({len(files)} files)")
             print("\n".join(describe(files)))
-            print("\n".join(f"  {s}" for s in summary))
+            print("\n".join(f"  {s}" for s in summary + looked["lines"]))
             return
         if exists and not args.force:
             sys.exit(f"{target} already exists; pass --force to replace it")

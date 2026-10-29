@@ -17,6 +17,7 @@ You star agent tools on GitHub and sort them into star lists. When a task needs 
 - **Knows what it is installing**: tells a marketplace, plugin, skill or MCP server apart, and what installing it needs.
 - **Asks before installing**: nothing is installed until you pick Install in a dialog, where you can also read the README first or pick another. Then you choose the scope: `local`, `project` or `user`.
 - **Scans a skill before installing**: looks for patterns worth a look, such as hidden Unicode, phrases aimed at the model, network calls or secret environment variables, and lists each hit in the dialog. Ask the model what a flagged line does. It is a pattern match, not a safety review; plugins and MCP servers are not scanned.
+- **Looks up known vulnerabilities and malware**: checks a skill's dependencies and its commit against OSV.dev, and the repo's own GitHub advisories, and marks each finding danger, warn or info. Only a known-malicious package blocks the install; a lookup that could not run shows as unchecked.
 - **Installs the commit you saw**: a skill installs exactly the commit the dialog showed; if the repo changes before the install runs, nothing is installed.
 - **Speaks your language**: the dialogs are written in the language you write in.
 - **Keeps your prompt cache**: in Claude Code, installing a skill, plugin or MCP server does not cost you the prompt cache (tested). The one exception, a plugin that brings an MCP server and is loaded with `/reload-plugins` while tool search is off, is flagged in the dialog, and Claude Code itself warns before that reload.
@@ -26,7 +27,8 @@ You star agent tools on GitHub and sort them into star lists. When a task needs 
 
 - The [`gh`](https://cli.github.com/) CLI, logged in (`gh auth login`)
 - `git`
-- `python3`
+- `python3` (3.11 or later to read `uv.lock` and `pyproject.toml`)
+- Optional: `npm` and `uv`, so the lookups can work out the versions of dependencies that have no lockfile; without them only the names are looked up
 
 ## Quick start
 
@@ -54,7 +56,7 @@ In Claude Code you can also call it with `/kirby:inhale`.
 
 ## Learn more
 
-The [guide](docs/guide.md) covers the details: the search source setting, each step of the install flow, where each scope installs, what the scan matches, the prompt cache, how the Codex version differs, and the scripts.
+The [guide](docs/guide.md) covers the details: the search source setting, each step of the install flow, where each scope installs, what the scan matches, the advisory and malware lookups, the prompt cache, how the Codex version differs, and the scripts.
 
 ## Development
 

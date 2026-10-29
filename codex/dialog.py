@@ -21,6 +21,12 @@ def english():
     }
 
 
+def next_options(d, blocked):
+    """The first dialog's options. A block (a malware-lookup finding) leaves Install out, so the user
+    cannot pick it (docs/adr/0001)."""
+    return list(d["options"][:3] if blocked else d["options"])
+
+
 def _text(value, limit):
     return value.strip() if isinstance(value, str) and value.strip() and len(value) <= limit else None
 

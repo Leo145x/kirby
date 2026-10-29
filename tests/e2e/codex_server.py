@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive codex/server.py's install() and file() with a fake peer in place of Codex's dialogs.
+"""Drive codex/server.py's install() and file() with a fake peer in place of Codex's dialogs (H1–H13).
 
     python3 -I tests/e2e/codex_server.py FIXTURE_DIR PROJECT_DIR
 
@@ -12,6 +12,7 @@ and exits 1 if any case failed.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,10 @@ def preview(cwd):
     out = subprocess.run([sys.executable, "-I", str(ROOT / "skills/inhale/scripts/install_skill.py"), REPO, FOLDER,
                           "--scope", "project", "--agent", "codex", "--check", "--json"],
                          cwd=cwd, capture_output=True, text=True, check=True).stdout
-    return json.loads(out)
+    c = json.loads(out)
+    # What every result after the dialog opens ends with: the pattern scan, then the lookups.
+    c["note"] = f"{c['scan_note']}\n{c['lookup_note']}"
+    return c
 
 
 def main():
@@ -92,10 +96,13 @@ def main():
     q, opts = p.asked[0]
     check("H1 dialog lists commit and every scan line",
           f"skill: security-audit · commit {c['commit']} · {c['files']} files" in q
-          and all(line in q for line in c["scan_lines"]), q)
+          and "\n".join(c["scan_lines"] + c["lookup_lines"]) in q, q)
+    check("H1 lookups: no dependency files, nothing found", c["lookup_lines"] == [
+        "dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
+        "malware lookup: nothing found"] and c["blocked"] is False, c["lookup_lines"])
     check("H1 English options", opts == ENGLISH, opts)
-    check("H1 result = cancelled + scan note + English note",
-          r == "not installed: the user cancelled.\n" + c["scan_note"] + NO_DIALOG, r)
+    check("H1 result = cancelled + scan and lookup notes + English note",
+          r == "not installed: the user cancelled.\n" + c["note"] + NO_DIALOG, r)
     check("H1 fixture fires all 12 rules", len({h["rule"] for h in c["scan"]["hits"]}) == 12)
     check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
 
@@ -109,7 +116,7 @@ def main():
         q, opts = p.asked[0]
         check(f"H2 {answer!r}: wording, options and result",
               q.endswith("\n\n測試用。\n\n下一步？") and opts == ZH["options"] and r.startswith(start)
-              and r.endswith("\n" + c["scan_note"]) and "note:" not in r, f"{opts}\n      {r}")
+              and r.endswith("\n" + c["note"]) and "note:" not in r, f"{opts}\n      {r}")
 
     # H3: unusable wording falls back to English and names the problem.
     p = Peer("Cancel")
@@ -123,7 +130,7 @@ def main():
         p = Peer("安裝", answer)
         r = server.install(p, {**skill, "dialog": ZH}, meta)
         check(f"H4 scope {answer!r}", p.asked[1] == ("裝在哪個範圍？", ["cancel", "local", "project", "user"])
-              and r == f"not installed: the user {end}\n" + c["scan_note"], f"{p.asked[1]}\n      {r}")
+              and r == f"not installed: the user {end}\n" + c["note"], f"{p.asked[1]}\n      {r}")
 
     # H5: no project from Codex -> only user: the first dialog says so and why, the scope dialog's one
     # install option says where, and picking it installs there.
@@ -153,7 +160,7 @@ def main():
     gi = (project / ".gitignore").read_text() if (project / ".gitignore").exists() else ""
     check("H7 local install", r.startswith("installed (scope local): ") and f"--commit {c['sha']}" in r
           and rec.exists() and json.loads(rec.read_text())["commit"] == c["sha"]
-          and "/.agents/skills/security-audit/" in gi.splitlines() and r.endswith("\n" + c["scan_note"]), r)
+          and "/.agents/skills/security-audit/" in gi.splitlines() and r.endswith("\n" + c["note"]), r)
 
     # H8: the folder exists: the dialog says so; without force the install fails, with force it replaces.
     p = Peer("取消")
@@ -233,6 +240,29 @@ def main():
     for case, a in [("..", {"path": "../x"}), ("abs", {"path": "/etc/passwd"}), ("ref", {"ref": "main"})]:
         ok, out = server.file({"repo": REPO, "path": "a.sh", "ref": fixture.BASE, **a})
         check(f"H12 file tool refuses {case}", not ok, out)
+
+    # H13: a known-malicious dependency blocks: the dialog shows the lookups and offers no Install, and the
+    # result tells the model why. A lodash with a high advisory is danger but blocks nothing by itself.
+    subprocess.run([sys.executable, "-I", str(Path(__file__).parent / "fixture.py"), "malware", str(fx)],
+                   check=True, capture_output=True)
+    shutil.rmtree(project / ".agents", ignore_errors=True)
+    c = preview(project)
+    name, version = fixture.MALWARE
+    check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and c["lookup_lines"][:3] == [
+        "dependencies: package-lock.json: 2 npm",
+        "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+        f"danger: {name}@{version} (npm) is a known-malicious package (MAL-2025-20690)",
+    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in c["lookup_lines"]), c["lookup_lines"])
+    for answer, start in [("取消", "not installed: the user cancelled."),
+                          ("先讀 README", "not installed: the user wants to read the README first.")]:
+        p = Peer(answer)
+        r = server.install(p, {**skill, "dialog": ZH}, meta)
+        q, opts = p.asked[0]
+        check(f"H13 {answer!r}: no Install, result says why", opts == ZH["options"][:3]
+              and "\n".join(c["lookup_lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
+              and f"\nblocked: the dialog did not offer Install, because the malware lookup lists {name}@{version} (npm) "
+                  "as known-malicious." in r and len(p.asked) == 1, f"{opts}\n      {r}")
+    check("H13 nothing written", not (project / ".agents").exists())
 
     print(f"\n{'all passed' if not failures else f'{len(failures)} failed: ' + ', '.join(failures)}")
     sys.exit(1 if failures else 0)
