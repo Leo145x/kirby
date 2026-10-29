@@ -1,9 +1,9 @@
 // A plugin installs the commit the dialog showed (docs/adr/0003). Claude Code's `marketplace add` takes no
-// commit, so kirby adds the marketplace as usual, reads the HEAD of the clone Claude Code made, and removes
-// the marketplace again if it is not the commit checked. A marketplace the user already added is left as it
-// is: the check describes the commit it is at, and kirby installs from it only while it is still there.
-// Claude Code's `plugin install` updates a marketplace that is behind its repo (tried with 2.1.312), so the
-// HEAD is read again after the install too. `run` is passed in, so the tests can stand in for the CLI.
+// commit, so kirby adds the marketplace as usual, installs, then reads the HEAD of the marketplace's clone
+// and removes the plugin again if it is not the commit checked. Claude Code's `plugin install` refreshes a
+// marketplace that is behind its repo (seen with 2.1.312), so for one the user already added, the check is
+// of what the install will bring, and the dialog says so (docs/adr/0005). `run` is passed in, so the tests
+// can stand in for the CLI.
 
 import type { Scope } from './dialog'
 
@@ -48,15 +48,23 @@ export async function headOf(run: Run, added: Added): Promise<string | null> {
   return r.ok && SHA_RE.test(r.out.trim()) ? r.out.trim() : null
 }
 
-// Why kirby will not install from a marketplace already added whose repo has moved on (latest), or null.
-export function behind(repo: string, added: Added, head: string, latest: string): string | null {
-  if (head === latest) return null
-  return (
-    `the marketplace ${added.name} is already added, at commit ${short(head)}, but ${repo} is now at ${short(latest)}. ` +
-    'Claude Code updates a marketplace when it installs from it, so the plugin would come from a commit nobody checked, ' +
-    `and kirby leaves the marketplace as it is. The user can update it with \`claude plugin marketplace update ${added.name}\` ` +
-    'and then ask again.'
-  )
+// For a marketplace already added: the commit to check (null: the repo's default branch as it stands) and
+// the dialog's line about it. latest is the repo's commit now, or why it could not be read.
+export function alreadyAdded(added: Added, head: string | null, latest: { sha: string } | { why: string }):
+  { commit: string | null; line: string } {
+  const at = head ? `at commit ${short(head)}` : 'at a commit kirby could not read'
+  if ('why' in latest) {
+    return {
+      commit: head,
+      line: `unchecked: whether the marketplace ${added.name}, ${at}, is behind its repo (${latest.why}); if it is, installing ` +
+        'refreshes it, and the plugin is removed again if it then comes from another commit',
+    }
+  }
+  if (head === latest.sha) return { commit: head, line: `marketplace: already added as ${added.name}, ${at}; installs from it as it is` }
+  return {
+    commit: latest.sha,
+    line: `marketplace: already added as ${added.name}, ${at}, behind its repo; installing refreshes it to ${short(latest.sha)}, the commit checked`,
+  }
 }
 
 type Plan = { repo: string; plugin: string; scope: Scope; sha: string; marketplace: string; added: Added | null }
@@ -76,24 +84,13 @@ export async function installPlugin(run: Run, p: Plan): Promise<{ ok: boolean; s
   if (!p.added && !(await claude('plugin', 'marketplace', 'add', p.repo))) return done(false)
   const added = p.added ?? (await findAdded(run, p.repo).catch(() => null))
   const name = added?.name ?? p.marketplace
-  const moved = `the marketplace ${name} has moved on`
-  // Only a marketplace kirby added itself is removed again.
-  const removal = async () => !p.added && (await claude('plugin', 'marketplace', 'remove', name))
-
-  const head = added ? await headOf(run, added) : null
-  if (head !== p.sha) {
-    const removed = await removal()
-    return done(false, `${moved}: it is now at commit ${head ? short(head) : 'unknown'}, not ${short(p.sha)} as shown to the ` +
-      `user; nothing installed${removed ? ', and the marketplace was removed again' : ''}`)
-  }
   const id = `${p.plugin}@${name}`
   if (!(await claude('plugin', 'install', id, '--scope', p.scope))) return done(false)
-  const after = await headOf(run, added!)
-  if (after !== p.sha) {
+  const head = added ? await headOf(run, added) : null
+  if (head !== p.sha) {
     await claude('plugin', 'uninstall', id, '--scope', p.scope)
-    const removed = await removal()
-    return done(false, `${moved}: Claude Code updated it to commit ${after ? short(after) : 'unknown'} while installing, not ` +
-      `${short(p.sha)} as shown to the user; the plugin was uninstalled again${removed ? ', and the marketplace removed' : ''}`)
+    return done(false, `the marketplace ${name} has moved on: it is at commit ${head ? short(head) : 'unknown'} after the install, ` +
+      `not ${short(p.sha)} as shown to the user; the plugin was removed again`)
   }
   return done(true)
 }

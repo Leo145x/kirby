@@ -68,14 +68,15 @@ The dialog's `source:` line says which it is. The scan and the lookups then run 
 
 ### Pinned commit
 
-A skill or a plugin installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing is installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. An MCP server is not pinned: it runs whatever its command fetches when it starts, such as `npx -y <package>`.
+A skill or a plugin installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing stays installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. An MCP server is not pinned: it runs whatever its command fetches when it starts, such as `npx -y <package>`.
 
 For a plugin, the commit is the marketplace's ([ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)):
 
-- **Claude Code**, marketplace not added yet: `claude plugin marketplace add` takes no commit, so the tool adds the marketplace as usual, reads the commit of the clone Claude Code made, and installs only if it is the one shown; otherwise it removes the marketplace again and installs nothing. It reads the commit again after `claude plugin install`, and if Claude Code moved the marketplace while installing, it uninstalls the plugin again.
-- **Claude Code**, marketplace already added: the tool leaves it as it is, checks the commit it is at and installs from it. Claude Code updates a marketplace that is behind its repo when it installs from it, so when yours is behind, the tool installs nothing and says so; update it yourself (`claude plugin marketplace update <name>`) and ask again.
-- **Codex**, marketplace not added yet: the tool adds it with `--ref <commit>`, which checks out exactly that commit. The marketplace then stays at that commit; `codex plugin marketplace upgrade` does not move it.
-- **Codex**, marketplace already added: the tool leaves it as it is, checks the commit it is at and installs from it, unless it moved after the dialog opened.
+- **In both**, neither CLI installs a given commit in a way kirby can use, so the tool adds the marketplace if you do not have it yet (without a ref), installs the plugin, and then reads the commit of the marketplace's clone. If that is not the commit checked, it removes the plugin again and says so; the marketplace stays.
+- **Claude Code**, marketplace already added: Claude Code refreshes a marketplace that is behind its repo when it installs from it. So the tool checks the repo's current commit, which is what the install brings, and the dialog says so: `installs from it as it is`, or `behind its repo; installing refreshes it to <commit>`. If the tool cannot tell whether it is behind (GitHub did not answer), the dialog says that as an `unchecked:` line and the check is of the commit your marketplace is at.
+- **Codex**, marketplace already added: `codex plugin add` does not refresh it, so the tool checks the commit it is at and installs from it.
+
+A plugin can depend on other plugins, which install along with it. The tool does not check those; the dialog lists them in one `installed along with it, not checked:` line.
 
 ### Dialog language
 

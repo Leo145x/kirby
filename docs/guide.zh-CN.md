@@ -68,14 +68,15 @@ plugin 按它在 marketplace 里的条目所写的来源检查，用的是 marke
 
 ### 锁定 commit
 
-skill 和 plugin 只会安装对话框显示的那个 commit。如果在实际安装前 repo 有了新的 commit，就不会安装；模型会告诉你，你仍然想装的话，它会重新弹出对话框，显示新的 commit。MCP server 没有锁定版本：它每次启动时运行的是它的命令所获取的代码，例如 `npx -y <package>`。
+skill 和 plugin 只会安装对话框显示的那个 commit。如果在实际安装前 repo 有了新的 commit，就不会留下安装；模型会告诉你，你仍然想装的话，它会重新弹出对话框，显示新的 commit。MCP server 没有锁定版本：它每次启动时运行的是它的命令所获取的代码，例如 `npx -y <package>`。
 
 plugin 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
-- **Claude Code**，还没添加 marketplace：`claude plugin marketplace add` 不能指定 commit，所以 tool 照常添加 marketplace，再读取 Claude Code 创建的 clone 在哪个 commit，是对话框显示的那个才安装；不是的话，就把 marketplace 移除，什么都不装。`claude plugin install` 之后会再读一次 commit，如果 Claude Code 在安装时移动了 marketplace，就把 plugin 卸载。
-- **Claude Code**，已经添加 marketplace：tool 不动它，检查它当前所在的 commit，并从它安装。Claude Code 从落后于 repo 的 marketplace 安装时会先更新它，所以你的 marketplace 落后时，tool 什么都不装，并说明原因；请自己更新（`claude plugin marketplace update <name>`）后再问一次。
-- **Codex**，还没添加 marketplace：tool 用 `--ref <commit>` 添加，checkout 的就是那个 commit。之后 marketplace 会一直停在这个 commit，`codex plugin marketplace upgrade` 也不会移动它。
-- **Codex**，已经添加 marketplace：tool 不动它，检查它当前所在的 commit，并从它安装，除非对话框出现后它又移动了。
+- **两边都一样**：两个 CLI 都没有 kirby 能用的方式安装指定的 commit，所以 tool 在你还没添加 marketplace 时照常添加（不指定 ref），安装 plugin，再读取 marketplace 的 clone 在哪个 commit。不是检查过的那个 commit，就把 plugin 移除并说明原因；marketplace 保留。
+- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 tool 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。tool 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
+- **Codex**，已经添加 marketplace：`codex plugin add` 不会更新它，所以 tool 检查它当前所在的 commit，并从它安装。
+
+plugin 可以依赖其他 plugin，这些会跟着一起安装。tool 不检查它们；对话框用一行 `installed along with it, not checked:` 列出。
 
 ### 对话框语言
 

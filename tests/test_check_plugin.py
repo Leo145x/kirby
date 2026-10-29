@@ -98,6 +98,18 @@ class InTheMarketplace(unittest.TestCase):
                             ({"plugins/p/.claude-plugin/plugin.json": '{"mcpServers": {}}'}, True)]:
             self.assertIs(check({MK: {None: (MK_SHA, {**self.FILES, **extra})}})[0]["mcp_servers"], want, extra)
 
+    def test_the_plugins_it_depends_on_are_listed_as_not_checked(self):
+        files = {**self.FILES,
+                 **marketplace({"name": "p", "source": "./plugins/p", "dependencies": ["audit-logger", "x"]}),
+                 "plugins/p/.claude-plugin/plugin.json": json.dumps({"dependencies": [
+                     "x", {"name": "vault", "version": "~2.1.0", "marketplace": "shared"}, {"version": "1"}, 3]})}
+        c, _ = check({MK: {None: (MK_SHA, files)}})
+        self.assertEqual(c["lines"][1:3], ["source: plugins/p/ in this repo",
+                                           "installed along with it, not checked: audit-logger, x, vault@shared"])
+        self.assertIn("\nplugins: the dialog showed the user that installing also installs these plugins, which were "
+                      "not checked: audit-logger, x, vault@shared", c["note"])
+        self.assertNotIn("installed along with it", "\n".join(check({MK: {None: (MK_SHA, self.FILES)}})[0]["lines"]))
+
     def test_refusals(self):
         for files, plugin, want in [
             (self.FILES, "nope", "o/mk has no marketplace plugin named nope"),

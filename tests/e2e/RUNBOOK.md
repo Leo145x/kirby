@@ -240,10 +240,11 @@ offers only `user`, dialog 1 saying so and why and the scope dialog's option say
 nothing; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
 `exists:` line, failure without `force`, replacement with it, `project` leaving `.gitignore` alone;
 H9 a plugin's facts (`check_plugin.py`'s lines, the marketplace format and `USER_ONLY`, section C), the scope dialog's `USER_OPTION` running
-`codex plugin marketplace add … --ref <the commit shown>` and `codex plugin add`, `cancel` there running none, also when dialog 1's options
-are out of order; a marketplace already added (a local clone of `PLUGIN_REPO` listed in its place): the dialog's
-`marketplace: already added as …` line, the check at the clone's commit, only `codex plugin add` run, and a commit
-made in the clone while the scope dialog is open installing nothing; H10 an MCP
+`codex plugin marketplace add …` (no `--ref`) and `codex plugin add`, then the commit of the marketplace (a local clone of
+`PLUGIN_REPO` listed in its place once added) checked against the one shown, `cancel` there running none, also when dialog 1's options
+are out of order; a marketplace already added: the dialog's `marketplace: already added as …` line (also at the end of the result),
+the check at the clone's commit, only `codex plugin add` run, and a commit made in the clone while the scope dialog is open:
+`codex plugin add` then `codex plugin remove` and the `has moved on … the plugin was removed again` line; H10 an MCP
 server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
 flagged line at the scanned commit and refusing `..`, an absolute path and a branch name; H13 after
@@ -495,29 +496,32 @@ can add it on its own in a fresh config directory. If it does, remove it
 
 **B24 The marketplace is already added.** Right after B17 (the marketplace is still there, at `PLUGIN_SHA`). Prompt as B17.
 - Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
-  `marketplace: already added as claude-plugins-official, at commit <PLUGIN_SHA7>; installs from it as it is, without updating it`,
+  `marketplace: already added as claude-plugins-official, at commit <PLUGIN_SHA7>; installs from it as it is`,
   then the rest of `PLUGIN_LINES`.
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
-  (no `marketplace add`), then the output, the `next:` line and `PLUGIN_NOTE`. `git -C <LOC> rev-parse HEAD` is still `PLUGIN_SHA`.
+  (no `marketplace add`), then the output, the `next:` line, `PLUGIN_NOTE` and the `marketplace: already added` line again.
+  `git -C <LOC> rev-parse HEAD` is still `PLUGIN_SHA`.
 - Cleanup at once: uninstall it as in B17.
-- **Moved on during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, run
-  `git -C <LOC> -c user.name=e2e -c user.email=e2e@invalid commit -q --allow-empty -m moved` (record `NEW` = `git -C <LOC> rev-parse HEAD`). Answer `local`.
-  Result exactly `install failed (scope local): the marketplace claude-plugins-official has moved on: it is now at commit <NEW7>, not <PLUGIN_SHA7> as shown to the user; nothing installed`
-  then `PLUGIN_NOTE`. `claude plugin list` does not show `agent-sdk-dev`; `claude plugin marketplace list` still lists `PLUGIN_MK` (kirby did not add it, so it does not remove it).
-  Reply says nothing was installed and why.
+- **A local commit during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, run
+  `git -C <LOC> -c user.name=e2e -c user.email=e2e@invalid commit -q --allow-empty -m moved`. Answer `local`.
+  Claude Code 2.1.312 replaces a clone whose HEAD is not its repo's commit with a fresh clone when it installs
+  (seen 2026-10-30), so the result is as above (`installed (scope local): …`) and `git -C <LOC> rev-parse HEAD` is
+  `PLUGIN_SHA` again. If the result is instead `install failed (scope local): …` ending
+  `the marketplace claude-plugins-official has moved on: it is at commit <HEAD7> after the install, not <PLUGIN_SHA7> as shown to the user; the plugin was removed again`
+  (then `PLUGIN_NOTE` and the marketplace line), Claude Code no longer refreshes such a clone: `claude plugin list` must not show
+  `agent-sdk-dev`, and `claude plugin marketplace list` must still list `PLUGIN_MK`; note the change. Either way, uninstall it if installed.
+  (The removal itself is covered by `tests/plugin.test.ts`; it needs the repo to move between the check and the install.)
 
 **B25 The marketplace is behind its repo.** After B24. Put the clone at an older commit, consistently:
 `OLD=$(gh api 'repos/anthropics/claude-plugins-official/commits?per_page=2' --jq '.[1].sha')`, then
 `git -C <LOC> fetch -q --depth 1 origin <OLD>`, `git -C <LOC> reset -q --hard <OLD>`,
-`git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17.
-- No dialog. Result exactly (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved):
-
-  ```
-  not installed: the marketplace claude-plugins-official is already added, at commit <OLD7>, but anthropics/claude-plugins-official is now at <PLUGIN_SHA7>. Claude Code updates a marketplace when it installs from it, so the plugin would come from a commit nobody checked, and kirby leaves the marketplace as it is. The user can update it with `claude plugin marketplace update claude-plugins-official` and then ask again.
-  ```
-
-- `git -C <LOC> rev-parse HEAD` is still `<OLD>`: kirby did not update it. Reply tells the user to update the marketplace and ask again; no other install.
-- Cleanup: `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
+`git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
+- Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
+  `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`,
+  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`).
+- Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`,
+  then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `git -C <LOC> rev-parse HEAD` is now `PLUGIN_SHA`.
+- Cleanup: uninstall it as in B17, then `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
 
 **B19 MCP server.** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: the README is read first (`gh api repos/modelcontextprotocol/servers/readme`); the install call has `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]` (other names or flags: note them and adapt the expectations and the cleanup).
@@ -646,13 +650,14 @@ Each followed by `SCAN_NOTE`; nothing written.
 **C8 Plugin (opt-in).** Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
 - The server asks the real `codex plugin marketplace list` (Setup, Writes outside `$E2E`). If the real
   setup already has `PLUGIN_MK` from `PLUGIN_REPO`, the dialog adds
-  `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is, without updating it`
-  and the check is at that commit: note it, and expect no `marketplace add` below.
+  `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is`
+  and the check is at that commit: note it, and expect no `marketplace add` below, and that line again at the end of the result.
 - Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_LINES`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, the rest of `CODEX_PLUGIN_LINES`, `USER_ONLY`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `CODEX_PLUGIN_NOTE`; `~/.codex/config.toml` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result starts
-  `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official --ref <PLUGIN_SHA>` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `CODEX_PLUGIN_NOTE`.
-  The real `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]` with `ref = "<PLUGIN_SHA>"`.
+  `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `CODEX_PLUGIN_NOTE`.
+  The real `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]` with no `ref`
+  (so `codex plugin marketplace upgrade` keeps working), and `git -C <the marketplace's root from codex plugin marketplace list --json> rev-parse HEAD` is `PLUGIN_SHA`.
   Cleanup at once, without `iso.sh`: `codex plugin remove agent-sdk-dev@claude-plugins-official`; `codex plugin marketplace remove claude-plugins-official` (only if Setup found no such marketplace).
 
 **C9 MCP server (opt-in).** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.

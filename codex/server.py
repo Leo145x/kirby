@@ -323,21 +323,21 @@ def preview(kind, a, project):
         name = a.get("plugin")
         if not isinstance(name, str) or not name:
             raise Refusal("kind=plugin needs plugin")
-        # A marketplace already added is left as it is: the check describes the commit it is at, which is
-        # the one Codex installs from (docs/adr/0003).
+        # `codex plugin add` does not refresh a marketplace already added, so the check is of the commit it is
+        # at, which is the one Codex installs from (docs/adr/0003).
         added = added_marketplace(repo)
         head = marketplace_head(added) if added else None
         ok, out = script("check_plugin.py", "--agent", "codex", *(["--commit", head] if head else []), "--", repo, name)
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        about = []
+        about, scan = [], [c["note"]]
         if added:
-            about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it "
-                         "is, without updating it")
+            about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it is")
+            scan.append(about[-1])
         if c["marketplace_file"].startswith(".claude-plugin/"):
             about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
-        return {"lines": [c["lines"][0], *about, *c["lines"][1:], USER_ONLY], "scopes": ("user",), "scan": c["note"],
+        return {"lines": [c["lines"][0], *about, *c["lines"][1:], USER_ONLY], "scopes": ("user",), "scan": "\n".join(scan),
                 "commit": c["sha"], "blocked": c["blocked"] is True,
                 "marketplace": added["name"] if added else c["marketplace"], "added": added}
     args = a.get("mcp_args")
@@ -354,8 +354,9 @@ def commands(kind, a, scope, plan):
                 "--scope", scope, "--agent", "codex", "--commit", plan["commit"]]
         return [argv + ["--force"] if a.get("force") is True else argv]
     if kind == "plugin":
-        # --ref checks out exactly the commit shown (docs/adr/0003); a marketplace already added stays as it is.
-        add = [] if plan["added"] else [["codex", "plugin", "marketplace", "add", a["repo"], "--ref", plan["commit"]]]
+        # No --ref, so `codex plugin marketplace upgrade` keeps working; install() checks the commit afterwards
+        # (docs/adr/0003).
+        add = [] if plan["added"] else [["codex", "plugin", "marketplace", "add", a["repo"]]]
         return add + [["codex", "plugin", "add", f"{a['plugin']}@{plan['marketplace']}"]]
     return [["codex", "mcp", "add", *plan["mcp_args"]]]
 
@@ -410,22 +411,29 @@ def install(peer, a, meta):
     if picked is None:
         return f"not installed: the user {'dismissed the scope dialog' if answer is None else 'cancelled at the scope step'}.{tail}"
 
-    if kind == "plugin" and plan["added"]:
-        try:
-            head = marketplace_head(plan["added"])
-        except Refusal as e:
-            return f"install failed (scope {picked}): {e}{tail}"
-        if head != plan["commit"]:
-            return (f"install failed (scope {picked}): the marketplace {plan['marketplace']} has moved on: it is now at "
-                    f"commit {head[:7]}, not {plan['commit'][:7]} as shown to the user; nothing installed{tail}")
-
     shown, outs = [], []
-    for argv in commands(kind, a, picked, plan):
+
+    def do(argv):
         ok, out = run(argv, cwd=project or str(Path.home()))
         shown.append(" ".join(json.dumps(x) if " " in x else x for x in argv))
         outs.append(out)
-        if not ok:
-            return f"install failed (scope {picked}): {shown[-1]}\n{out}{tail}"
+        return ok
+
+    for argv in commands(kind, a, picked, plan):
+        if not do(argv):
+            return f"install failed (scope {picked}): {shown[-1]}\n{outs[-1]}{tail}"
+    if kind == "plugin":
+        # The plugin stays only if it came from the commit the dialog showed (docs/adr/0003).
+        try:
+            added = plan["added"] or added_marketplace(repo)
+            head = marketplace_head(added) if added else None
+        except Refusal:
+            head = None
+        if head != plan["commit"]:
+            do(["codex", "plugin", "remove", f"{a['plugin']}@{plan['marketplace']}"])
+            why = (f"the marketplace {plan['marketplace']} has moved on: it is at commit {head[:7] if head else 'unknown'} "
+                   f"after the install, not {plan['commit'][:7]} as shown to the user; the plugin was removed again")
+            return f"install failed (scope {picked}): " + "\n".join([*shown, *filter(None, outs), why]) + tail
     after = f"\nnext: {AFTER[kind]}" if kind in AFTER else ""
     return f"installed (scope {picked}): " + "\n".join(shown) + "\n" + "\n".join(outs) + after + tail
 
