@@ -30,7 +30,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 
 你選定要裝的 repo 後，mod 會跳兩層對話框：
 
-1. **下一步**：取消 / 先看 README / 換一個 / 安裝。對話框會列出種類、commit、檔案數、內含的腳本和安裝前檢查的結果（下面的掃描和查詢）。惡意套件查詢找到已知的惡意套件時，不會提供「安裝」。
+1. **下一步**：取消 / 先看 README / 換一個 / 安裝。對話框會列出種類、commit、檔案數、內含的腳本和安裝前檢查的結果（下面的掃描和查詢）。檢查什麼都沒找到、也沒有沒掃到或沒查成的部分時，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否則每個部分各自列出。惡意套件查詢找到已知的惡意套件時，不會提供「安裝」。
 2. **scope**（選了「安裝」才會出現）：
 
 | scope | skill | plugin | MCP |
@@ -43,7 +43,7 @@ plugin 不論裝在哪個 scope，它的 marketplace 都會記錄在 user settin
 
 ### 掃描
 
-在第一個對話框出現前，tool 會掃描 skill 的檔案（就是實際要安裝的那份），找值得留意的模式：Markdown 裡的隱藏 Unicode、HTML 註解和針對模型的語句；範圍很廣的 `allowed-tools`；提到 agent 設定檔和憑證檔；以及腳本裡的網路呼叫、shell 執行、解碼、讀取機密環境變數和修改 shell 啟動檔。對話框會列出每條命中的規則和位置，前面標上嚴重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 裡較少見，標 `warn`，其他標 `info`；`warn` 的規則排在前面。這只是 pattern 比對，不是安全審查：有命中不代表有害，沒命中也不代表安全，所以任何命中都不會擋下安裝。plugin 的檔案也用同樣的方式掃描（見下面的 plugin）；MCP server 不會掃描，對話框會註明。tool 也會把命中位置和掃描的 commit 交給模型，你可以直接問它某一行在做什麼。在 Claude Code 裡，模型用 `gh api` 讀那個檔案，skill 沒有預先允許這個指令，所以除非你的權限模式允許，Claude Code 會先問你。
+在第一個對話框出現前，tool 會掃描 skill 的檔案（就是實際要安裝的那份），找值得留意的模式：Markdown 裡的隱藏 Unicode、HTML 註解和針對模型的語句；範圍很廣的 `allowed-tools`；提到 agent 設定檔和憑證檔；以及腳本裡的網路呼叫、shell 執行、解碼、讀取機密環境變數和修改 shell 啟動檔。對話框會列出每條命中的規則和位置，前面標上嚴重度：`hidden-unicode`、`injection-phrase`、`credentials`、`startup-files` 在正常的 skill 裡較少見，標 `warn`，其他標 `info`；`warn` 的規則排在前面。同一個工具在任何檔案裡命中 `network`，又命中 `env-secret`、`exec` 或 `decode` 時，會再多一項標 `warn` 的發現，寫出是哪兩條規則：`send-secrets`（可能把機密送出去）、`download-run`（可能下載並執行程式碼）和 `download-decode`（可能下載並解碼一段內容）。這幾條規則單獨命中時仍是 `info`，所以讀取機密再送出去的 skill 不會全部只是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）；這些發現排在最前面。這只是 pattern 比對，不是安全審查：有命中不代表有害，沒命中也不代表安全，所以任何命中都不會擋下安裝。plugin 的檔案也用同樣的方式掃描（見下面的 plugin）；MCP server 不會掃描，對話框會註明。tool 也會把命中位置和掃描的 commit 交給模型，你可以直接問它某一行在做什麼。在 Claude Code 裡，模型用 `gh api` 讀那個檔案，skill 沒有預先允許這個指令，所以除非你的權限模式允許，Claude Code 會先問你。
 
 ### 漏洞查詢和惡意套件查詢
 
@@ -68,7 +68,7 @@ plugin 依它在 marketplace 裡的條目所寫的來源檢查，用的是 marke
 
 ### 鎖定 commit
 
-skill 和 plugin 只會安裝對話框顯示的那個 commit。如果在實際安裝前 repo 有了新的 commit，就不會留下安裝；模型會告訴你，你仍然想裝的話，它會重新跳出對話框，顯示新的 commit。MCP server 沒有鎖定版本：它每次啟動時執行的是它的指令所抓到的程式碼，例如 `npx -y <package>`。
+skill 會安裝對話框顯示的那個 commit，即使在實際安裝前 repo 有了新的 commit 也一樣：kirby 會自己去抓那個 commit，你不必再回答一次對話框（[ADR 0005](adr/0005-one-click-by-default.md)）。只有那個 commit 已經抓不到時（force-push 可能把它移除），安裝才會失敗；不會安裝任何東西，結果會說明原因，你仍然想裝的話，模型會重新跳出對話框，顯示目前的 commit。plugin 則從對話框顯示的 marketplace commit 安裝（見下方）。MCP server 沒有鎖定版本：它每次啟動時執行的是它的指令所抓到的程式碼，例如 `npx -y <package>`。
 
 plugin 鎖定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
@@ -126,7 +126,7 @@ Codex 也讀得懂 Claude Code 格式的 marketplace。plugin 來自這種 marke
 | `stars.py` | 讀取你的 star 和 star list（GraphQL），快取在 `~/.cache/kirby/stars.json`，24 小時更新一次 |
 | `public.py` | 依 agent 工具類的 topic 搜尋公開的 GitHub repo |
 | `detect.py` | 判斷 repo 是 marketplace、plugin、skill 還是 MCP server，以及安裝需要的資訊 |
-| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入；`--commit` 只安裝對話框顯示的那個 commit。由 mod 和 Codex 的 MCP server 呼叫 |
+| `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入（加上 `--json` 時，對話框的那幾行是 `check_lines`）；`--commit` 安裝對話框顯示的那個 commit，即使 repo 之後又有新的 commit。由 mod 和 Codex 的 MCP server 呼叫 |
 | `check_plugin.py` | marketplace plugin 的安裝前檢查：抓取 marketplace（已經加入的用 `--commit` 指定它所在的 commit），依 plugin 的來源找到它的檔案，再執行掃描和查詢。輸出 JSON，不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
 | `lookups.py` | `install_skill.py --check` 和 `check_plugin.py` 執行的漏洞查詢和惡意套件查詢：讀取相依套件檔案、不安裝就算出版本，再向 OSV.dev 和 GitHub 查詢。不會單獨執行 |
 
