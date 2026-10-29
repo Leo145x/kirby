@@ -7,6 +7,8 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import { CANCEL, nextOptions, readDialog, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
+import { behind, findAdded, headOf, installPlugin } from './plugin'
+import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
 
 type $ = EngineInterface
@@ -70,7 +72,7 @@ async function repoHeader($: $, repo: string): Promise<string> {
 
 function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
   return (
-    (sure ? 'prompt cache: this plugin brings an MCP server; ' : 'prompt cache: this plugin may bring an MCP server (its source is in another repo); ') +
+    (sure ? 'prompt cache: this plugin brings an MCP server; ' : 'prompt cache: this plugin may bring an MCP server (its source was not checked); ') +
     (toolSearchOff
       ? 'ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.'
       : 'if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.')
@@ -79,10 +81,10 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
 
 // The facts about what the install would do, the prompt-cache note for the scope dialog, the
 // pre-install check as the model reads it in every result (so it can explain a finding), and for a
-// skill the commit shown, which is the one installed, and whether the malware lookup blocked it.
-type Plan = { lines: string; cache: string; scan: string; commit?: string; blocked?: boolean }
+// skill or a plugin the commit shown, which is the one installed, and whether the malware lookup blocked
+// it; for a plugin also its marketplace's name and, if the user already added it, where it is.
+type Plan = { lines: string; cache: string; scan: string; commit?: string; blocked?: boolean; marketplace?: string; added?: Added | null }
 
-const PLUGIN_NOT_SCANNED = 'scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit'
 const MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
 
 async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
@@ -108,19 +110,33 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
     if (!name) throw new Refusal('kind=plugin needs plugin')
-    const r = await run($, ['python3', '-I', `${scripts}/detect.py`, repo])
+    const runner: Run = argv => run($, argv)
+    // A marketplace already added is left as it is: the check describes the commit it is at. Claude Code's
+    // install would update one that is behind its repo, so that one is not installed from (plugin.ts).
+    const added = await findAdded(runner, repo).catch((e: Error) => { throw new Refusal(e.message) })
+    let head: string | null = null
+    if (added) {
+      head = await headOf(runner, added)
+      if (!head) throw new Refusal(`could not read the commit of the marketplace ${added.name} in ${added.location}`)
+      const latest = await run($, ['gh', 'api', `repos/${repo}/commits/${added.ref ?? 'HEAD'}`, '--jq', '.sha'])
+      if (!latest.ok) throw new Refusal(`could not tell whether the marketplace ${added.name} is behind ${repo}: ${latest.out}`)
+      const why = behind(repo, added, head, latest.out.trim())
+      if (why) throw new Refusal(why)
+    }
+    const r = await run($, ['python3', '-I', `${scripts}/check_plugin.py`, '--agent', 'claude', ...(head ? ['--commit', head] : []), '--', repo, name])
     if (!r.ok) throw new Refusal(r.out)
-    const units = (JSON.parse(r.out) as { install?: { type: string; name?: string; description?: string; mcpServers?: boolean | null }[] }[])[0]?.install ?? []
-    const unit = units.find(u => u.type === 'plugin' && u.name === name)
-    if (!unit) throw new Refusal(`${repo} has no marketplace plugin named ${name}`)
+    const c = JSON.parse(r.out) as {
+      marketplace: string; commit: string; sha: string; lines: string[]; note: string; blocked: boolean; mcp_servers: boolean | null
+    }
     // Tool search is off in more cases than this variable (an old model, a gateway, a HIPAA session), so
     // the note is conditional unless the variable settles it.
     const toolSearchOff = (await $.env.get('ENABLE_TOOL_SEARCH')) === 'false'
-    const cache = unit.mcpServers === false ? '' : pluginCacheNote(unit.mcpServers === true, toolSearchOff)
-    const lines = [`plugin: ${name}`]
-    if (unit.description) lines.push(`description: ${unit.description.slice(0, 160)}`)
-    lines.push(PLUGIN_NOT_SCANNED)
-    return { lines: lines.join('\n'), cache, scan: PLUGIN_NOT_SCANNED }
+    const cache = c.mcp_servers === false ? '' : pluginCacheNote(c.mcp_servers === true, toolSearchOff)
+    const about = added ? [`marketplace: already added as ${added.name}, at commit ${c.commit}; installs from it as it is, without updating it`] : []
+    return {
+      lines: [c.lines[0], ...about, ...c.lines.slice(1)].join('\n'), cache, scan: c.note, commit: c.sha,
+      blocked: c.blocked === true, marketplace: added?.name ?? c.marketplace, added,
+    }
   }
   const args = Array.isArray(input.mcp_args) ? input.mcp_args.filter((a): a is string => typeof a === 'string') : []
   if (args.length === 0) throw new Refusal('kind=mcp needs mcp_args')
@@ -136,7 +152,6 @@ function command($: $, kind: Kind, input: Input, scope: Scope, plan: Plan): stri
     const argv = ['python3', '-I', `${$.plugin.root}/skills/inhale/scripts/install_skill.py`, repo, String(input.folder), '--scope', scope, '--commit', String(plan.commit)]
     return input.force === true ? [...argv, '--force'] : argv
   }
-  if (kind === 'plugin') return ['claude', 'plugin', 'install', String(input.plugin), '--marketplace', repo, '--scope', scope]
   return ['claude', 'mcp', 'add', '--scope', scope, ...(input.mcp_args as string[])]
 }
 
@@ -187,6 +202,13 @@ async function install($: $, input: Input): Promise<string> {
   const scope = SCOPES.find(s => s === picked)
   if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${tail}`
 
+  if (kind === 'plugin') {
+    const p = await installPlugin(argv => run($, argv), {
+      repo, plugin: String(input.plugin), scope, sha: String(plan.commit), marketplace: String(plan.marketplace), added: plan.added ?? null,
+    })
+    if (!p.ok) return `install failed (scope ${scope}): ${[...p.shown, p.out].filter(Boolean).join('\n')}${tail}`
+    return `installed (scope ${scope}): ${p.shown.join('\n')}\n${p.out}\nnext: ${AFTER[kind]}${tail}`
+  }
   const argv = command($, kind, input, scope, plan)
   const r = await run($, argv)
   const shown = argv.map(a => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')

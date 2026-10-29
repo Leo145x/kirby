@@ -66,16 +66,15 @@ Commit. The shared parts below stay as they are.
 | `PLUGIN_REPO`, `PLUGIN`, `PLUGIN_MCP` | `anthropics/claude-plugins-official`, `agent-sdk-dev` (no MCP server), `context7` (brings an MCP server) |
 | `PLUGIN_DESC` | `Development kit for working with the Claude Agent SDK` |
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
-| `NOT_SCANNED_PLUGIN` | `scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit` |
+| `PLUGIN_MK` | `claude-plugins-official`, the name of `PLUGIN_REPO`'s marketplace |
 | `NOT_SCANNED_MCP` | `scan: not scanned; the server runs what this command fetches when it starts, not this repo's files` |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
 
 Constants only one agent CLI uses are in its section.
 
 `PLUGIN` and the MCP name `kirby-e2e` are chosen so the opt-in cases, which install into the real
-setup, do not touch anything the user already has: check in Setup that neither is installed. Also check that `detect.py` still reports `PLUGIN`
-with `"mcpServers": false` and `PLUGIN_MCP` with `"mcpServers": true` (`python3 -I
-$KIRBY/skills/inhale/scripts/detect.py anthropics/claude-plugins-official`). If not, pick others that
+setup, do not touch anything the user already has: check in Setup that neither is installed. Also check that `check_plugin.py` still reports `PLUGIN`
+with `"mcp_servers": false` and `PLUGIN_MCP` with `"mcp_servers": true` (Values to record, below). If not, pick others that
 do and note it.
 
 ### Values to record at the start
@@ -108,6 +107,25 @@ malware lookup: nothing found
 lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <SHA>
 dependencies: no npm or Python dependency files
 ```
+
+For the plugins, also run (Claude Code reads `.claude-plugin/marketplace.json`, Codex its own first):
+
+```
+git ls-remote https://github.com/anthropics/claude-plugins-official HEAD
+python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py --agent claude -- anthropics/claude-plugins-official agent-sdk-dev
+python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py --agent claude -- anthropics/claude-plugins-official context7
+python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py --agent codex -- anthropics/claude-plugins-official agent-sdk-dev
+```
+
+Record `PLUGIN_SHA` (`sha`, equal to the `ls-remote` HEAD), `PLUGIN_SHA7`, and of each run its `lines`
+and `note`: `PLUGIN_LINES` and `PLUGIN_NOTE` for the first, `PLUGIN_MCP_LINES` and `PLUGIN_MCP_NOTE`
+for the second, `CODEX_PLUGIN_LINES` and `CODEX_PLUGIN_NOTE` for the third. `PLUGIN_LINES` starts
+`plugin: agent-sdk-dev · marketplace claude-plugins-official · commit <PLUGIN_SHA7> · <n> files`,
+`description: <PLUGIN_DESC>`, `source: plugins/agent-sdk-dev/ in this repo`, then its scan and lookup
+lines; `PLUGIN_NOTE` is a `scan:` block and a `lookups:` block for
+`anthropics/claude-plugins-official at commit <PLUGIN_SHA>`. `mcp_servers` is `false` for `agent-sdk-dev`
+and `true` for `context7`; `blocked` is `false` for both. The marketplace moves often, so record the
+values again if a case runs much later.
 
 `HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`.
 
@@ -211,6 +229,8 @@ before anything else; it lists every place a case can leave something behind.
 | A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below); `lookup_lines` = `LOOKUP_LINES`; `blocked` `false` |
 | A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
 | A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
+| A11 | both | `python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py -- anthropics/claude-plugins-official 42crunch-api-security-testing` (a source in another repo, pinned by its entry) | exit 0; `lines[2]` matches `^source: 42Crunch-AI/claude-plugins:plugins/api-security-testing at commit [0-9a-f]{7}, pinned by the marketplace entry$`; `source.commit` equals the entry's `sha` (`gh api repos/anthropics/claude-plugins-official/contents/.claude-plugin/marketplace.json -H 'Accept: application/vnd.github.raw'`); `note` starts `scan: ` and names `42Crunch-AI/claude-plugins at commit <that sha>`, and holds no `source: not pinned` line. If the entry changed, pick another `git-subdir` entry with a `sha` and note it |
+| A12 | both | `check_plugin.py -- anthropics/claude-plugins-official nope-not-a-plugin`; `check_plugin.py --commit abc -- anthropics/claude-plugins-official agent-sdk-dev` | exit 1 with `anthropics/claude-plugins-official has no marketplace plugin named nope-not-a-plugin`; exit non-zero with `--commit needs a full 40-character sha: 'abc'` |
 
 What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts, scan lines and
 lookup lines (no dependency files, nothing found), English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
@@ -219,14 +239,18 @@ back to English with the reason; H4 cancel and dismiss at the scope step; H5 no 
 offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open installs
 nothing; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
 `exists:` line, failure without `force`, replacement with it, `project` leaving `.gitignore` alone;
-H9 a plugin's facts, `NOT_SCANNED_PLUGIN` and `USER_ONLY` (section C), the scope dialog's `USER_OPTION` running
-both commands, `cancel` there running none, also when dialog 1's options are out of order; H10 an MCP
+H9 a plugin's facts (`check_plugin.py`'s lines, the marketplace format and `USER_ONLY`, section C), the scope dialog's `USER_OPTION` running
+`codex plugin marketplace add … --ref <the commit shown>` and `codex plugin add`, `cancel` there running none, also when dialog 1's options
+are out of order; a marketplace already added (a local clone of `PLUGIN_REPO` listed in its place): the dialog's
+`marketplace: already added as …` line, the check at the clone's commit, only `codex plugin add` run, and a commit
+made in the clone while the scope dialog is open installing nothing; H10 an MCP
 server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
 flagged line at the scanned commit and refusing `..`, an absolute path and a branch name; H13 after
 `fixture.py malware`: `blocked` and the lookup lines naming `flatmap-stream@0.1.1` and `lodash@4.17.20`,
 dialog 1 with only cancel, README and pick another, and each result ending with the `blocked:` line.
-It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run.
+It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run,
+and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
 FLAGGED, the scan lines for the fixture (the dialog shows these; warn rules come first; the `exec` hits
 in `validate-*` follow the upstream files at the fixed commit):
@@ -444,21 +468,56 @@ fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/f
 
 ### Plugins and MCP servers
 
-**B17 Plugin without an MCP server.** Reset `$E2E/claude/p`. Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
-- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, `plugin: agent-sdk-dev`,
-  `description: <PLUGIN_DESC>`, `NOT_SCANNED_PLUGIN`. Dialog 2: no `prompt cache:` line.
-- Answer Install, `local`. Result first line exactly
-  `installed (scope local): claude plugin install agent-sdk-dev --marketplace anthropics/claude-plugins-official --scope local`,
-  then the command's output, `next: The user runs /reload-plugins to load it. The marketplace itself is recorded in their user settings.`, then `NOT_SCANNED_PLUGIN`.
-- `claude plugin list` run in the project shows `agent-sdk-dev@claude-plugins-official` at scope local.
+Before B17, `claude plugin marketplace list --json` (with `iso.sh`) must not list `PLUGIN_MK`: Claude Code
+can add it on its own in a fresh config directory. If it does, remove it
+(`claude plugin marketplace remove claude-plugins-official`) and note it. `<LOC>` below is the
+`installLocation` that `claude plugin marketplace list --json` gives for `PLUGIN_MK` once it is added.
+
+**B17 Plugin without an MCP server, marketplace not added yet.** Reset `$E2E/claude/p`. Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
+- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, then `PLUGIN_LINES`, one per line. No
+  `marketplace: already added` line. Dialog 2: no `prompt cache:` line.
+- Answer Install, `local`. Result, in order:
+  - `installed (scope local): claude plugin marketplace add anthropics/claude-plugins-official`
+  - `claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
+  - the two commands' output
+  - `next: The user runs /reload-plugins to load it. The marketplace itself is recorded in their user settings.`
+  - `PLUGIN_NOTE`
+- `git -C <LOC> rev-parse HEAD` is `PLUGIN_SHA`. `claude plugin list` run in the project shows `agent-sdk-dev@claude-plugins-official` at scope local.
 - Reply: what was added, the `next:` line, removal with `claude plugin uninstall agent-sdk-dev --scope local` (or with `@claude-plugins-official`).
 - Cleanup at once, in the project: `claude plugin uninstall agent-sdk-dev@claude-plugins-official --scope local`;
-  `claude plugin list` no longer shows it.
+  `claude plugin list` no longer shows it. Keep the marketplace for B24.
 
 **B18 Plugin with an MCP server.** Prompt as B17 with `context7`. Answer Install.
+- Dialog 1 facts: the header, the `marketplace: already added` line of B24, then `PLUGIN_MCP_LINES`.
 - Dialog 2 ends with a blank line and `prompt cache: this plugin brings an MCP server; if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.`
   (If the pane's environment has `ENABLE_TOOL_SEARCH=false`: `prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.`)
-- Answer `cancel`: `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_PLUGIN`.
+- Answer `cancel`: `not installed: the user cancelled at the scope step.` + `PLUGIN_MCP_NOTE`.
+
+**B24 The marketplace is already added.** Right after B17 (the marketplace is still there, at `PLUGIN_SHA`). Prompt as B17.
+- Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
+  `marketplace: already added as claude-plugins-official, at commit <PLUGIN_SHA7>; installs from it as it is, without updating it`,
+  then the rest of `PLUGIN_LINES`.
+- Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
+  (no `marketplace add`), then the output, the `next:` line and `PLUGIN_NOTE`. `git -C <LOC> rev-parse HEAD` is still `PLUGIN_SHA`.
+- Cleanup at once: uninstall it as in B17.
+- **Moved on during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, run
+  `git -C <LOC> -c user.name=e2e -c user.email=e2e@invalid commit -q --allow-empty -m moved` (record `NEW` = `git -C <LOC> rev-parse HEAD`). Answer `local`.
+  Result exactly `install failed (scope local): the marketplace claude-plugins-official has moved on: it is now at commit <NEW7>, not <PLUGIN_SHA7> as shown to the user; nothing installed`
+  then `PLUGIN_NOTE`. `claude plugin list` does not show `agent-sdk-dev`; `claude plugin marketplace list` still lists `PLUGIN_MK` (kirby did not add it, so it does not remove it).
+  Reply says nothing was installed and why.
+
+**B25 The marketplace is behind its repo.** After B24. Put the clone at an older commit, consistently:
+`OLD=$(gh api 'repos/anthropics/claude-plugins-official/commits?per_page=2' --jq '.[1].sha')`, then
+`git -C <LOC> fetch -q --depth 1 origin <OLD>`, `git -C <LOC> reset -q --hard <OLD>`,
+`git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17.
+- No dialog. Result exactly (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved):
+
+  ```
+  not installed: the marketplace claude-plugins-official is already added, at commit <OLD7>, but anthropics/claude-plugins-official is now at <PLUGIN_SHA7>. Claude Code updates a marketplace when it installs from it, so the plugin would come from a commit nobody checked, and kirby leaves the marketplace as it is. The user can update it with `claude plugin marketplace update claude-plugins-official` and then ask again.
+  ```
+
+- `git -C <LOC> rev-parse HEAD` is still `<OLD>`: kirby did not update it. Reply tells the user to update the marketplace and ask again; no other install.
+- Cleanup: `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
 
 **B19 MCP server.** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
 - Transcript: the README is read first (`gh api repos/modelcontextprotocol/servers/readme`); the install call has `"mcp_args": ["kirby-e2e", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]` (other names or flags: note them and adapt the expectations and the cleanup).
@@ -585,11 +644,15 @@ Install then `esc` → `not installed: the user dismissed the scope dialog.`
 Each followed by `SCAN_NOTE`; nothing written.
 
 **C8 Plugin (opt-in).** Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
-- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, `plugin: agent-sdk-dev`, `description: <PLUGIN_DESC>`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, `NOT_SCANNED_PLUGIN`, `USER_ONLY`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
-- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `NOT_SCANNED_PLUGIN`; `~/.codex/config.toml` unchanged.
+- The server asks the real `codex plugin marketplace list` (Setup, Writes outside `$E2E`). If the real
+  setup already has `PLUGIN_MK` from `PLUGIN_REPO`, the dialog adds
+  `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is, without updating it`
+  and the check is at that commit: note it, and expect no `marketplace add` below.
+- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_LINES`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, the rest of `CODEX_PLUGIN_LINES`, `USER_ONLY`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
+- Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `CODEX_PLUGIN_NOTE`; `~/.codex/config.toml` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result starts
-  `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `NOT_SCANNED_PLUGIN`.
-  The real `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]`.
+  `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official --ref <PLUGIN_SHA>` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `CODEX_PLUGIN_NOTE`.
+  The real `~/.codex/config.toml` gains `[plugins."agent-sdk-dev@claude-plugins-official"]` and `[marketplaces.claude-plugins-official]` with `ref = "<PLUGIN_SHA>"`.
   Cleanup at once, without `iso.sh`: `codex plugin remove agent-sdk-dev@claude-plugins-official`; `codex plugin marketplace remove claude-plugins-official` (only if Setup found no such marketplace).
 
 **C9 MCP server (opt-in).** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.

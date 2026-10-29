@@ -185,5 +185,83 @@ class Blocked(unittest.TestCase):
         self.assertEqual(peer.asked[0][1], GOOD["options"])
 
 
+class Plugin(unittest.TestCase):
+    """A plugin: the dialog shows check_plugin.py's check; a marketplace kirby adds is pinned with --ref, and
+    one already added is checked and installed at the commit it is at, and left as it is."""
+
+    SHA, OLD = "a" * 40, "c" * 40
+    CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
+             "blocked": False, "lines": ["plugin: p · marketplace mk · commit aaaaaaa · 2 files", "source: plugins/p/ in this repo",
+                                         "scan: 2 files, the ones installed; a pattern match, not a safety review"],
+             "note": "scan: the dialog showed the user no pattern hits in o/mk at commit " + SHA}
+
+    def install(self, *answers, listed=(), heads=(), check=None):
+        """listed: the marketplaces Codex lists; heads: what git rev-parse HEAD gives in their root, call by call."""
+        ran, scripts, heads = [], [], list(heads)
+        run, script = server.run, server.script
+
+        def fake_run(argv, cwd=None):
+            ran.append(argv)
+            if argv[0] == "gh":
+                return True, '[1, "2026-01-01T00:00:00Z", false]'
+            if argv[:4] == ["codex", "plugin", "marketplace", "list"]:
+                return True, json.dumps({"marketplaces": list(listed)})
+            if argv[0] == "git":
+                return True, heads.pop(0)
+            return True, "ok"
+
+        def fake_script(name, *args, cwd=None):
+            scripts.append((name, *args))
+            return True, json.dumps(check or self.CHECK)
+
+        server.run, server.script = fake_run, fake_script
+        try:
+            peer = OneScope.Peer(*answers)
+            r = server.install(peer, {"repo": "o/mk", "kind": "plugin", "plugin": "p", "dialog": GOOD}, None)
+        finally:
+            server.run, server.script = run, script
+        return peer, [a for a in ran if a[0] == "codex" and a[3] != "list"], scripts, r
+
+    def added(self, source="https://github.com/O/mk.git"):
+        return {"name": "mk", "root": "/home/u/.codex/.tmp/marketplaces/mk", "marketplaceSource": {"sourceType": "git", "source": source}}
+
+    def test_the_dialog_shows_the_check_and_a_new_marketplace_is_pinned_to_the_commit_shown(self):
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION)
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
+        self.assertIn("\n".join([self.CHECK["lines"][0], "marketplace: .claude-plugin/marketplace.json (Claude Code format)",
+                                 *self.CHECK["lines"][1:], server.USER_ONLY]), peer.asked[0][0])
+        self.assertEqual(ran, [["codex", "plugin", "marketplace", "add", "o/mk", "--ref", self.SHA],
+                               ["codex", "plugin", "add", "p@mk"]])
+        self.assertTrue(r.startswith(f"installed (scope user): codex plugin marketplace add o/mk --ref {self.SHA}\n"
+                                     "codex plugin add p@mk\n"))
+        self.assertTrue(r.endswith("\nnext: The user starts a new Codex session to use it.\n" + self.CHECK["note"]), r)
+
+    def test_a_marketplace_already_added_is_checked_at_its_commit_and_not_added_again(self):
+        old = {**self.CHECK, "sha": self.OLD, "commit": "ccccccc"}
+        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[self.added()], heads=[self.OLD, self.OLD], check=old)
+        self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--commit", self.OLD, "--", "o/mk", "p")])
+        self.assertIn("marketplace: already added as mk, at commit ccccccc; installs from it as it is, without updating it",
+                      peer.asked[0][0])
+        self.assertEqual(ran, [["codex", "plugin", "add", "p@mk"]])
+        self.assertTrue(r.startswith("installed (scope user): codex plugin add p@mk\n"), r)
+
+    def test_a_marketplace_already_added_that_moved_on_before_the_install_installs_nothing(self):
+        old = {**self.CHECK, "sha": self.OLD, "commit": "ccccccc"}
+        _, ran, _, r = self.install("安裝", server.USER_OPTION, listed=[self.added()], heads=[self.OLD, self.SHA], check=old)
+        self.assertEqual(ran, [])
+        self.assertEqual(r, "install failed (scope user): the marketplace mk has moved on: it is now at commit aaaaaaa, "
+                            "not ccccccc as shown to the user; nothing installed\n" + self.CHECK["note"])
+
+    def test_a_marketplace_from_another_source_is_not_taken_for_this_one(self):
+        _, ran, scripts, _ = self.install("安裝", server.USER_OPTION, listed=[self.added("https://github.com/o/other.git")])
+        self.assertEqual(scripts[0][-2:], ("o/mk", "p"))
+        self.assertNotIn("--commit", scripts[0])
+        self.assertEqual(ran[0][:4], ["codex", "plugin", "marketplace", "add"])
+
+    def test_a_blocked_plugin_offers_no_install(self):
+        peer, ran, _, r = self.install("取消", check={**self.CHECK, "blocked": True})
+        self.assertEqual((peer.asked[0][1], ran), (GOOD["options"][:3], []))
+
+
 if __name__ == "__main__":
     unittest.main()

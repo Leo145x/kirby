@@ -43,22 +43,39 @@ Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Scan
 
-Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. Plugins and MCP servers are not scanned, and the dialog says so. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. In Claude Code the model reads that file with `gh api`, which the skill does not pre-approve, so unless your permission mode allows it, Claude Code asks you first.
+Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below); MCP servers are not scanned, and the dialog says so. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. In Claude Code the model reads that file with `gh api`, which the skill does not pre-approve, so unless your permission mode allows it, Claude Code asks you first.
 
 ### Advisory and malware lookups
 
-For a skill, the pre-install check also looks up published vulnerabilities and known-malicious packages, using only public services that need nothing beyond your `gh` login: [OSV.dev](https://osv.dev) and GitHub.
+For a skill or a plugin, the pre-install check also looks up published vulnerabilities and known-malicious packages, using only public services that need nothing beyond your `gh` login: [OSV.dev](https://osv.dev) and GitHub.
 
 - **Dependencies.** The tool reads the skill's `package-lock.json` (or `package.json`), `uv.lock`, `requirements.txt` and `pyproject.toml` at the pinned commit. Where there is no lockfile, it works out the versions with `npm install --package-lock-only --ignore-scripts` or `uv pip compile --no-build`, which install nothing and run no package code ([ADR 0004](adr/0004-resolve-dependencies-without-installing.md)). The dialog then says the versions were resolved at check time: they may differ when the skill runs. Without npm or uv only the package names are known, so the malware lookup runs on the names and the advisory lookup is marked unchecked.
 - **Advisory lookup.** OSV.dev for each dependency at its version and for the pinned commit itself (OSV matches a commit against the git ranges of its records), and GitHub for the advisories the repo published for itself. A critical or high vulnerability in a dependency, and any record OSV places on the commit, is `danger`; any other vulnerability is `warn`, and so is a repo advisory that cannot be placed on the commit, for which the dialog says it could not tell whether it affects this commit.
 - **Malware lookup.** OSV.dev records with a `MAL-` id, which come from OpenSSF Malicious Packages. A hit is `danger` and **blocks** the install: the first dialog offers only Cancel, Read README first and Pick another, and the model tells you why. To install such a tool anyway, you do it by hand. Nothing else blocks: scan hits and vulnerabilities, however severe, are for you to weigh ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
 - **Unchecked.** A lookup that fails or runs out of time shows as `unchecked`, never as nothing found, and Install stays available.
 
-The model gets the same findings in every result, so you can ask about one. Plugins and MCP servers are not looked up yet.
+The model gets the same findings in every result, so you can ask about one. MCP servers are not looked up yet.
+
+### Plugins
+
+A plugin is checked where its marketplace entry says it comes from, at the marketplace's commit:
+
+- **A folder of the marketplace repo** (`"source": "./plugins/x"`): that folder, at the commit the dialog shows.
+- **Another GitHub repo** (`github`, `url` or `git-subdir`): that repo, at the entry's `sha` when it gives one. Without a `sha` it is checked as it stands, and the dialog says the source is not pinned, so what installs may differ from what was checked.
+- **Anything else** (an npm package, an archive, a command, a git host other than GitHub): not fetched, and the dialog marks the scan and both lookups unchecked.
+
+The dialog's `source:` line says which it is. The scan and the lookups then run on those files as for a skill, and a known-malicious package blocks the install in the same way.
 
 ### Pinned commit
 
-A skill installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing is installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. Plugins and MCP servers are not pinned: a plugin comes from its marketplace as it is when the install runs, and an MCP server runs whatever its command fetches when it starts, such as `npx -y <package>`.
+A skill or a plugin installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing is installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. An MCP server is not pinned: it runs whatever its command fetches when it starts, such as `npx -y <package>`.
+
+For a plugin, the commit is the marketplace's ([ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)):
+
+- **Claude Code**, marketplace not added yet: `claude plugin marketplace add` takes no commit, so the tool adds the marketplace as usual, reads the commit of the clone Claude Code made, and installs only if it is the one shown; otherwise it removes the marketplace again and installs nothing. It reads the commit again after `claude plugin install`, and if Claude Code moved the marketplace while installing, it uninstalls the plugin again.
+- **Claude Code**, marketplace already added: the tool leaves it as it is, checks the commit it is at and installs from it. Claude Code updates a marketplace that is behind its repo when it installs from it, so when yours is behind, the tool installs nothing and says so; update it yourself (`claude plugin marketplace update <name>`) and ask again.
+- **Codex**, marketplace not added yet: the tool adds it with `--ref <commit>`, which checks out exactly that commit. The marketplace then stays at that commit; `codex plugin marketplace upgrade` does not move it.
+- **Codex**, marketplace already added: the tool leaves it as it is, checks the commit it is at and installs from it, unless it moved after the dialog opened.
 
 ### Dialog language
 
@@ -109,6 +126,7 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
 | `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups; `--commit` installs only the commit the dialog showed. Called by the mod and the Codex MCP server |
-| `lookups.py` | The advisory and malware lookups `install_skill.py --check` runs: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
+| `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON; installs nothing. Called by the mod and the Codex MCP server |
+| `lookups.py` | The advisory and malware lookups `install_skill.py --check` and `check_plugin.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
 
 `detect.py --agent codex` looks for Codex marketplaces (`.agents/plugins/marketplace.json`) first; `install_skill.py --agent codex` installs into `.agents/skills/`.
