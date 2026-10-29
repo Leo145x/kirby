@@ -91,7 +91,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 
 和 Claude Code 版的差异：
 
-- **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 则从 GitHub 读取 README 或某个 commit 的单个文件，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。在 Codex 默认的审批设置下，Codex 仍会先问是否允许 kirby 运行该 tool；选「Always allow」会记住。
+- **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 则从 GitHub 读取 README 或某个 commit 的单个文件，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。这五个 tool 声明自己只读取，在 Codex 默认的审批设置下，Codex 会直接运行、不先询问。kirby 的 `install` 运行前，Codex 仍会先问；选「Always allow」会记住。
 - **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
