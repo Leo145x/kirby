@@ -138,7 +138,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 **plugin。** 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
 - **两个 CLI 都一样**：两边都没有 kirby 能用的方式安装指定的 commit，所以安装 tool 在你还没添加 marketplace 时照常添加（不指定 ref），安装 plugin，再读取 marketplace 的 clone 在哪个 commit。不是检查过的那个 commit，就把 plugin 移除并说明原因；marketplace 保留。
-- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 kirby 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。kirby 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
+- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 kirby 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。kirby 读不到你的 marketplace 所在的 commit 时，不会说 `behind its repo`，只说读不到那个 commit，以及安装会把它更新到检查过的 commit。kirby 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
 - **Codex**，已经添加 marketplace：`codex plugin add` 不会更新它，所以 kirby 检查它当前所在的 commit，并从它安装。
 
 **MCP server。** 命令会改写成检查过的版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖通常写成版本范围，版本是检查时算出的，server 启动时 npm 或 uv 可能会选到别的版本。对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。

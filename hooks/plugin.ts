@@ -61,9 +61,11 @@ export function alreadyAdded(added: Added, head: string | null, latest: { sha: s
     }
   }
   if (head === latest.sha) return { commit: head, line: `marketplace: already added as ${added.name}, ${at}; installs from it as it is` }
+  // With no commit read, kirby cannot tell the clone is behind, only what the install brings.
   return {
     commit: latest.sha,
-    line: `marketplace: already added as ${added.name}, ${at}, behind its repo; installing refreshes it to ${short(latest.sha)}, the commit checked`,
+    line: `marketplace: already added as ${added.name}, ${at}${head ? ', behind its repo' : ''}; installing refreshes it to ` +
+      `${short(latest.sha)}, the commit checked`,
   }
 }
 
