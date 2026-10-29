@@ -42,10 +42,13 @@ export async function findAdded(run: Run, repo: string): Promise<Added | null> {
   return addedMarketplace(r.out, repo)
 }
 
-// The commit a marketplace's clone is at, or null if it cannot be read.
+// The commit a marketplace's clone is at, or null if it cannot be read. Claude Code 2.1.312's install can
+// replace the official marketplace's clone with a snapshot that is not a git repo and records its commit in
+// .gcs-sha (seen 2026-10-30); the mod reads files only through processes, so python3 (required) reads it.
 export async function headOf(run: Run, added: Added): Promise<string | null> {
-  const r = await run(['git', '-C', added.location, 'rev-parse', 'HEAD'])
-  return r.ok && SHA_RE.test(r.out.trim()) ? r.out.trim() : null
+  const sha = (r: { ok: boolean; out: string }) => (r.ok && SHA_RE.test(r.out.trim()) ? r.out.trim() : null)
+  return sha(await run(['git', '-C', added.location, 'rev-parse', 'HEAD']))
+    ?? sha(await run(['python3', '-I', '-c', 'import sys; print(open(sys.argv[1]).read(64))', `${added.location}/.gcs-sha`]))
 }
 
 // For a marketplace already added: the commit to check (null: the repo's default branch as it stands) and

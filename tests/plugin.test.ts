@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addedMarketplace, alreadyAdded, installPlugin } from '../hooks/plugin'
+import { addedMarketplace, alreadyAdded, headOf, installPlugin } from '../hooks/plugin'
 import type { Run } from '../hooks/plugin'
 
 const SHA = 'a'.repeat(40)
@@ -12,12 +12,19 @@ const LISTED = JSON.stringify([
 ])
 const ADDED = { name: 'mk', location: LOC }
 
-// Claude Code's CLI and git as the install sees them: heads are what `git rev-parse HEAD` gives, call by call.
-function fake(heads: string[]) {
+// Claude Code's CLI and git as the install sees them: heads are what `git rev-parse HEAD` gives, call by call;
+// snapshot is the `.gcs-sha` of a marketplace that is not a git clone.
+function fake(heads: string[], snapshot?: string) {
   const ran: string[][] = []
   const run: Run = async argv => {
     ran.push([...argv])
-    if (argv[0] === 'git') return { ok: true, out: heads.shift() ?? '' }
+    if (argv[0] === 'git') {
+      const head = heads.shift()
+      return head === undefined ? { ok: false, out: 'fatal: not a git repository' } : { ok: true, out: head }
+    }
+    if (argv[0] === 'python3') {
+      return snapshot !== undefined && argv.at(-1) === `${LOC}/.gcs-sha` ? { ok: true, out: snapshot } : { ok: false, out: 'No such file' }
+    }
     if (argv.join(' ') === 'claude plugin marketplace list --json') return { ok: true, out: LISTED }
     return { ok: true, out: `ran ${argv[2]}` }
   }
@@ -63,6 +70,18 @@ test('a new marketplace is added, the plugin installed, and the clone checked ag
 
 test('a marketplace already added is installed from, not added again', async () => {
   const f = fake([SHA])
+  const r = await installPlugin(f.run, { ...plan, added: ADDED })
+  expect(f.claude()).toEqual(['claude plugin install p@mk --scope local'])
+  expect(r.ok).toBe(true)
+})
+
+// Claude Code 2.1.312's install can replace the official marketplace's clone with a snapshot that is not a git
+// repo and records its commit in .gcs-sha (seen 2026-10-30).
+test('the commit of a marketplace that is a snapshot, not a git clone, is read from its .gcs-sha', async () => {
+  expect(await headOf(fake([], `${SHA}\n`).run, ADDED)).toBe(SHA)
+  expect(await headOf(fake([], 'not a sha').run, ADDED)).toBe(null)
+  expect(await headOf(fake([]).run, ADDED)).toBe(null)
+  const f = fake([], SHA)
   const r = await installPlugin(f.run, { ...plan, added: ADDED })
   expect(f.claude()).toEqual(['claude plugin install p@mk --scope local'])
   expect(r.ok).toBe(true)

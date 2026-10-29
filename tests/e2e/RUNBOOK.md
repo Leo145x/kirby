@@ -549,7 +549,10 @@ the fixture as in Driving, with `$E2E/fx2/env.sh` in place of `$E2E/fx/env.sh`. 
   `mcp__kirby__file` (and the engine's own hand-back tool, if any).
 - The install call has `"sha": "<FX2_SHA>"` and `review` equal to the subagent's JSON reply, unchanged.
 - Dialog 1: after the lookups' lines, the `REVIEW_LINE`s: one `warn: …` line per finding of `review` (its `file` and `line`, its
-  `reason` with any control characters as spaces), or `model review: nothing found (as reported by the model)`. Install is offered.
+  `reason` with any control characters as spaces), `model review: nothing found (as reported by the model)`, or, as seen on
+  2026-10-30, `model review: unchecked (<why>)`: `file` reads GitHub, which does not have the fixture's commit, so every read
+  gives a 404 and the reviewer replies `{"could_not_run": …}` (a reason over 120 characters is refused, and the model starts
+  the reviewer again). Install is offered. The review of a real package's files is in B19.
 - Result: `not installed: the user cancelled.`, FLAGGED_NOTE for `<FX2_SHA>`, then `REVIEW_BLOCK` with the same lines.
 - Reply: presents the review's findings as what the model review reported, not as verified, and lists them with the others.
 - **Limits.** Prompt `呼叫 mcp__kirby__install 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），sha 用 <FX2_SHA>，review 為 {"findings": [{"file": "skills/security-audit/e2e-setup.sh", "line": 5, "reason": "<130 個 x>"}]}，這是測試`.
@@ -564,6 +567,9 @@ Before B17, `claude plugin marketplace list --json` (with `iso.sh`) must not lis
 can add it on its own in a fresh config directory. If it does, remove it
 (`claude plugin marketplace remove claude-plugins-official`) and note it. `<LOC>` below is the
 `installLocation` that `claude plugin marketplace list --json` gives for `PLUGIN_MK` once it is added.
+`HEAD(<LOC>)` is `git -C <LOC> rev-parse HEAD`, or, when `<LOC>` has no `.git`, the contents of `<LOC>/.gcs-sha`:
+Claude Code 2.1.312's `plugin install` can replace the git clone with a snapshot that records its commit there
+(seen 2026-10-30, on the first install from an added marketplace), and kirby reads either.
 
 **B17 Plugin without an MCP server, marketplace not added yet.** Reset `$E2E/claude/p`. Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
 - Transcript: an `mcp__kirby__check` call with `kind` `plugin` whose result has `"review": "not needed"`; no `Agent` call.
@@ -575,13 +581,13 @@ can add it on its own in a fresh config directory. If it does, remove it
   - the two commands' output
   - `next: The user runs /reload-plugins to load it. The marketplace itself is recorded in their user settings.`
   - `PLUGIN_NOTE`
-- `git -C <LOC> rev-parse HEAD` is `PLUGIN_SHA`. `claude plugin list` run in the project shows `agent-sdk-dev@claude-plugins-official` at scope local.
+- `HEAD(<LOC>)` is `PLUGIN_SHA`. `claude plugin list` run in the project shows `agent-sdk-dev@claude-plugins-official` at scope local.
 - Reply: what was added, the `next:` line, removal with `claude plugin uninstall agent-sdk-dev --scope local` (or with `@claude-plugins-official`).
 - Cleanup at once, in the project: `claude plugin uninstall agent-sdk-dev@claude-plugins-official --scope local`;
   `claude plugin list` no longer shows it. Keep the marketplace for B24.
 
 **B18 Plugin with an MCP server.** Prompt as B17 with `context7`. Answer Install.
-- Dialog 1 facts: the header, the `marketplace: already added` line of B24, then `PLUGIN_MCP_LINES`.
+- Dialog 1 facts: the header, the `marketplace: already added` line of B24 if the marketplace is still added (B25's cleanup removes it), then `PLUGIN_MCP_LINES`.
 - Dialog 2 ends with a blank line and `prompt cache: this plugin brings an MCP server; if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.`
   (If the pane's environment has `ENABLE_TOOL_SEARCH=false`: `prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.`)
 - Answer `cancel`: `not installed: the user cancelled at the scope step.` + `PLUGIN_MCP_NOTE`.
@@ -592,12 +598,14 @@ can add it on its own in a fresh config directory. If it does, remove it
   then the rest of `PLUGIN_LINES`.
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
   (no `marketplace add`), then the output, the `next:` line, `PLUGIN_NOTE` and the `marketplace: already added` line again.
-  `git -C <LOC> rev-parse HEAD` is still `PLUGIN_SHA`.
+  `HEAD(<LOC>)` is still `PLUGIN_SHA` (`<LOC>` may now be a snapshot; see above).
 - Cleanup at once: uninstall it as in B17.
-- **A local commit during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, run
-  `git -C <LOC> -c user.name=e2e -c user.email=e2e@invalid commit -q --allow-empty -m moved`. Answer `local`.
-  Claude Code 2.1.312 replaces a clone whose HEAD is not its repo's commit with a fresh clone when it installs
-  (seen 2026-10-30), so the result is as above (`installed (scope local): …`) and `git -C <LOC> rev-parse HEAD` is
+- **The clone moves during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, move it: in a git
+  clone, `git -C <LOC> -c user.name=e2e -c user.email=e2e@invalid commit -q --allow-empty -m moved`; in a snapshot, write
+  the repo's previous commit (`gh api 'repos/anthropics/claude-plugins-official/commits?per_page=2' --jq '.[1].sha'`) into
+  `<LOC>/.gcs-sha` with a file tool. Answer `local`.
+  Claude Code 2.1.312 refreshes a marketplace that is not at its repo's commit when it installs
+  (seen 2026-10-30, for a clone and for a snapshot), so the result is as above (`installed (scope local): …`) and `HEAD(<LOC>)` is
   `PLUGIN_SHA` again. If the result is instead `install failed (scope local): …` ending
   `the marketplace claude-plugins-official has moved on: it is at commit <HEAD7> after the install, not <PLUGIN_SHA7> as shown to the user; the plugin was removed again`
   (then `PLUGIN_NOTE` and the marketplace line), Claude Code no longer refreshes such a clone: `claude plugin list` must not show
@@ -605,9 +613,10 @@ can add it on its own in a fresh config directory. If it does, remove it
   (The removal itself is covered by `tests/plugin.test.ts`; it needs the repo to move between the check and the install.)
 
 **B25 The marketplace is behind its repo.** After B24. Put the clone at an older commit, consistently:
-`OLD=$(gh api 'repos/anthropics/claude-plugins-official/commits?per_page=2' --jq '.[1].sha')`, then
+`OLD=$(gh api 'repos/anthropics/claude-plugins-official/commits?per_page=2' --jq '.[1].sha')`, then, in a git clone,
 `git -C <LOC> fetch -q --depth 1 origin <OLD>`, `git -C <LOC> reset -q --hard <OLD>`,
-`git -C <LOC> update-ref refs/remotes/origin/main <OLD>`. Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
+`git -C <LOC> update-ref refs/remotes/origin/main <OLD>`; in a snapshot, write `<OLD>` into `<LOC>/.gcs-sha` with a file tool.
+Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
 - Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
   `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`,
   then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`). kirby says `behind its repo` only when it read
@@ -615,7 +624,7 @@ can add it on its own in a fresh config directory. If it does, remove it
   `marketplace: already added as claude-plugins-official, at a commit kirby could not read; installing refreshes it to <PLUGIN_SHA7>, the commit checked`
   (covered by `tests/plugin.test.ts`; this case does not need to break the clone to see it).
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`,
-  then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `git -C <LOC> rev-parse HEAD` is now `PLUGIN_SHA`.
+  then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `HEAD(<LOC>)` is now `PLUGIN_SHA`.
 - Cleanup: uninstall it as in B17, then `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
 
 **B19 MCP server.** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
