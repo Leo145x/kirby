@@ -11,9 +11,11 @@ that is set. With --agent codex the directories are .agents/skills/ and ~/.agent
 instead. Use "." as the folder when
 SKILL.md is at the repo root. The installed folder is named after the skill's frontmatter
 `name` (falling back to the source folder's name). The source commit is recorded in
-<skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) nothing is
-installed unless the repo's HEAD is still that commit, so the user gets what they were shown.
---check also runs the advisory and malware lookups (lookups.py) on the skill's dependency files.
+<skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) that commit
+is installed, even if the repo has moved on since, so the user gets what they were shown; if it can
+no longer be fetched (after a force-push, say), nothing is installed. --check also runs the advisory
+and malware lookups (lookups.py) on the skill's dependency files; its check_lines are the dialog's
+facts, one line when nothing was found.
 """
 import argparse
 import json
@@ -52,6 +54,24 @@ def git(*args, cwd=None):
     if res.returncode != 0:
         sys.exit(f"git {' '.join(args)} failed: {res.stderr.strip()}")
     return res.stdout.strip()
+
+
+def fetch(repo, folder, commit, dest):
+    """Check out folder of repo in dest, at commit (a full sha) or, without one, at the default branch as
+    it stands. Only that commit and only that folder: a sparse checkout of a depth-1 fetch."""
+    git("init", "-q", dest)
+    if folder != ".":
+        git("sparse-checkout", "set", "--no-cone", f"/{folder}/", cwd=dest)
+    # No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
+    # clone's checkout fails there.
+    res = subprocess.run(["git", "fetch", "-q", "--depth", "1", f"https://github.com/{repo}.git", commit or "HEAD"],
+                         cwd=dest, capture_output=True, text=True)
+    if res.returncode != 0 and commit:
+        sys.exit(f"could not fetch {repo} at commit {commit[:7]}, the one shown to the user; nothing installed "
+                 f"(a force-push can remove a commit). git: {res.stderr.strip()}")
+    if res.returncode != 0:
+        sys.exit(f"git fetch https://github.com/{repo}.git failed: {res.stderr.strip()}")
+    git("checkout", "-q", "FETCH_HEAD", cwd=dest)
 
 
 def frontmatter_name(skill_md):
@@ -106,7 +126,15 @@ RULES = [
         r"(environ|getenv|process\.env|\$\{?)[^\n]{0,20}(TOKEN|SECRET|API_KEY|PASSWORD)"), "script"),
     ("startup-files", "warn", re.compile(r"\.(bashrc|zshrc|bash_profile|profile)\b|\bcrontab\b|\blaunchctl\b"), "script"),
 ]
-SEVERITY = {name: severity for name, severity, _, _ in RULES}
+# Combination findings: one tool hitting `network` together with one of these rules, wherever in its
+# files, is warn although each rule alone is info, so that the classic read-a-secret-and-send-it tool is
+# not all info (docs/adr/0005). They are (name, severity, the pair of rules, what it may do).
+COMBINATIONS = [
+    ("send-secrets", "warn", ("network", "env-secret"), "may send secrets out"),
+    ("download-run", "warn", ("network", "exec"), "may download and run code"),
+    ("download-decode", "warn", ("network", "decode"), "may download and decode a payload"),
+]
+SEVERITY = {name: severity for name, severity, _, _ in RULES + COMBINATIONS}
 RANK = {"danger": 0, "warn": 1, "info": 2}
 SCAN_MAX_BYTES = 2_000_000
 SHOWN_RULES = 6
@@ -136,13 +164,20 @@ def scan(root, files):
     return hits, unread
 
 
+def combinations(hits):
+    """The combination findings these hits make, as one line each: "<name>: <what> (<rule> + <rule>)"."""
+    found = {h["rule"] for h in hits}
+    return [(name, f"{name}: {what} ({' + '.join(pair)})") for name, _, pair, what in COMBINATIONS if set(pair) <= found]
+
+
 def scan_lines(hits, unread, scanned):
-    """The scan as dialog facts: what was covered, then each flagged rule, led by its severity, with
-    where it hit; warn rules first."""
+    """The scan as dialog facts: what was covered, then the combination findings, then each flagged
+    rule, led by its severity, with where it hit; warn rules first."""
     lines = [f"scan: {scanned} files, the ones installed; a pattern match, not a safety review"
              + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
     if not hits:
         return lines + ["flagged: nothing"]
+    lines += [f"{SEVERITY[name]}: {line}" for name, line in combinations(hits)]
     by_rule = {}
     for h in by_severity(hits):
         by_rule.setdefault(h["rule"], []).append(f"{shown(h['file'])}:{h['line']}")
@@ -156,12 +191,23 @@ def scan_lines(hits, unread, scanned):
     return lines
 
 
+def check_lines(hits, unread, scanned, looked):
+    """The pre-install check as dialog facts: one line when the pattern scan and the lookups (looked,
+    lookups.check's result) found nothing and nothing went unscanned or unchecked (docs/adr/0005);
+    otherwise the scan's lines, then the lookups'."""
+    if hits or unread or not looked["nothing_found"]:
+        return scan_lines(hits, unread, scanned) + looked["lines"]
+    files = lookups.plural(scanned, "file", "files")
+    return [f"check: nothing found ({files}, {looked['nothing_found']}, advisory and malware lookups)"]
+
+
 def scan_note(repo, folder, sha, hits):
     """The scan for the model, so it can read and explain a hit: repo paths at the scanned commit."""
     if not hits:
         return f"scan: the dialog showed the user no pattern hits in {repo} at commit {sha} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
     lines = [f"scan: the dialog showed the user these pattern hits in {repo} at commit {sha}:"]
+    lines += [f"  {SEVERITY[name]} {line}" for name, line in combinations(hits)]
     lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
               for h in by_severity(hits)[:NOTED_HITS]]
     if len(hits) > NOTED_HITS:
@@ -186,7 +232,7 @@ def main():
     ap.add_argument("--scope", choices=SCOPES, required=True, help="local, project or user (see above)")
     ap.add_argument("--agent", choices=DESTS, default="claude", help="whose skills directories to use (default claude)")
     ap.add_argument("--check", action="store_true", help="say what would be installed, write nothing")
-    ap.add_argument("--commit", metavar="SHA", help="install only if HEAD is still this commit (full sha)")
+    ap.add_argument("--commit", metavar="SHA", help="install this commit (full sha), not the default branch")
     ap.add_argument("--force", action="store_true", help="replace an existing skill of the same name")
     ap.add_argument("--json", action="store_true", help="with --check, print the summary as JSON")
     args = ap.parse_args()
@@ -199,13 +245,8 @@ def main():
         sys.exit(f"--commit needs a full 40-character sha: {args.commit!r}")
 
     with tempfile.TemporaryDirectory() as tmp:
-        # No --filter: Claude Code runs a mod's processes with git's lazy fetching off, so a partial
-        # clone's checkout fails there.
-        git("clone", "--depth", "1", "--sparse", f"https://github.com/{args.repo}.git", tmp)
-        if folder == ".":
-            git("sparse-checkout", "disable", cwd=tmp)
-        else:
-            git("sparse-checkout", "set", "--no-cone", f"/{folder}/", cwd=tmp)
+        # The commit the dialog showed, even if the repo has moved on since (docs/adr/0005).
+        fetch(args.repo, folder, args.commit, tmp)
         src = Path(tmp) / folder
         if not (src / "SKILL.md").is_file():
             sys.exit(f"{args.repo}:{folder} has no SKILL.md")
@@ -214,29 +255,27 @@ def main():
         name = declared if declared and VALID_NAME.match(declared) else fallback
         target = DESTS[args.agent][args.scope] / name
         sha = git("rev-parse", "HEAD", cwd=tmp)
-        if args.commit and sha != args.commit:
-            sys.exit(f"{args.repo} has moved on: HEAD is now {sha[:7]}, not {args.commit[:7]} as shown to the user; "
-                     "nothing installed")
         files = listing(src)
         exists = target.exists()
         hits, unread = scan(src, files)
-        summary = scan_lines(hits, unread, len(files) - len(unread))
         looked = lookups.check(args.repo, sha, src, files) if args.check else None
 
-        if args.check and args.json:
-            print(json.dumps({
-                "repo": args.repo, "folder": folder, "name": name, "commit": sha[:7], "sha": sha, "target": str(target),
-                "exists": exists, "files": len(files), "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
-                "scan": {"hits": hits, "unread": unread}, "scan_lines": summary,
-                "scan_note": scan_note(args.repo, folder, sha, hits),
-                "lookup_lines": looked["lines"], "lookup_note": looked["note"], "blocked": looked["blocked"],
-            }, ensure_ascii=False))
-            return
         if args.check:
+            summary = check_lines(hits, unread, len(files) - len(unread), looked)
+            if args.json:
+                print(json.dumps({
+                    "repo": args.repo, "folder": folder, "name": name, "commit": sha[:7], "sha": sha,
+                    "target": str(target), "exists": exists, "files": len(files),
+                    "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
+                    "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
+                    "check_lines": summary, "scan_note": scan_note(args.repo, folder, sha, hits),
+                    "lookup_note": looked["note"], "blocked": looked["blocked"],
+                }, ensure_ascii=False))
+                return
             replace = " (exists: needs --force, replaces it)" if exists else ""
             print(f"would install {args.repo}:{folder}@{sha[:7]} -> {target}{replace} ({len(files)} files)")
             print("\n".join(describe(files)))
-            print("\n".join(f"  {s}" for s in summary + looked["lines"]))
+            print("\n".join(f"  {s}" for s in summary))
             return
         if exists and not args.force:
             sys.exit(f"{target} already exists; pass --force to replace it")

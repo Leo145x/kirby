@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from detect import MARKETPLACES  # noqa: E402
-from install_skill import SCRIPT, VALID_REPO, VALID_SHA, listing, scan, scan_lines, scan_note  # noqa: E402
+from install_skill import SCRIPT, VALID_REPO, VALID_SHA, check_lines, listing, scan, scan_note  # noqa: E402
 from lookups import shown  # noqa: E402
 
 GITHUB_URL = re.compile(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
@@ -181,7 +181,7 @@ def check(repo, name, agent="claude", commit=None, fetch=fetch, net=None):
             lines.append(f"scripts: {len(scripts)}, e.g. {', '.join(scripts[:2])}")
         hits, unread = scan(root, files)
         looked = lookups.check(src_repo, src_sha, root, files, net)
-        lines += scan_lines(hits, unread, len(files) - len(unread)) + looked["lines"]
+        lines += check_lines(hits, unread, len(files) - len(unread), looked)
         note = f"{scan_note(src_repo, src['path'], src_sha, hits)}\n{looked['note']}"
         if src["in"] == "repo" and not src["sha"]:
             note += (f"\nsource: not pinned; the marketplace entry gives no sha, so {src_repo} may be at a later "

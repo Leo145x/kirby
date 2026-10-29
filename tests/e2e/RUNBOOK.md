@@ -20,7 +20,7 @@ Helpers in this folder:
 | File | Does |
 | --- | --- |
 | `transcript.py` | Prints a session's user prompts, model text and tool calls with their results as JSON lines, from Claude Code's or Codex's own transcript. `--tool install --last 1`, `--say --last 1` narrow it. |
-| `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it; `malware DIR` adds a commit whose `package-lock.json` lists `flatmap-stream@0.1.1` (known-malicious, `MAL-2025-20690`) and `lodash@4.17.20` (high advisories). |
+| `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules and the 3 combinations (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it; `rewind DIR` force-pushes it back one commit and prunes the old HEAD, so that commit can no longer be fetched; `malware DIR` adds a commit whose `package-lock.json` lists `flatmap-stream@0.1.1` (known-malicious, `MAL-2025-20690`) and `lodash@4.17.20` (high advisories). |
 | `codex_server.py` | Drives the Codex MCP server's `install()` and `file()` with scripted dialog answers and checks each result exactly (H1–H13), for what the Codex UI cannot reach. |
 | `scripts_check.py` | Checks the output format of `stars.py`, `public.py` and `detect.py` against live GitHub (S1–S6). |
 
@@ -87,11 +87,12 @@ python3 -I $KIRBY/skills/inhale/scripts/install_skill.py cloudflare/security-aud
 ```
 
 Record `SHA` (40 hex), `SHA7` (`commit`, equal to `SHA[:7]`), `N` (`files`), `SCRIPTS` (`scripts`),
-`SCAN_LINES` (`scan_lines`), `LOOKUP_LINES` (`lookup_lines`), `BLOCKED` (`blocked`, must be `false`)
+`CHECK_LINES` (`check_lines`), `BLOCKED` (`blocked`, must be `false`)
 and `SCAN_NOTE`: `scan_note`, a newline, then `lookup_note`; every result after the dialog opens ends
 with both. `SHA` must equal the `ls-remote` HEAD. The lookups ask OSV.dev and GitHub at check time, so
-`LOOKUP_LINES` can change when a new advisory is published; record it, do not expect the values below.
+`CHECK_LINES` can change when a new advisory is published; record it, do not expect the values below.
 At the time of writing (`SHA` `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`): 20 files, 4 scripts, and
+`CHECK_LINES`:
 
 ```
 scan: 20 files, the ones installed; a pattern match, not a safety review
@@ -101,7 +102,9 @@ advisory lookup: nothing found
 malware lookup: nothing found
 ```
 
-(the first two lines are `SCAN_LINES`, the other three `LOOKUP_LINES`), and `lookup_note`:
+(the first two lines are the pattern scan's, the other three the lookups'; they are listed one by one
+because the scan found something: with no finding and nothing unscanned or unchecked, `check_lines` is
+the one line `check: nothing found (<n> files, <dependencies>, advisory and malware lookups)`), and `lookup_note`:
 
 ```
 lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <SHA>
@@ -121,8 +124,10 @@ Record `PLUGIN_SHA` (`sha`, equal to the `ls-remote` HEAD), `PLUGIN_SHA7`, and o
 and `note`: `PLUGIN_LINES` and `PLUGIN_NOTE` for the first, `PLUGIN_MCP_LINES` and `PLUGIN_MCP_NOTE`
 for the second, `CODEX_PLUGIN_LINES` and `CODEX_PLUGIN_NOTE` for the third. `PLUGIN_LINES` starts
 `plugin: agent-sdk-dev · marketplace claude-plugins-official · commit <PLUGIN_SHA7> · <n> files`,
-`description: <PLUGIN_DESC>`, `source: plugins/agent-sdk-dev/ in this repo`, then its scan and lookup
-lines; `PLUGIN_NOTE` is a `scan:` block and a `lookups:` block for
+`description: <PLUGIN_DESC>`, `source: plugins/agent-sdk-dev/ in this repo`, then its check lines (at
+the time of writing the one line `check: nothing found (6 files, no npm or Python dependency files, advisory and malware lookups)`,
+and `PLUGIN_MCP_LINES` likewise ends with one `check: nothing found (…)` line; if either now lists the scan
+and lookups line by line, note it); `PLUGIN_NOTE` is a `scan:` block and a `lookups:` block for
 `anthropics/claude-plugins-official at commit <PLUGIN_SHA>`. `mcp_servers` is `false` for `agent-sdk-dev`
 and `true` for `context7`; `blocked` is `false` for both. The marketplace moves often, so record the
 values again if a case runs much later.
@@ -226,18 +231,21 @@ before anything else; it lists every place a case can leave something behind.
 | A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
 | A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
 | A7 | both | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
-| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below); `lookup_lines` = `LOOKUP_LINES`; `blocked` `false` |
-| A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
+| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `check_lines` = FLAGGED (below) followed by the last three lines of `CHECK_LINES` (the lookups'); `scan.combinations` = `["send-secrets", "download-run", "download-decode"]`; `scan_note` has the 3 combination lines and 15 hit lines of FLAGGED_NOTE (below); `blocked` `false` |
+| A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture and takes it away again, and H13 adds one: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
+| A13 | both | in an empty dir: `install_skill.py Leo145x/kirby skills/inhale --scope project --commit d4f7a5f5dca68fb15d6a40ba63c5b8d6d643070f` (an older commit, not the tip); then the same with `--commit 0123456789abcdef0123456789abcdef01234567` in another empty dir | the first exits 0 with `installed Leo145x/kirby:skills/inhale@d4f7a5f -> .claude/skills/inhale (5 files)`, `.kirby.json` has that `commit`, and `scripts/install_skill.py` equals `git -C $KIRBY show d4f7a5f:skills/inhale/scripts/install_skill.py`; the second exits 1 with `could not fetch Leo145x/kirby at commit 0123456, the one shown to the user; nothing installed (a force-push can remove a commit). git: fatal: remote error: upload-pack: not our ref 0123456789abcdef0123456789abcdef01234567` and writes nothing |
+| A14 | both | in an empty dir: `install_skill.py anthropics/skills skills/pdf --scope project --check` (a skill the check finds nothing in) | its last line is `  check: nothing found (<n> files, no npm or Python dependency files, advisory and malware lookups)`, with `<n>` the file count of its first line; no `scan:`, `flagged:`, `dependencies:` or `… lookup:` line. If the skill now has a finding, pick another and note it |
 | A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
 | A11 | both | `python3 -I $KIRBY/skills/inhale/scripts/check_plugin.py -- anthropics/claude-plugins-official 42crunch-api-security-testing` (a source in another repo, pinned by its entry) | exit 0; `lines[2]` matches `^source: 42Crunch-AI/claude-plugins:plugins/api-security-testing at commit [0-9a-f]{7}, pinned by the marketplace entry$`; `source.commit` equals the entry's `sha` (`gh api repos/anthropics/claude-plugins-official/contents/.claude-plugin/marketplace.json -H 'Accept: application/vnd.github.raw'`); `note` starts `scan: ` and names `42Crunch-AI/claude-plugins at commit <that sha>`, and holds no `source: not pinned` line. If the entry changed, pick another `git-subdir` entry with a `sha` and note it |
 | A12 | both | `check_plugin.py -- anthropics/claude-plugins-official nope-not-a-plugin`; `check_plugin.py --commit abc -- anthropics/claude-plugins-official agent-sdk-dev` | exit 1 with `anthropics/claude-plugins-official has no marketplace plugin named nope-not-a-plugin`; exit non-zero with `--commit needs a full 40-character sha: 'abc'` |
 
-What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts, scan lines and
-lookup lines (no dependency files, nothing found), English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
+What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and check lines
+(the scan's, then the lookups': no dependency files, nothing found, each on its own line as the scan found something), English options and `ENGLISH_NOTE`, all 12 rules and the 3 combinations fired, the zero-width name shown as `we?ird.py`;
 H2 the model's wording and the README / pick another / dismiss results; H3 unusable wording falls
 back to English with the reason; H4 cancel and dismiss at the scope step; H5 no project from Codex
-offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open installs
-nothing; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
+offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open:
+the commit shown installs all the same (`.kirby.json` records it); the shown commit force-pushed away and pruned while the scope dialog is open:
+`install failed` with the `could not fetch …` line, nothing written; H7 a local install records the shown commit and adds the folder to `.gitignore`; H8 the
 `exists:` line, failure without `force`, replacement with it, `project` leaving `.gitignore` alone;
 H9 a plugin's facts (`check_plugin.py`'s lines, the marketplace format and `USER_ONLY`, section C), the scope dialog's `USER_OPTION` running
 `codex plugin marketplace add …` (no `--ref`) and `codex plugin add`, then the commit of the marketplace (a local clone of
@@ -253,11 +261,14 @@ dialog 1 with only cancel, README and pick another, and each result ending with 
 It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run,
 and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
-FLAGGED, the scan lines for the fixture (the dialog shows these; warn rules come first; the `exec` hits
-in `validate-*` follow the upstream files at the fixed commit):
+FLAGGED, the scan lines for the fixture (the dialog shows these; the combinations come first, then the
+warn rules; the `exec` hits in `validate-*` follow the upstream files at the fixed commit):
 
 ```
 scan: <N+3> files, the ones installed; a pattern match, not a safety review
+warn: send-secrets: may send secrets out (network + env-secret)
+warn: download-run: may download and run code (network + exec)
+warn: download-decode: may download and decode a payload (network + decode)
 warn: injection-phrase ×1 (E2E-NOTES.md:2)
 warn: hidden-unicode ×1 (E2E-NOTES.md:4)
 warn: credentials ×1 (e2e-setup.sh:5)
@@ -272,6 +283,9 @@ showed), followed by the fixture's `lookup_note` (as at the time of writing, wit
 
 ```
 scan: the dialog showed the user these pattern hits in cloudflare/security-audit-skill at commit <FX_SHA>:
+  warn send-secrets: may send secrets out (network + env-secret)
+  warn download-run: may download and run code (network + exec)
+  warn download-decode: may download and decode a payload (network + decode)
   warn injection-phrase skills/security-audit/E2E-NOTES.md:2
   warn hidden-unicode skills/security-audit/E2E-NOTES.md:4
   warn credentials skills/security-audit/e2e-setup.sh:5
@@ -362,8 +376,7 @@ Dialog 1 for `SKILL_REPO` (facts, verbatim):
 HEADER(cloudflare/security-audit-skill)
 skill: security-audit · commit <SHA7> · <N> files
 scripts: <len(SCRIPTS)>, e.g. <SCRIPTS[0]>, <SCRIPTS[1]>
-<SCAN_LINES, one per line>
-<LOOKUP_LINES, one per line>
+<CHECK_LINES, one per line>
 ```
 
 then, after a blank line, the model's `about` (if any), a blank line and its `next` question; four
@@ -440,13 +453,19 @@ Reset the project before each; prompt as B3.
 **B16 Flagged scan, then the repo moves on.** New project `$E2E/claude/fx`; start Claude Code with the
 fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
 - Dialog 1: the header is still GitHub's; `skill: security-audit · commit <FX_SHA7> · <N+3> files`;
-  the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the scan lines are
-  FLAGGED; no zero-width character anywhere in the dialog.
+  the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the check lines are
+  FLAGGED, then the lookups' lines of `CHECK_LINES`; no zero-width character anywhere in the dialog.
 - Answer Install. While dialog 2 is open, run `python3 -I $KIRBY/tests/e2e/fixture.py advance $E2E/fx`
   (prints `NEW`). Answer `local`.
-- Result starts `install failed (scope local): ` and holds `--commit <FX_SHA>` and
-  `cloudflare/security-audit-skill has moved on: HEAD is now <NEW7>, not <FX_SHA7> as shown to the user; nothing installed`,
+- The commit shown installs all the same. Result starts `installed (scope local): `, holds `--commit <FX_SHA>` and
+  `installed cloudflare/security-audit-skill:skills/security-audit@<FX_SHA7> -> .claude/skills/security-audit (<N+3> files)`,
   then FLAGGED_NOTE for `<FX_SHA>`.
+- `.claude/skills/security-audit/.kirby.json` has `"commit": "<FX_SHA>"`, not `NEW`. Reply says what was installed.
+- **The commit shown is gone.** Reset the project. Prompt as B3; dialog 1 shows `commit <NEW7>`. Answer Install.
+  While dialog 2 is open, run `python3 -I $KIRBY/tests/e2e/fixture.py rewind $E2E/fx` (prints `<FX_SHA>` again). Answer `local`.
+- Result starts `install failed (scope local): ` and holds `--commit <NEW>` and
+  `could not fetch cloudflare/security-audit-skill at commit <NEW7>, the one shown to the user; nothing installed (a force-push can remove a commit). git: `,
+  then FLAGGED_NOTE for `<NEW>`.
 - No `.claude/` in the project. Reply says nothing was installed and why, and asks before trying
   again; no second install call in the turn.
 - Stay in this session for B23.

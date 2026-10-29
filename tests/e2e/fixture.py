@@ -5,6 +5,8 @@ hold flagged files or to move on while a dialog is open. Nothing is pushed to Gi
     fixture.py init <dir>      # <dir>/upstream.git (the repo at BASE plus one commit of files every
                                # scan rule flags), <dir>/work and <dir>/env.sh; prints the new HEAD
     fixture.py advance <dir>   # add an empty commit upstream; prints the new HEAD
+    fixture.py rewind <dir>    # force-push upstream back one commit and prune the old HEAD, so it can
+                               # no longer be fetched; prints the new HEAD
     fixture.py malware <dir>   # add a commit whose package-lock.json holds a known-malicious package
                                # (MALWARE) and one with a high advisory; prints the new HEAD
 
@@ -24,7 +26,8 @@ URL = f"https://github.com/{REPO}.git"
 # The upstream is reset to this commit first, so the scan lines and line numbers do not follow GitHub.
 BASE = "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8"
 FOLDER = "skills/security-audit"
-# Between them these lines hit all 12 rules; see FLAGGED in RUNBOOK.md for the dialog they give.
+# Between them these lines hit all 12 rules and, with network in e2e-setup.sh, the 3 combinations;
+# see FLAGGED in RUNBOOK.md for the dialog they give.
 FILES = {
     "e2e-setup.sh": (
         "#!/bin/sh\n"
@@ -98,6 +101,15 @@ def advance(root):
     print(head(root))
 
 
+def rewind(root):
+    work, upstream = root / "work", str(root / "upstream.git")
+    git("reset", "-q", "--hard", "HEAD~1", cwd=work)
+    git("push", "-q", "--force", "origin", "HEAD", cwd=work)
+    git("--git-dir", upstream, "reflog", "expire", "--expire=now", "--all")
+    git("--git-dir", upstream, "gc", "-q", "--prune=now")
+    print(head(root))
+
+
 def malware(root):
     work = root / "work"
     (work / FOLDER / "package-lock.json").write_text(LOCKFILE)
@@ -109,10 +121,10 @@ def malware(root):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=("init", "advance", "malware"))
+    ap.add_argument("action", choices=("init", "advance", "rewind", "malware"))
     ap.add_argument("dir")
     args = ap.parse_args()
-    {"init": init, "advance": advance, "malware": malware}[args.action](Path(args.dir).resolve())
+    {"init": init, "advance": advance, "rewind": rewind, "malware": malware}[args.action](Path(args.dir).resolve())
 
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ class InTheMarketplace(unittest.TestCase):
             "source: plugins/p/ in this repo",
             "scripts: 1, e.g. scripts/run.sh",
             "scan: 2 files, the ones installed; a pattern match, not a safety review",
+            "warn: download-run: may download and run code (network + exec)",
             "info: network ×1 (scripts/run.sh:1)",
             "info: exec ×1 (scripts/run.sh:1)",
             *NOTHING,
@@ -70,10 +71,18 @@ class InTheMarketplace(unittest.TestCase):
         self.assertFalse(c["blocked"])
         self.assertTrue(c["note"].startswith(
             f"scan: the dialog showed the user these pattern hits in o/mk at commit {MK_SHA}:\n"
-            "  info network plugins/p/scripts/run.sh:1\n  info exec plugins/p/scripts/run.sh:1\n"
+            "  warn download-run: may download and run code (network + exec)\n  info network plugins/p/scripts/run.sh:1\n  info exec plugins/p/scripts/run.sh:1\n"
             f"lookups: the dialog showed the user no findings from the advisory and malware lookups for o/mk at commit {MK_SHA}"),
             c["note"])
 
+
+    def test_a_plugin_with_nothing_found_gets_one_check_line(self):
+        files = {**self.FILES, "plugins/p/scripts/run.sh": "echo hi\n"}
+        c, _ = check({MK: {None: (MK_SHA, files)}})
+        self.assertEqual(c["lines"][3:], [
+            "scripts: 1, e.g. scripts/run.sh",
+            "check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)",
+        ])
 
     def test_a_marketplace_already_added_is_checked_at_the_commit_it_is_at(self):
         c, git = check({MK: {OLD_SHA: (OLD_SHA, self.FILES)}}, commit=OLD_SHA)
