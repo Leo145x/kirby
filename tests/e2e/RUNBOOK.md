@@ -20,8 +20,8 @@ Helpers in this folder:
 | File | Does |
 | --- | --- |
 | `transcript.py` | Prints a session's user prompts, model text and tool calls with their results as JSON lines, from Claude Code's or Codex's own transcript. `--tool install --last 1`, `--say --last 1` narrow it. |
-| `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it. |
-| `codex_server.py` | Drives the Codex MCP server's `install()` and `file()` with scripted dialog answers and checks each result exactly (H1–H12), for what the Codex UI cannot reach. |
+| `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it; `malware DIR` adds a commit whose `package-lock.json` lists `flatmap-stream@0.1.1` (known-malicious, `MAL-2025-20690`) and `lodash@4.17.20` (high advisories). |
+| `codex_server.py` | Drives the Codex MCP server's `install()` and `file()` with scripted dialog answers and checks each result exactly (H1–H13), for what the Codex UI cannot reach. |
 | `scripts_check.py` | Checks the output format of `stars.py`, `public.py` and `detect.py` against live GitHub (S1–S6). |
 
 ## Adding an agent CLI
@@ -88,12 +88,25 @@ python3 -I $KIRBY/skills/inhale/scripts/install_skill.py cloudflare/security-aud
 ```
 
 Record `SHA` (40 hex), `SHA7` (`commit`, equal to `SHA[:7]`), `N` (`files`), `SCRIPTS` (`scripts`),
-`SCAN_LINES` (`scan_lines`) and `SCAN_NOTE` (`scan_note`). `SHA` must equal the `ls-remote` HEAD.
+`SCAN_LINES` (`scan_lines`), `LOOKUP_LINES` (`lookup_lines`), `BLOCKED` (`blocked`, must be `false`)
+and `SCAN_NOTE`: `scan_note`, a newline, then `lookup_note`; every result after the dialog opens ends
+with both. `SHA` must equal the `ls-remote` HEAD. The lookups ask OSV.dev and GitHub at check time, so
+`LOOKUP_LINES` can change when a new advisory is published; record it, do not expect the values below.
 At the time of writing (`SHA` `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`): 20 files, 4 scripts, and
 
 ```
 scan: 20 files, the ones installed; a pattern match, not a safety review
-flagged: exec ×2 (validate-coverage-ledger.test.cjs:5, validate-findings.test.cjs:5)
+info: exec ×2 (validate-coverage-ledger.test.cjs:5, validate-findings.test.cjs:5)
+dependencies: no npm or Python dependency files
+advisory lookup: nothing found
+malware lookup: nothing found
+```
+
+(the first two lines are `SCAN_LINES`, the other three `LOOKUP_LINES`), and `lookup_note`:
+
+```
+lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <SHA>
+dependencies: no npm or Python dependency files
 ```
 
 `HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`.
@@ -195,12 +208,12 @@ before anything else; it lists every place a case can leave something behind.
 | A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
 | A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
 | A7 | both | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
-| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below) |
+| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `scan_lines` = FLAGGED (below); `scan_note` has the 15 hit lines of FLAGGED_NOTE (below); `lookup_lines` = `LOOKUP_LINES`; `blocked` `false` |
 | A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
 | A10 | both | `python3 -I $KIRBY/tests/e2e/scripts_check.py` | every line `PASS`, last line `all passed`, exit 0 |
 
-What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and scan lines,
-English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
+What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts, scan lines and
+lookup lines (no dependency files, nothing found), English options and `ENGLISH_NOTE`, all 12 rules fired, the zero-width name shown as `we?ird.py`;
 H2 the model's wording and the README / pick another / dismiss results; H3 unusable wording falls
 back to English with the reason; H4 cancel and dismiss at the scope step; H5 no project from Codex
 offers only `user`, dialog 1 saying so and why and the scope dialog's option saying where; H6 a commit pushed while the scope dialog is open installs
@@ -210,43 +223,47 @@ H9 a plugin's facts, `NOT_SCANNED_PLUGIN` and `USER_ONLY` (section C), the scope
 both commands, `cancel` there running none, also when dialog 1's options are out of order; H10 an MCP
 server's command, `NOT_SCANNED_MCP`, `USER_ONLY` and `USER_OPTION`;
 H11 the refusals before any dialog and a client without elicitation; H12 the `file` tool reading a
-flagged line at the scanned commit and refusing `..`, an absolute path and a branch name. It
-installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run.
+flagged line at the scanned commit and refusing `..`, an absolute path and a branch name; H13 after
+`fixture.py malware`: `blocked` and the lookup lines naming `flatmap-stream@0.1.1` and `lodash@4.17.20`,
+dialog 1 with only cancel, README and pick another, and each result ending with the `blocked:` line.
+It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run.
 
-FLAGGED, the scan lines for the fixture (the dialog shows these; the `exec` hits in `validate-*` follow
-the upstream files at the fixed commit):
+FLAGGED, the scan lines for the fixture (the dialog shows these; warn rules come first; the `exec` hits
+in `validate-*` follow the upstream files at the fixed commit):
 
 ```
 scan: <N+3> files, the ones installed; a pattern match, not a safety review
-flagged: injection-phrase ×1 (E2E-NOTES.md:2)
-flagged: html-comment ×1 (E2E-NOTES.md:2)
-flagged: broad-tools ×1 (E2E-NOTES.md:3)
-flagged: hidden-unicode ×1 (E2E-NOTES.md:4)
-flagged: agent-config ×1 (E2E-NOTES.md:5)
-flagged: long-base64 ×1 (E2E-NOTES.md:6)
-flagged also: network ×1, exec ×4, env-secret ×1, credentials ×1, startup-files ×1, decode ×1
+warn: injection-phrase ×1 (E2E-NOTES.md:2)
+warn: hidden-unicode ×1 (E2E-NOTES.md:4)
+warn: credentials ×1 (e2e-setup.sh:5)
+warn: startup-files ×1 (e2e-setup.sh:6)
+info: html-comment ×1 (E2E-NOTES.md:2)
+info: broad-tools ×1 (E2E-NOTES.md:3)
+info also: agent-config ×1, long-base64 ×1, network ×1, exec ×4, env-secret ×1, decode ×1
 ```
 
 FLAGGED_NOTE, the scan block in every result for the fixture (`<FX_SHA>` is the commit the dialog
-showed):
+showed), followed by the fixture's `lookup_note` (as at the time of writing, with `<FX_SHA>`):
 
 ```
 scan: the dialog showed the user these pattern hits in cloudflare/security-audit-skill at commit <FX_SHA>:
-  injection-phrase skills/security-audit/E2E-NOTES.md:2
-  html-comment skills/security-audit/E2E-NOTES.md:2
-  broad-tools skills/security-audit/E2E-NOTES.md:3
-  hidden-unicode skills/security-audit/E2E-NOTES.md:4
-  agent-config skills/security-audit/E2E-NOTES.md:5
-  long-base64 skills/security-audit/E2E-NOTES.md:6
-  network skills/security-audit/e2e-setup.sh:3
-  exec skills/security-audit/e2e-setup.sh:3
-  env-secret skills/security-audit/e2e-setup.sh:4
-  credentials skills/security-audit/e2e-setup.sh:5
-  startup-files skills/security-audit/e2e-setup.sh:6
-  decode skills/security-audit/e2e-setup.sh:7
-  exec skills/security-audit/validate-coverage-ledger.test.cjs:5
-  exec skills/security-audit/validate-findings.test.cjs:5
-  exec skills/security-audit/we?ird.py:1
+  warn injection-phrase skills/security-audit/E2E-NOTES.md:2
+  warn hidden-unicode skills/security-audit/E2E-NOTES.md:4
+  warn credentials skills/security-audit/e2e-setup.sh:5
+  warn startup-files skills/security-audit/e2e-setup.sh:6
+  info html-comment skills/security-audit/E2E-NOTES.md:2
+  info broad-tools skills/security-audit/E2E-NOTES.md:3
+  info agent-config skills/security-audit/E2E-NOTES.md:5
+  info long-base64 skills/security-audit/E2E-NOTES.md:6
+  info network skills/security-audit/e2e-setup.sh:3
+  info exec skills/security-audit/e2e-setup.sh:3
+  info env-secret skills/security-audit/e2e-setup.sh:4
+  info decode skills/security-audit/e2e-setup.sh:7
+  info exec skills/security-audit/validate-coverage-ledger.test.cjs:5
+  info exec skills/security-audit/validate-findings.test.cjs:5
+  info exec skills/security-audit/we?ird.py:1
+lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <FX_SHA>
+dependencies: no npm or Python dependency files
 ```
 
 ## B. Claude Code (pane C)
@@ -321,6 +338,7 @@ HEADER(cloudflare/security-audit-skill)
 skill: security-audit · commit <SHA7> · <N> files
 scripts: <len(SCRIPTS)>, e.g. <SCRIPTS[0]>, <SCRIPTS[1]>
 <SCAN_LINES, one per line>
+<LOOKUP_LINES, one per line>
 ```
 
 then, after a blank line, the model's `about` (if any), a blank line and its `next` question; four
@@ -406,6 +424,22 @@ fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/f
   then FLAGGED_NOTE for `<FX_SHA>`.
 - No `.claude/` in the project. Reply says nothing was installed and why, and asks before trying
   again; no second install call in the turn.
+- Stay in this session for B23.
+
+**B23 A known-malicious dependency blocks.** Same session as B16. Run
+`python3 -I $KIRBY/tests/e2e/fixture.py malware $E2E/fx` (prints the new `FX_SHA`). Prompt as B3.
+- Dialog 1: after FLAGGED, the lookup lines start with
+  `dependencies: package-lock.json: 2 npm`,
+  `blocked: the malware lookup found a known-malicious package, so Install is not offered`,
+  `danger: flatmap-stream@0.1.1 (npm) is a known-malicious package (MAL-2025-20690)`, and hold a line
+  starting `danger: lodash@4.17.20 (npm): `. Three options only: cancel, read the README first, pick another.
+- Answer cancel. Result starts `not installed: the user cancelled.`, then the `scan:` block of
+  FLAGGED_NOTE for the new `<FX_SHA>`, then a `lookups:` block (in place of FLAGGED_NOTE's last two
+  lines) whose lines include `  danger malware flatmap-stream@0.1.1 (npm) MAL-2025-20690: in OpenSSF Malicious Packages`
+  and that ends with
+  `blocked: the dialog did not offer Install, because the malware lookup lists flatmap-stream@0.1.1 (npm) as known-malicious. kirby will not install it; tell the user why, and that installing it anyway means doing it by hand.`
+- Reply names `flatmap-stream` and `MAL-2025-20690`, says kirby will not install it; no further
+  install call, and no other way of installing it offered or run. No `.claude/` in the project.
 - Exit this session; the next ones start without the fixture.
 
 ### Plugins and MCP servers
@@ -571,7 +605,7 @@ Each followed by `SCAN_NOTE`; nothing written.
 
 A9 covers, through `codex_server.py`, what the Codex UI cannot: the fixture (Codex does not pass
 `GIT_CONFIG_*` to its MCP server), a commit pushed while a dialog is open, a session with no project,
-a client without elicitation, and unusable dialog wording.
+a client without elicitation, unusable dialog wording, and a blocked install (H13, the Codex side of B23).
 
 ### Cleanup
 

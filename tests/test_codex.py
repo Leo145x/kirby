@@ -1,4 +1,5 @@
 """Tests for the Codex MCP server's pure parts: python3 -m unittest discover -s tests"""
+import json
 import sys
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex"))
 
-from dialog import CANCEL, SCOPES, english, read_dialog  # noqa: E402
+from dialog import CANCEL, SCOPES, english, next_options, read_dialog  # noqa: E402
 import server  # noqa: E402
 
 GOOD = {
@@ -43,6 +44,11 @@ class Dialog(unittest.TestCase):
             d, problem = read_dialog(raw)
             self.assertEqual(d, english())
             self.assertIsInstance(problem, str)
+
+    def test_a_blocked_install_leaves_install_out_of_the_first_dialog(self):
+        d, _ = read_dialog(GOOD)
+        self.assertEqual(next_options(d, blocked=False), ["取消", "先讀 README", "換一個", "安裝"])
+        self.assertEqual(next_options(d, blocked=True), ["取消", "先讀 README", "換一個"])
 
 
 class Server(unittest.TestCase):
@@ -139,6 +145,45 @@ class OneScope(unittest.TestCase):
         peer, ran, r = self.install("取消", CANCEL, dialog=swapped)
         self.assertEqual((len(peer.asked), ran), (2, []))
         self.assertTrue(r.startswith("not installed: the user cancelled at the scope step."))
+
+class Blocked(unittest.TestCase):
+    """A skill whose malware lookup found something: the first dialog shows the lookups and offers no
+    Install, and every result tells the model why."""
+
+    CHECK = {
+        "name": "s", "commit": "aaaaaaa", "sha": "a" * 40, "files": 2, "scripts": [], "exists": False,
+        "scan_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing"],
+        "scan_note": "scan: the dialog showed the user no pattern hits",
+        "lookup_lines": ["dependencies: package-lock.json: 1 npm",
+                         "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+                         "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
+        "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
+        "blocked": True,
+    }
+
+    def install(self, check, *answers):
+        run, script = server.run, server.script
+        server.run = lambda argv, cwd=None: (True, '[1, "2026-01-01T00:00:00Z", false]')
+        server.script = lambda name, *args, cwd=None: (True, json.dumps(check))
+        try:
+            peer = OneScope.Peer(*answers)
+            r = server.install(peer, {"repo": "o/r", "kind": "skill", "folder": "s", "dialog": GOOD}, None)
+        finally:
+            server.run, server.script = run, script
+        return peer, r
+
+    def test_the_first_dialog_shows_the_lookups_and_offers_no_install(self):
+        peer, r = self.install(self.CHECK, "取消")
+        question, options = peer.asked[0]
+        self.assertEqual(options, ["取消", "先讀 README", "換一個"])
+        self.assertIn("flagged: nothing\n" + "\n".join(self.CHECK["lookup_lines"]), question)
+        self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
+                            + self.CHECK["lookup_note"])
+
+    def test_without_a_block_install_is_offered(self):
+        peer, _ = self.install({**self.CHECK, "blocked": False}, "取消")
+        self.assertEqual(peer.asked[0][1], GOOD["options"])
+
 
 if __name__ == "__main__":
     unittest.main()

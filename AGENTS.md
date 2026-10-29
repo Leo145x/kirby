@@ -14,7 +14,7 @@ claude plugin test .
 python3 -B -m unittest discover -s tests
 ```
 
-`claude plugin test .` runs `tests/dialog.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py` and `tests/test_install_skill.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
+`claude plugin test .` runs `tests/dialog.test.ts` and `tests/rows.test.ts`; unittest runs `tests/test_codex.py`, `tests/test_install_skill.py` and `tests/test_lookups.py`. The end-to-end run is in `tests/e2e/RUNBOOK.md`.
 
 ## Before Every Commit
 
@@ -23,7 +23,7 @@ python3 -B -m unittest discover -s tests
    | Agent CLI | Unit tests (always) | End-to-end cases to pick from (`tests/e2e/RUNBOOK.md`) |
    |-----------|-------|------------|
    | Claude Code | `claude plugin validate .`, `claude plugin test .` | section A + section B |
-   | Codex | `python3 -B -m unittest discover -s tests` (`tests/test_codex.py`, plus `tests/test_install_skill.py` for the shared scripts) | section A + section C |
+   | Codex | `python3 -B -m unittest discover -s tests` (`tests/test_codex.py`, plus `tests/test_install_skill.py` and `tests/test_lookups.py` for the shared scripts) | section A + section C |
 
    When kirby adds support for another agent CLI, add a row for it here, its tests to the Tests section, and its section to `tests/e2e/RUNBOOK.md` (see Adding an agent CLI there).
 
@@ -40,7 +40,7 @@ kirby's tools live in two places: the Claude Code mod provides `mcp__kirby__inst
 | 3 | `skills/inhale/SKILL.md` | frontmatter `allowed-tools` + how section 4 calls the tool and its parameters |
 | 4 | `codex/skills/inhale/SKILL.md` | the tool list in the opening **Tools.** paragraph + how each step calls the tools |
 | 5 | `tests/test_codex.py` | tests of the server's input checks |
-| 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H12 |
+| 6 | `tests/e2e/codex_server.py` | the calls and expected results of H1–H13 |
 | 7 | `tests/e2e/RUNBOOK.md` | the tool list in A4 + each case's calls and expected results |
 | 8 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the three parts under How it is built + the tool description in the Codex section |
 
@@ -60,12 +60,12 @@ The strings the install tool returns to the model (`not installed: …`, `instal
 
 ## Scan Rules Checklist
 
-When a scan rule in `install_skill.py` is added, removed or renamed:
+When a scan rule in `install_skill.py` is added, removed or renamed, or its severity changes:
 
 | # | File | What to update |
 |---|------|---------|
 | 1 | `skills/inhale/scripts/install_skill.py` | `RULES` |
-| 2 | `tests/test_install_skill.py` | the expected rule, file and line of each hit |
+| 2 | `tests/test_install_skill.py` | the expected rule, file and line of each hit, and each rule's severity |
 | 3 | `tests/e2e/fixture.py` | the fixture's files, so they hit every rule |
 | 4 | `tests/e2e/RUNBOOK.md` | the rule count and the cases that use it |
 | 5 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md` | the list of what each rule matches |
@@ -81,7 +81,7 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 | 2 | `hooks/register.ts` | the arguments it passes to `install_skill.py` and `detect.py`, and the JSON fields it reads |
 | 3 | `codex/server.py` | the arguments it passes to each script, and how it parses the output |
 | 4 | `skills/inhale/SKILL.md` | usage and output in sections 1a, 1b and 2 |
-| 5 | `tests/test_install_skill.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
+| 5 | `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Scripts table |
 
 ## Plugin Metadata Checklist

@@ -5,7 +5,7 @@
 
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import { CANCEL, readDialog, SCOPES } from './dialog'
+import { CANCEL, nextOptions, readDialog, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
 import { callLine, resultLine } from './rows'
 
@@ -77,10 +77,10 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
   )
 }
 
-// The facts about what the install would do, the prompt-cache note for the scope dialog, the scan as
-// the model reads it in every result (so it can explain a hit), and for a skill the commit shown, which
-// is the one installed.
-type Plan = { lines: string; cache: string; scan: string; commit?: string }
+// The facts about what the install would do, the prompt-cache note for the scope dialog, the
+// pre-install check as the model reads it in every result (so it can explain a finding), and for a
+// skill the commit shown, which is the one installed, and whether the malware lookup blocked it.
+type Plan = { lines: string; cache: string; scan: string; commit?: string; blocked?: boolean }
 
 const PLUGIN_NOT_SCANNED = 'scan: not scanned; a plugin installs from its marketplace as it is when the install runs, not pinned to a commit'
 const MCP_NOT_SCANNED = "scan: not scanned; the server runs what this command fetches when it starts, not this repo's files"
@@ -95,15 +95,15 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
-      scan_lines: string[]; scan_note: string
+      scan_lines: string[]; scan_note: string; lookup_lines: string[]; lookup_note: string; blocked: boolean
     }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    lines.push(...c.scan_lines)
-    return { lines: lines.join('\n'), cache: '', scan: c.scan_note, commit: c.sha }
+    lines.push(...c.scan_lines, ...c.lookup_lines)
+    return { lines: lines.join('\n'), cache: '', scan: `${c.scan_note}\n${c.lookup_note}`, commit: c.sha, blocked: c.blocked === true }
   }
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
@@ -165,18 +165,20 @@ async function install($: $, input: Input): Promise<string> {
     throw err
   }
 
-  // Every answer from here on also tells the model what the scan showed the user.
+  // Every answer from here on also tells the model what the pre-install check showed the user.
   const tail = `\n${plan.scan}${note}`
 
   // Cancel comes first so a stray Enter already queued when the dialog opens cancels.
   const about = d.about ? `\n\n${d.about}` : ''
-  const next = await ask($, `${header}\n${plan.lines}${about}\n\n${d.next}`, [cancel, readme, other, go])
+  const blocked = plan.blocked === true
+  const next = await ask($, `${header}\n${plan.lines}${about}\n\n${d.next}`, nextOptions(d, blocked))
   $.ui.log(`install ${repo} (${kind}): next step ${JSON.stringify(next)}${problem ? ` (English: ${problem})` : ''}`, { to: 'debug' })
   if (next === readme) {
     return `not installed: the user wants to read the README first. Summarise it for them (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.${tail}`
   }
   if (next === other) return `not installed: the user wants a different one. Ask which of the other recommendations to look at.${tail}`
-  if (next !== go) {
+  // A blocked install was not offered: typed text that matches the Install label does not install either.
+  if (next !== go || blocked) {
     return `not installed: the user ${next === null ? 'dismissed the dialog' : next === cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.${tail}`
   }
 
