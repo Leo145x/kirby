@@ -91,7 +91,7 @@ The same repo is a Codex plugin. Codex reads `.codex-plugin/plugin.json`, which 
 
 What differs from Claude Code:
 
-- **Searches and reads go through MCP tools.** The server's `stars`, `public` and `detect` tools run the same scripts, and its `readme` and `file` tools read a README or one file at a commit from GitHub, all outside Codex's sandbox, so they do not ask for network access each time. With Codex's default approval settings, Codex still asks whether kirby may run a tool; "Always allow" remembers the answer.
+- **Searches and reads go through MCP tools.** The server's `stars`, `public` and `detect` tools run the same scripts, and its `readme` and `file` tools read a README or one file at a commit from GitHub, all outside Codex's sandbox, so they do not ask for network access each time. These five tools declare that they only read, and with Codex's default approval settings Codex runs them without asking. It still asks before kirby's `install` runs; "Always allow" remembers the answer.
 - **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. As in Claude Code, the model writes their wording in your language, and the facts stay in English.
 - **No `default_source` setting.** The default is `stars`; say "public" or "both" in the prompt.
 - **Scopes:**

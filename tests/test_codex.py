@@ -69,6 +69,26 @@ class Server(unittest.TestCase):
         self.assertFalse(server.file({"repo": "o/r", "path": "a.sh", "ref": "main"})[0])
         self.assertFalse(server.file({"repo": "o/r/x", "path": "a.sh", "ref": sha})[0])
 
+    def test_stars_passes_only_the_options_it_was_given(self):
+        ran, script = [], server.script
+        server.script = lambda name, *args, cwd=None: ran.append((name, *args)) or (True, "")
+        try:
+            server.stars({})
+            server.stars({"lists": True, "list": "ai", "match": ["pdf", "-x"], "refresh": True})
+            server.stars({"lists": "yes", "list": "", "refresh": 1})
+        finally:
+            server.script = script
+        self.assertEqual(ran, [("stars.py",), ("stars.py", "--lists", "--list", "ai", "--match", "pdf", "--refresh"),
+                               ("stars.py",)])
+
+    def test_every_tool_states_all_four_hints(self):
+        hints = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+        for tool in server.TOOLS:
+            a = tool["annotations"]
+            self.assertEqual(sorted(a), sorted(hints), tool["name"])
+            self.assertTrue(all(type(v) is bool for v in a.values()), tool["name"])
+            self.assertEqual(a["readOnlyHint"], tool["name"] != "install", tool["name"])
+
 
 class OneScope(unittest.TestCase):
     """An MCP server goes to user only: the first dialog says so, and the scope dialog's install option,

@@ -25,6 +25,10 @@ TIMEOUT = 120
 README_MAX = 20000
 
 STRINGS = {"type": "array", "items": {"type": "string"}}
+# The searches only read GitHub (stars and public keep a cache of the user's stars, which is not the user's
+# setup). install writes files and runs codex commands; with force it replaces a skill folder.
+READS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
+INSTALLS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}
 TOOLS = [
     {
         "name": "stars",
@@ -34,6 +38,7 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "match": STRINGS, "list": {"type": "string"}, "lists": {"type": "boolean"}, "refresh": {"type": "boolean"},
         }},
+        "annotations": READS,
     },
     {
         "name": "public",
@@ -45,6 +50,7 @@ TOOLS = [
             "min_stars": {"type": "integer"},
             "limit": {"type": "integer"},
         }, "required": ["query"]},
+        "annotations": READS,
     },
     {
         "name": "detect",
@@ -52,11 +58,13 @@ TOOLS = [
                        "other), a header line, and an install entry per installable unit. match fetches "
                        "descriptions first for skills whose path contains a term.",
         "inputSchema": {"type": "object", "properties": {"repos": STRINGS, "match": STRINGS}, "required": ["repos"]},
+        "annotations": READS,
     },
     {
         "name": "readme",
         "description": "A repo's README, raw.",
         "inputSchema": {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]},
+        "annotations": READS,
     },
     {
         "name": "file",
@@ -65,6 +73,7 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"}, "path": {"type": "string"}, "ref": {"type": "string"},
         }, "required": ["repo", "path", "ref"]},
+        "annotations": READS,
     },
     {
         "name": "install",
@@ -90,6 +99,7 @@ TOOLS = [
                 "scope": {"type": "string"},
             }},
         }, "required": ["repo", "kind"]},
+        "annotations": INSTALLS,
     },
 ]
 
