@@ -152,11 +152,11 @@ class Blocked(unittest.TestCase):
 
     CHECK = {
         "name": "s", "commit": "aaaaaaa", "sha": "a" * 40, "files": 2, "scripts": [], "exists": False,
-        "scan_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing"],
+        "check_lines": ["scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
+                        "dependencies: package-lock.json: 1 npm",
+                        "blocked: the malware lookup found a known-malicious package, so Install is not offered",
+                        "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
         "scan_note": "scan: the dialog showed the user no pattern hits",
-        "lookup_lines": ["dependencies: package-lock.json: 1 npm",
-                         "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-                         "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
         "lookup_note": "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
     }
@@ -176,7 +176,7 @@ class Blocked(unittest.TestCase):
         peer, r = self.install(self.CHECK, "取消")
         question, options = peer.asked[0]
         self.assertEqual(options, ["取消", "先讀 README", "換一個"])
-        self.assertIn("flagged: nothing\n" + "\n".join(self.CHECK["lookup_lines"]), question)
+        self.assertIn("skill: s · commit aaaaaaa · 2 files\n" + "\n".join(self.CHECK["check_lines"]), question)
         self.assertEqual(r, "not installed: the user cancelled.\nscan: the dialog showed the user no pattern hits\n"
                             + self.CHECK["lookup_note"])
 

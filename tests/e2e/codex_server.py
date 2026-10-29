@@ -106,16 +106,20 @@ def main():
     p = Peer("Cancel")
     r = server.install(p, skill, meta)
     q, opts = p.asked[0]
-    check("H1 dialog lists commit and every scan line",
-          f"skill: security-audit · commit {c['commit']} · {c['files']} files" in q
-          and "\n".join(c["scan_lines"] + c["lookup_lines"]) in q, q)
-    check("H1 lookups: no dependency files, nothing found", c["lookup_lines"] == [
-        "dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
-        "malware lookup: nothing found"] and c["blocked"] is False, c["lookup_lines"])
+    check("H1 dialog lists commit and every check line",
+          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n" + "\n".join(c["check_lines"]) in q, q)
+    check("H1 lookups: no dependency files, nothing found, each on its own line as the scan found something",
+          c["check_lines"][-3:] == ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
+                                    "malware lookup: nothing found"] and c["blocked"] is False, c["check_lines"])
     check("H1 English options", opts == ENGLISH, opts)
     check("H1 result = cancelled + scan and lookup notes + English note",
           r == "not installed: the user cancelled.\n" + c["note"] + NO_DIALOG, r)
-    check("H1 fixture fires all 12 rules", len({h["rule"] for h in c["scan"]["hits"]}) == 12)
+    check("H1 fixture fires all 12 rules and the 3 combinations", len({h["rule"] for h in c["scan"]["hits"]}) == 12
+          and c["scan"]["combinations"] == ["send-secrets", "download-run", "download-decode"]
+          and c["check_lines"][1:4] == ["warn: send-secrets: may send secrets out (network + env-secret)",
+                                        "warn: download-run: may download and run code (network + exec)",
+                                        "warn: download-decode: may download and decode a payload (network + decode)"],
+          c["check_lines"][:4])
     check("H1 file names are cleaned", "we?ird.py" in c["scan_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
 
     # H2: the model's wording is used; each choice in the first dialog gives its result.
@@ -154,16 +158,31 @@ def main():
           and r.startswith("installed (scope user): ") and len(held.argv) == 1
           and held.argv[0][-6:] == ["--scope", "user", "--agent", "codex", "--commit", c["sha"]], f"{p.asked}\n      {r}")
 
-    # H6: a commit pushed while the scope dialog is open -> nothing installed.
+    # H6: a commit pushed while the scope dialog is open -> the commit shown is installed all the same.
+    def then(action, answer):
+        """An answer that first runs fixture.py <action>, as if upstream changed while the dialog was open."""
+        return lambda _options: (subprocess.run([sys.executable, "-I", str(Path(__file__).parent / "fixture.py"),
+                                                 action, str(fx)], check=True, capture_output=True), answer)[1]
+
     shown = c["sha"]
-    p = Peer("安裝", lambda _options: (subprocess.run([sys.executable, "-I", str(Path(__file__).parent / "fixture.py"),
-                                                  "advance", str(fx)], check=True, capture_output=True), "local")[1])
-    r = server.install(p, {**skill, "dialog": ZH}, meta)
+    r = server.install(Peer("安裝", then("advance", "local")), {**skill, "dialog": ZH}, meta)
     now = fixture.head(fx)
-    check("H6 moved on -> refused, nothing written",
-          r.startswith("install failed (scope local): ") and f"--commit {shown}" in r
-          and f"has moved on: HEAD is now {now[:7]}, not {shown[:7]} as shown to the user; nothing installed" in r
-          and not (project / ".agents").exists(), r)
+    rec = project / ".agents/skills/security-audit/.kirby.json"
+    check("H6 moved on -> the shown commit is installed",
+          now != shown and r.startswith("installed (scope local): ") and f"--commit {shown}" in r
+          and f"installed {REPO}:{FOLDER}@{shown[:7]} -> .agents/skills/security-audit" in r
+          and rec.exists() and json.loads(rec.read_text())["commit"] == shown and r.endswith("\n" + c["note"]), r)
+    shutil.rmtree(project / ".agents", ignore_errors=True)
+
+    # H6: the shown commit force-pushed away and pruned while the scope dialog is open -> nothing installed.
+    c = preview(project)
+    gone = c["sha"]
+    r = server.install(Peer("安裝", then("rewind", "local")), {**skill, "dialog": ZH}, meta)
+    check("H6 shown commit gone -> install failed, says why, nothing written",
+          fixture.head(fx) != gone and r.startswith("install failed (scope local): ") and f"--commit {gone}" in r
+          and f"could not fetch {REPO} at commit {gone[:7]}, the one shown to the user; nothing installed "
+              "(a force-push can remove a commit). git: " in r
+          and r.endswith("\n" + c["note"]) and not (project / ".agents").exists(), r)
 
     # H7: install at local: the shown commit lands, .gitignore gets the folder.
     c = preview(project)
@@ -293,18 +312,20 @@ def main():
     shutil.rmtree(project / ".agents", ignore_errors=True)
     c = preview(project)
     name, version = fixture.MALWARE
-    check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and c["lookup_lines"][:3] == [
-        "dependencies: package-lock.json: 2 npm",
+    deps = "dependencies: package-lock.json: 2 npm"
+    looked = c["check_lines"][c["check_lines"].index(deps):] if deps in c["check_lines"] else []
+    check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and looked[:3] == [
+        deps,
         "blocked: the malware lookup found a known-malicious package, so Install is not offered",
         f"danger: {name}@{version} (npm) is a known-malicious package (MAL-2025-20690)",
-    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in c["lookup_lines"]), c["lookup_lines"])
+    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in looked), c["check_lines"])
     for answer, start in [("取消", "not installed: the user cancelled."),
                           ("先讀 README", "not installed: the user wants to read the README first.")]:
         p = Peer(answer)
         r = server.install(p, {**skill, "dialog": ZH}, meta)
         q, opts = p.asked[0]
         check(f"H13 {answer!r}: no Install, result says why", opts == ZH["options"][:3]
-              and "\n".join(c["lookup_lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
+              and "\n".join(c["check_lines"]) in q and r.startswith(start) and r.endswith("\n" + c["note"])
               and f"\nblocked: the dialog did not offer Install, because the malware lookup lists {name}@{version} (npm) "
                   "as known-malicious." in r and len(p.asked) == 1, f"{opts}\n      {r}")
     check("H13 nothing written", not (project / ".agents").exists())

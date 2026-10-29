@@ -313,7 +313,7 @@ def preview(kind, a, project):
         if project and c["exists"]:
             result = "replaces it" if a.get("force") is True else "fails"
             lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
-        lines += c["scan_lines"] + c["lookup_lines"]
+        lines += c["check_lines"]
         if not project:
             lines.append(SKILL_USER_ONLY)
         # The commit shown is the one installed.

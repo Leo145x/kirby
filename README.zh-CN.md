@@ -16,9 +16,9 @@
 - **推荐合适的工具**：模型根据你的任务判断每个候选，每个 repo 都附上 star 数和最后 push 的日期。
 - **知道要装的是什么**：区分 marketplace、plugin、skill 和 MCP server，以及安装需要什么。
 - **安装前先问你**：要在对话框选择“安装”才会安装，也可以先看 README 或换一个。接着选择 scope：`local`、`project` 或 `user`。
-- **安装 skill 或 plugin 前先扫描**：查找值得留意的模式，例如隐藏 Unicode、针对模型的语句、网络调用或机密环境变量，并在对话框列出每个命中。plugin 会按 marketplace 条目找到它自己的文件，在另一个 repo 也一样。可以直接问模型被标出的那一行在做什么。这只是 pattern 匹配，不是安全审查；MCP server 不会扫描。
+- **安装 skill 或 plugin 前先扫描**：查找值得留意的模式，例如隐藏 Unicode、针对模型的语句、网络调用或机密环境变量，并在对话框列出每个命中。网络调用和机密、shell 执行或解码同时出现时，标为 warn。整个检查什么都没找到时，对话框用一行说明。plugin 会按 marketplace 条目找到它自己的文件，在另一个 repo 也一样。可以直接问模型被标出的那一行在做什么。这只是 pattern 匹配，不是安全审查；MCP server 不会扫描。
 - **查询已知漏洞和恶意包**：向 OSV.dev 查 skill 或 plugin 的依赖包和它的 commit，也查 repo 自己在 GitHub 发布的 advisory，每项发现标上 danger、warn 或 info。只有已知的恶意包会拦下安装；没查成的部分会标为 unchecked。
-- **只装你看到的 commit**：skill 和 plugin 只会安装对话框显示的那个 commit；实际安装前 repo（plugin 则是它的 marketplace）有变动，就不会留下安装。安装 plugin 会一并更新你已经添加的 marketplace 时，对话框会说明。
+- **只装你看到的 commit**：skill 会安装对话框显示的那个 commit，即使 repo 之后又有新的 commit 也一样；只有那个 commit 已经不在（例如被 force-push 覆盖）时才会失败。plugin 从对话框显示的 marketplace commit 安装；实际安装前 marketplace 有变动，plugin 会再被移除。安装 plugin 会一并更新你已经添加的 marketplace 时，对话框会说明。
 - **用你的语言**：对话框用你使用的语言写。
 - **不影响 prompt cache**：在 Claude Code 里，安装 skill、plugin 或 MCP server 都不会让 prompt cache 失效（实测）。唯一的例外是带有 MCP server 的 plugin，在 tool search 关闭时用 `/reload-plugins` 加载；这种情况对话框会注明，Claude Code 在 reload 前也会先警告。
 - **支持 Claude Code 和 Codex**。

@@ -319,7 +319,9 @@ def plural(n, one, many):
 
 def check(repo, sha, root, files, net=None):
     """The lookups for a skill: {"lines": the dialog's facts, "note": the same for the model, "blocked":
-    whether the malware lookup found something, so Install is not offered}."""
+    whether the malware lookup found something, so Install is not offered, "nothing_found": when both
+    lookups found nothing and nothing went unchecked, the dependencies they covered (for the one line
+    install_skill.check_lines makes), else None}."""
     net = net or Net()
     deps = [read(root, rel, net) for rel in sources(files)]
     findings, unchecked = [], []
@@ -370,7 +372,17 @@ def check(repo, sha, root, files, net=None):
     findings.sort(key=lambda f: (f["severity"] != "danger", f["lookup"] != MALWARE, f.get("rank", 0)))
     blocked = any(f["lookup"] == MALWARE for f in findings)
     return {"lines": dialog_lines(deps, findings, unchecked, parts, blocked),
-            "note": note(repo, sha, deps, findings, unchecked, blocked), "blocked": blocked}
+            "note": note(repo, sha, deps, findings, unchecked, blocked), "blocked": blocked,
+            "nothing_found": None if findings or unchecked else covered(deps, versioned)}
+
+
+def covered(deps, versioned):
+    """The dependencies looked up, in a few words: "3 npm dependencies", "1 npm and 2 PyPI dependencies"."""
+    if not deps:
+        return "no npm or Python dependency files"
+    ecosystems = list(dict.fromkeys(d["ecosystem"] for d in deps))
+    counts = [sum(1 for e, _, _ in versioned if e == eco) for eco in ecosystems]
+    return " and ".join(f"{n} {eco}" for n, eco in zip(counts, ecosystems)) + (" dependency" if sum(counts) == 1 else " dependencies")
 
 
 def fetch(ids, net):

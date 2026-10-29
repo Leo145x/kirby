@@ -97,14 +97,14 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
-      scan_lines: string[]; scan_note: string; lookup_lines: string[]; lookup_note: string; blocked: boolean
+      check_lines: string[]; scan_note: string; lookup_note: string; blocked: boolean
     }
     const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
     if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
     if (c.exists) {
       lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
     }
-    lines.push(...c.scan_lines, ...c.lookup_lines)
+    lines.push(...c.check_lines)
     return { lines: lines.join('\n'), cache: '', scan: `${c.scan_note}\n${c.lookup_note}`, commit: c.sha, blocked: c.blocked === true }
   }
   if (kind === 'plugin') {

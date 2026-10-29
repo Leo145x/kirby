@@ -30,7 +30,7 @@ Public search only finds repos tagged with an agent-tooling topic (`agent-skills
 
 Once you pick a repo, the mod shows two dialogs:
 
-1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (the scan and the lookups below). When the malware lookup finds a known-malicious package, Install is left out.
+1. **Next step**: Cancel / Read README first / Pick another / Install. The dialog lists the kind, commit, file count, any bundled scripts and the pre-install check (the scan and the lookups below). When the check finds nothing and nothing went unscanned or unchecked, that is one line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines. When the malware lookup finds a known-malicious package, Install is left out.
 2. **Scope** (only after Install):
 
 | scope | skill | plugin | MCP |
@@ -43,7 +43,7 @@ Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Scan
 
-Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below); MCP servers are not scanned, and the dialog says so. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. In Claude Code the model reads that file with `gh api`, which the skill does not pre-approve, so unless your permission mode allows it, Claude Code asks you first.
+Before the first dialog, the tool scans a skill's files, the same ones it installs, for patterns worth a look: hidden Unicode, HTML comments and phrases aimed at the model in Markdown; broad `allowed-tools`; mentions of agent settings and credential files; and in scripts, network calls, shell execution, decoding, secret environment variables and shell startup files. The dialog lists each flagged rule with where it hit, led by its severity: `warn` for `hidden-unicode`, `injection-phrase`, `credentials` and `startup-files`, which are rarer in honest skills, and `info` for the rest; warn rules are listed first. One tool hitting `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a `warn` finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload). Each of those rules alone stays `info`, so a skill that reads a secret and sends it out is not all `info` ([ADR 0005](adr/0005-one-click-by-default.md)); these findings are listed first. It is a pattern match, not a safety review: a hit is not proof of harm, and no hit is not proof of safety, so no hit blocks an install. A plugin's files are scanned the same way (see Plugins below); MCP servers are not scanned, and the dialog says so. The tool also gives the model the hits with the scanned commit, so you can ask it what a flagged line does. In Claude Code the model reads that file with `gh api`, which the skill does not pre-approve, so unless your permission mode allows it, Claude Code asks you first.
 
 ### Advisory and malware lookups
 
@@ -68,7 +68,7 @@ The dialog's `source:` line says which it is. The scan and the lookups then run 
 
 ### Pinned commit
 
-A skill or a plugin installs exactly the commit the dialog showed. If the repo gets a new commit before the install runs, nothing stays installed; the model tells you, and if you still want it, it shows the dialogs again with the new commit. An MCP server is not pinned: it runs whatever its command fetches when it starts, such as `npx -y <package>`.
+A skill installs exactly the commit the dialog showed, even if the repo gets a new commit before the install runs: kirby fetches that commit itself, so you do not have to answer the dialogs again ([ADR 0005](adr/0005-one-click-by-default.md)). Only if that commit can no longer be fetched (a force-push can remove one) does the install fail; nothing is installed, the result says why, and if you still want it, the model shows the dialogs again with the current commit. A plugin installs from the marketplace commit the dialog showed (below). An MCP server is not pinned: it runs whatever its command fetches when it starts, such as `npx -y <package>`.
 
 For a plugin, the commit is the marketplace's ([ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)):
 
@@ -126,7 +126,7 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `stars.py` | Reads your stars and star lists (GraphQL), cached in `~/.cache/kirby/stars.json` for 24 hours |
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
-| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups; `--commit` installs only the commit the dialog showed. Called by the mod and the Codex MCP server |
+| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `check_lines`); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
 | `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON; installs nothing. Called by the mod and the Codex MCP server |
 | `lookups.py` | The advisory and malware lookups `install_skill.py --check` and `check_plugin.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
 
