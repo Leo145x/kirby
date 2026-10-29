@@ -67,7 +67,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 ### 漏洞查询和恶意包查询
 
-- **依赖包。** 对于 skill 和 plugin，查询读取检查文件里的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`；对于 MCP server，则是安装那个版本的包时会一并装上的依赖。没有 lockfile 时，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不会安装任何东西，也不会运行包的代码（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。这时对话框会注明版本是检查时算出的，实际运行时可能不同。没有 npm 或 uv 时只知道包名，恶意包查询仍会按包名查，漏洞查询则是 unchecked。
+- **依赖包。** 对于 skill 和 plugin，查询读取检查文件里的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`；对于 MCP server，则是安装那个版本的包时会一并装上的依赖。没有 lockfile 时，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不会安装任何东西，也不会运行包的代码（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。这时对话框会注明版本是检查时算出的，实际运行时可能不同。没有 npm 或 uv 时只知道包名，恶意包查询仍会按包名查，漏洞查询则是 unchecked。`package.json`，或 MCP server 运行的包，有来自 git、URL 或本地路径的依赖时也一样：npm 为了算出版本会去拉取它，而构建 git 依赖时可能运行它的 `prepare` 脚本，所以这时 kirby 不运行 npm。
 - **漏洞查询。** 向 OSV.dev 查每个依赖包的那个版本，以及检查对象本身：检查的那个 commit（OSV 会把 commit 对应到记录里的 git 范围），或 MCP server 那个版本的包。向 GitHub 查 repo 为自己发布的安全公告。
 - **恶意包查询。** 查 OSV.dev 里 id 以 `MAL-` 开头的记录，这些来自 OpenSSF Malicious Packages；检查对象本身和每个依赖包都会查。
 

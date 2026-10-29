@@ -204,6 +204,18 @@ class AnNpmServer(unittest.TestCase):
         with self.assertRaises(check_mcp.Failed):
             check_mcp.highest("PyPI", versions, ">=1.0;<2")
 
+    def test_dependencies_from_outside_the_registry_are_looked_up_by_name_without_running_npm(self):
+        # npm fetches a git dependency to resolve it, and may run its prepare script; kirby does not let it.
+        net = Net(repo={"package.json": json.dumps({"name": "srv"})},
+                  web=npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest", deps={"zod": "^3", "evil": "github:o/evil"}),
+                  resolve={"npm": lock(("srv", "1.0.0"), ("zod", "3.0.0"))})
+        c = check(["srv", "--", "npx", "-y", "srv"], net)
+        self.assertEqual(net.ran, [])
+        self.assertIn("dependencies: srv@1.0.0: 2 npm, names only", c["lines"])
+        self.assertIn("unchecked: advisory lookup for the dependencies of srv@1.0.0 (some dependencies come from outside "
+                      "the npm registry, so versions were not resolved)", c["lines"])
+        self.assertEqual(c["mcp_args"][-1], "srv@1.0.0")
+
     def test_a_registry_that_does_not_answer_leaves_it_unpinned(self):
         net = Net(repo={"server.json": server_json({"registryType": "npm", "identifier": "srv", "version": "9.9.9"})})
         c = check(["srv", "--", "npx", "-y", "srv"], net)
@@ -419,12 +431,50 @@ class Unpacking(unittest.TestCase):
         tmp, root, files = self.unpack(buf.getvalue(), "p-1.0-py3-none-any.whl")
         self.assertEqual(files, ["out/pkg/ok.py"])
 
+    def test_what_a_tarball_skips_counts_against_the_limit_too(self):
+        # A stream skips a member by reading through it, so a member left out still costs its size in decompression.
+        for info in [tarfile.TarInfo("package/odd"), tarfile.TarInfo("../escape.js")]:
+            if info.name == "package/odd":
+                info.type = b"Z"  # a type tarfile does not know, whose data it still reads past
+            info.size = 11
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as t:
+                t.addfile(info, io.BytesIO(b"x" * 11))
+            limit = check_mcp.MAX_UNPACKED
+            check_mcp.MAX_UNPACKED = 10
+            try:
+                with self.assertRaises(check_mcp.Failed, msg=info.name):
+                    self.unpack(buf.getvalue(), "srv-1.0.0.tgz")
+            finally:
+                check_mcp.MAX_UNPACKED = limit
+
+    def test_an_encrypted_or_oddly_compressed_wheel_is_a_failure_not_a_crash(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("pkg/a.py", "1")
+        plain = buf.getvalue()
+        # The encryption flag, in the local header (offset 6) and the central directory (offset 8).
+        encrypted = bytearray(plain)
+        for sig, at in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+            encrypted[plain.index(sig) + at] |= 1
+        # A compression method zipfile does not have, in the same two places (offsets 8 and 10).
+        odd = bytearray(plain)
+        for sig, at in ((b"PK\x03\x04", 8), (b"PK\x01\x02", 10)):
+            odd[plain.index(sig) + at] = 99
+        for data in (bytes(encrypted), bytes(odd)):
+            with self.assertRaises(check_mcp.Failed) as e:
+                self.unpack(data, "p-1.0-py3-none-any.whl")
+            self.assertTrue(str(e.exception).startswith("could not unpack p-1.0-py3-none-any.whl ("), str(e.exception))
+
     def test_an_archive_too_large_unpacked_is_refused(self):
         limit = check_mcp.MAX_UNPACKED
         check_mcp.MAX_UNPACKED = 10
         try:
             with self.assertRaises(check_mcp.Failed):
                 self.unpack(tgz({"big.js": "x" * 11}), "srv-1.0.0.tgz")
+            # Right at the limit, the file is unpacked whole.
+            _, root, _ = self.unpack(tgz({"big.js": "x" * 10}), "srv-1.0.0.tgz")
+            self.assertEqual((root / "big.js").read_text(), "x" * 10)
         finally:
             check_mcp.MAX_UNPACKED = limit
 

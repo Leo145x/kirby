@@ -67,7 +67,7 @@ skill 會要求模型只用這些 tool 安裝，但這只是指示，不是硬�
 
 ### 漏洞查詢和惡意套件查詢
 
-- **相依套件。** skill 和 plugin 的話，查詢讀取檢查檔案裡的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`；MCP server 的話，則是安裝那個版本的套件時會一併裝上的相依套件。沒有 lockfile 時，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不會安裝任何東西，也不會執行套件的程式碼（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。這時對話框會註明版本是檢查當下算出的，實際執行時可能不同。沒有 npm 或 uv 時只知道套件名稱，惡意套件查詢仍會用名稱查，漏洞查詢則是 unchecked。
+- **相依套件。** skill 和 plugin 的話，查詢讀取檢查檔案裡的 `package-lock.json`（或 `package.json`）、`uv.lock`、`requirements.txt` 和 `pyproject.toml`；MCP server 的話，則是安裝那個版本的套件時會一併裝上的相依套件。沒有 lockfile 時，用 `npm install --package-lock-only --ignore-scripts` 或 `uv pip compile --no-build` 算出版本，不會安裝任何東西，也不會執行套件的程式碼（[ADR 0004](adr/0004-resolve-dependencies-without-installing.md)）。這時對話框會註明版本是檢查當下算出的，實際執行時可能不同。沒有 npm 或 uv 時只知道套件名稱，惡意套件查詢仍會用名稱查，漏洞查詢則是 unchecked。`package.json`，或 MCP server 執行的套件，有來自 git、URL 或本機路徑的相依套件時也一樣：npm 為了算出版本會去抓它，而建置 git 相依套件時可能執行它的 `prepare` 腳本，所以這時 kirby 不執行 npm。
 - **漏洞查詢。** 向 OSV.dev 查每個相依套件的那個版本，以及檢查對象本身：檢查的那個 commit（OSV 會把 commit 對到記錄裡的 git 範圍），或 MCP server 那個版本的套件。向 GitHub 查 repo 為自己發布的安全公告。
 - **惡意套件查詢。** 查 OSV.dev 裡 id 以 `MAL-` 開頭的記錄，這些來自 OpenSSF Malicious Packages；檢查對象本身和每個相依套件都會查。
 

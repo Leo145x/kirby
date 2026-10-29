@@ -55,6 +55,7 @@ NPM_DEPS = ("dependencies", "devDependencies", "optionalDependencies")
 GH_ECOSYSTEMS = {"npm": "npm", "PyPI": "pip"}
 # Specs npm would fetch from somewhere other than the registry (git, a URL, a path, a GitHub shorthand).
 NOT_REGISTRY = re.compile(r"^(git|https?:|file:|link:|github:|gitlab:|bitbucket:|gist:|[.~/])|^[^@\s]+/[^\s]+$")
+ELSEWHERE = "some dependencies come from outside the npm registry, so versions were not resolved"
 NPM_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-]+$")
 PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 PY_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)")
@@ -209,9 +210,10 @@ def read(root, rel, net):
             data = json.loads(text)
             specs = {k: v for field in NPM_DEPS for k, v in (data.get(field) or {}).items()}
             src["names"] = {k for k in specs if NPM_NAME.match(k)}
+            # npm would fetch those to resolve them, and a git dependency's prepare script can run then.
             elsewhere = [k for k, v in specs.items() if isinstance(v, str) and NOT_REGISTRY.match(v.strip())]
             if elsewhere:
-                src["why"] = "some dependencies come from outside the npm registry, so versions were not resolved"
+                src["why"] = ELSEWHERE
         elif name == "requirements.txt":
             src["names"] = requirement_names(text.splitlines())
         else:
@@ -338,11 +340,12 @@ def check(repo, sha, root, files, net=None):
     return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net)
 
 
-def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
+def check_package(repo, ecosystem, name, version, direct, net=None, why=None, elsewhere=False):
     """The lookups for an MCP server's published package (check_mcp.py), as check() gives them: the package
     itself at the version the install command is pinned to, and the packages it depends on, resolved as its
     package manager would resolve them now, without installing anything (docs/adr/0004). direct are the names
-    it depends on, looked up by name for malware when the versions cannot be resolved. With version None
+    it depends on, looked up by name for malware when the versions cannot be resolved. elsewhere: some of them
+    come from outside the npm registry, so npm is not run, as read() does for a package.json. With version None
     (why says why it is not known), only the package itself is looked up, by name, for malware."""
     net = net or Net()
     what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
@@ -351,15 +354,18 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None):
     if version is None:
         return looked_up(repo, query, subject, subject, [], net, unknown=(f"the dependencies of {what}", why))
     own = name if ecosystem == "npm" else py_name(name)
-    with tempfile.TemporaryDirectory() as tmp:
-        # A manifest of kirby's own that asks for just this package, so the tree is the one installing it brings.
-        if ecosystem == "npm":
-            rel = "package.json"
-            text = json.dumps({"name": "kirby-check", "version": "0.0.0", "private": True, "dependencies": {name: version}})
-        else:
-            rel, text = "requirements.txt", f"{name}=={version}\n"
-        (Path(tmp) / rel).write_text(text)
-        src = read(Path(tmp), rel, net)
+    if elsewhere:
+        src = {"ecosystem": ecosystem, "packages": set(), "names": set(), "resolved": False, "why": ELSEWHERE}
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            # A manifest of kirby's own that asks for just this package, so the tree is the one installing it brings.
+            if ecosystem == "npm":
+                rel = "package.json"
+                text = json.dumps({"name": "kirby-check", "version": "0.0.0", "private": True, "dependencies": {name: version}})
+            else:
+                rel, text = "requirements.txt", f"{name}=={version}\n"
+            (Path(tmp) / rel).write_text(text)
+            src = read(Path(tmp), rel, net)
     src.update(file=what, part=f"the dependencies of {what}")
     src["packages"] = {(n, v) for n, v in src["packages"] if n != own}
     if not src["resolved"]:
