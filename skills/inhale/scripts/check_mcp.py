@@ -21,8 +21,9 @@ dependencies are resolved at check time and may differ when the server starts (#
 
 A container image, a remote server (a URL), or a command that runs none of the packages the repo names is
 reported as unchecked, and the command stays as it is. Prints JSON: the dialog's facts (`facts`, each a line
-or a key and its values for words.py, which each side words in the dialog's language), the same in English
-(`lines`) and for the model (`note`), `blocked`, the command to install (`mcp_args`), the `package` checked, and `review`:
+or a key and its values for words.py, which each side words in the dialog's language; the check's part summarised
+by severity), the same in English (`lines`), every finding for the model (`note`), `blocked`, the command to
+install (`mcp_args`), the `package` checked, and `review`:
 whether the model review runs and which files of the package it reads, with the archive's sha256 (docs/adr/0002).
 
 --read prints one file of such a package for the review (the file tool): the same archive, downloaded again,
@@ -49,10 +50,10 @@ from urllib.parse import quote, urlparse
 # -I leaves this folder off the import path; these are kirby's own, next to this file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
-from install_skill import (NO_REVIEW, UNCHECKED, VALID_REPO, VALID_SHA, check_lines, inside, listing, review, scan,  # noqa: E402
+from install_skill import (NO_REVIEW, VALID_REPO, VALID_SHA, check_facts, inside, listing, review, scan,  # noqa: E402
                            scan_note)
 from lookups import NPM_NAME, Failed, first_line, package_key, py_name, shown  # noqa: E402
-from words import fact, say  # noqa: E402
+from words import fact, in_english  # noqa: E402
 
 try:
     import tomllib
@@ -579,8 +580,8 @@ def check(repo, args, net=None):
     out = {"repo": repo, "mcp_args": list(args), "package": None, "blocked": False}
 
     def unchecked(why, pin=True):
-        line = f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")
-        out.update(facts=[line], lines=[line],
+        facts = [fact("check_unchecked_not_pinned" if pin else "check_unchecked", why=why)]
+        out.update(facts=facts, lines=in_english(facts),
                    note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
                         f"server{', and that its command is not pinned' if pin else ''}: {why}",
                    review=dict(NO_REVIEW))
@@ -644,18 +645,18 @@ def check(repo, args, net=None):
                 why = str(e)
     if scanned:
         hits, unread, files, digest = scanned
-        facts += check_lines(hits, unread, len(files) - len(unread), looked, covered=f"those in {shown(rel['file'], 80)}")
+        facts += check_facts(hits, unread, len(files) - len(unread), looked)
         scan_text = scan_note(repo, ".", None, hits, place=place)
         # The review reads the same archive, which the file tool finds by the package and checks by its sha256.
         out["review"] = review({"package": {"ecosystem": eco, "name": name, "version": version}, "sha": digest},
                                files, hits, looked)
     else:
-        facts += [f"unchecked: pattern scan ({why})", *looked["lines"]]
+        facts += check_facts([], [], 0, looked, why=why)
         scan_text = f"pattern scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
         out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
            f"kirby could not pin it ({why}), so the command installs as given.")
-    out.update(facts=facts, lines=[say(f, "en") for f in facts], blocked=looked["blocked"], note="\n".join([
+    out.update(facts=facts, lines=in_english(facts), blocked=looked["blocked"], note="\n".join([
         scan_text, looked["note"],
         f"package: the command runs {what} ({eco}), which this repo's {shown(pkg['file'])} names at commit {sha}; "
         f"nobody verified that the repo publishes it. {pin}"]))

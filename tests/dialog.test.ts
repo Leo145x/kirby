@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-import { CANCEL, english, nextOptions, readDialog, readReview, reviewNote, SCOPES } from '../hooks/dialog'
+import { CANCEL, countReview, english, nextOptions, readDialog, readReview, reviewNote, SCOPES } from '../hooks/dialog'
 import { fact, readLang, say } from '../hooks/words'
-import type { Fact } from '../hooks/words'
+import type { Fact, Key } from '../hooks/words'
 
 const GOOD = {
   about: '把 archify 裝成 skill。',
@@ -114,6 +114,21 @@ test("the review's lines reach the model too", async () => {
 
 // kirby's own wording of a fact line, in the language the model picked (docs/adr/0006). The same cases are
 // in tests/test_codex.py, so both sides give the same lines.
+const SEVEN_WARN = fact('warn', {
+  count: 7,
+  names: ['scan_send_secrets', 'scan_download_run', 'scan_download_decode', 'scan_injection_phrase', 'scan_hidden_unicode',
+    'scan_credentials', 'scan_startup_files'].map(k => fact(k as Key)),
+})
+const LODASH = fact('danger_vulns', {
+  package: 'lodash@4.17.15', ecosystem: 'npm', vulns: fact('lookup_vulns', { count: 2 }), rating: 'high',
+  ids: ['GHSA-35jh-r3h4-6jhm', 'GHSA-p6mc-m468-83gw'],
+})
+const WARN_WITH_REVIEW = fact('warn', {
+  count: 3, names: [fact('scan_send_secrets'), fact('scan_hidden_unicode'), fact('warn_review', { count: 1 })],
+})
+const SPLIT = fact('lookup_unchecked_split', {
+  advisory: [fact('lookup_part_commit'), 'package-lock.json'], malware: ['package-lock.json'], why: 'OSV.dev: timed out',
+})
 const ZH_TW: [Fact, string][] = [
   [fact('repo', { repo: 'o/r', stars: 52770, pushed: '2026-09-14' }), 'o/r ★52770 · 2026-09-14 更新'],
   [fact('repo_archived', { repo: 'o/r', stars: 3, pushed: '?' }), 'o/r ★3 · ? 更新 · 已封存'],
@@ -134,6 +149,17 @@ const ZH_TW: [Fact, string][] = [
   [fact('scope_cache_off'), 'prompt cache：這個外掛帶有 MCP server；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。'],
   [fact('scope_install_at_user_skill'), '安裝在 user（~/.agents/skills/）'],
   ['check: nothing found (2 files)', 'check: nothing found (2 files)'],
+  // The pre-install check's summary (#26), from the mock-ups in #24.
+  [SEVEN_WARN, '⚠ 警告 7 項：可能外傳密鑰、可能下載並執行程式碼、可能下載並解碼資料、提示詞注入字句、隱藏 Unicode、憑證、修改啟動檔'],
+  [fact('lookup_nothing'), '✓ 漏洞、惡意套件查詢：沒有發現'],
+  [fact('danger_malware', { package: 'flatmap-stream', ecosystem: 'npm', ids: ['MAL-2025-20690'] }),
+    '✕ 危險：flatmap-stream (npm) 被列為惡意套件（MAL-2025-20690）'],
+  [LODASH, '✕ 危險：lodash@4.17.15 (npm) 有 2 個已公開漏洞，最嚴重為 high（GHSA-35jh-r3h4-6jhm、GHSA-p6mc-m468-83gw）'],
+  [WARN_WITH_REVIEW, '⚠ 警告 3 項：可能外傳密鑰、隱藏 Unicode、模型審查 1 項'],
+  [fact('check_nothing', { files: fact('check_files', { count: 23 }) }), '✓ 檢查：沒有發現（23 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）'],
+  [fact('check_blocked'), '✕ 已擋下：惡意套件查詢找到已知的惡意套件，所以不提供安裝'],
+  [fact('check_unchecked', { why: 'a remote server at a URL' }), '？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（a remote server at a URL）'],
+  [SPLIT, '？ 未檢查：這個 commit、package-lock.json 的漏洞查詢；package-lock.json 的惡意套件查詢（OSV.dev: timed out）'],
 ]
 const ZH_CN: [Fact, string][] = [
   [fact('repo', { repo: 'o/r', stars: 52770, pushed: '2026-09-14' }), 'o/r ★52770 · 2026-09-14 更新'],
@@ -155,6 +181,16 @@ const ZH_CN: [Fact, string][] = [
   [fact('scope_cache_off'), 'prompt cache：这个插件带有 MCP server；已设置 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 加载它会重建一次 cache。'],
   [fact('scope_install_at_user_skill'), '安装在 user（~/.agents/skills/）'],
   ['check: nothing found (2 files)', 'check: nothing found (2 files)'],
+  [SEVEN_WARN, '⚠ 警告 7 项：可能外传密钥、可能下载并执行代码、可能下载并解码数据、提示词注入语句、隐藏 Unicode、凭据、修改启动文件'],
+  [fact('lookup_nothing'), '✓ 漏洞、恶意包查询：没有发现'],
+  [fact('danger_malware', { package: 'flatmap-stream', ecosystem: 'npm', ids: ['MAL-2025-20690'] }),
+    '✕ 危险：flatmap-stream (npm) 被列为恶意包（MAL-2025-20690）'],
+  [LODASH, '✕ 危险：lodash@4.17.15 (npm) 有 2 个已公开漏洞，最严重为 high（GHSA-35jh-r3h4-6jhm、GHSA-p6mc-m468-83gw）'],
+  [WARN_WITH_REVIEW, '⚠ 警告 3 项：可能外传密钥、隐藏 Unicode、模型审查 1 项'],
+  [fact('check_nothing', { files: fact('check_files', { count: 23 }) }), '✓ 检查：没有发现（23 个文件、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）'],
+  [fact('check_blocked'), '✕ 已拦下：恶意包查询找到已知的恶意包，所以不提供安装'],
+  [fact('check_unchecked', { why: 'a remote server at a URL' }), '？ 未检查：pattern 扫描、漏洞查询和恶意包查询（a remote server at a URL）'],
+  [SPLIT, '？ 未检查：这个 commit、package-lock.json 的漏洞查询；package-lock.json 的恶意包查询（OSV.dev: timed out）'],
 ]
 const EN: [Fact, string][] = [
   [fact('repo', { repo: 'o/r', stars: 52770, pushed: '2026-09-14' }), 'o/r ★52770 · pushed 2026-09-14'],
@@ -177,12 +213,45 @@ const EN: [Fact, string][] = [
     'prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.'],
   [fact('scope_install_at_user_skill'), 'install at user (~/.agents/skills/)'],
   ['check: nothing found (2 files)', 'check: nothing found (2 files)'],
+  [SEVEN_WARN, '⚠ warn (7): may send secrets out, may download and run code, may download and decode a payload, ' +
+    'prompt-injection phrases, hidden Unicode, credentials, changes shell startup files'],
+  [fact('lookup_nothing'), '✓ advisory and malware lookups: nothing found'],
+  [fact('danger_malware', { package: 'flatmap-stream', ecosystem: 'npm', ids: ['MAL-2025-20690'] }),
+    '✕ danger: flatmap-stream (npm) is listed as malicious (MAL-2025-20690)'],
+  [LODASH, '✕ danger: lodash@4.17.15 (npm) has 2 published vulnerabilities, worst high (GHSA-35jh-r3h4-6jhm, GHSA-p6mc-m468-83gw)'],
+  [WARN_WITH_REVIEW, '⚠ warn (3): may send secrets out, hidden Unicode, model review (1)'],
+  [fact('check_nothing', { files: fact('check_files', { count: 23 }) }),
+    '✓ check: nothing found (23 files, no npm or Python dependency files, advisory and malware lookups)'],
+  [fact('check_blocked'), '✕ blocked: the malware lookup found a known-malicious package, so Install is not offered'],
+  [fact('check_unchecked', { why: 'a remote server at a URL' }),
+    '? unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL)'],
+  [SPLIT, '? unchecked: advisory lookup for this commit, package-lock.json; malware lookup for package-lock.json (OSV.dev: timed out)'],
 ]
 
 test("kirby words each fact line in the language picked; a line it has no wording for stays as it is", async () => {
   for (const [f, line] of ZH_TW) expect(say(f, 'zh-TW')).toBe(line)
   for (const [f, line] of ZH_CN) expect(say(f, 'zh-CN')).toBe(line)
   for (const [f, line] of EN) expect(say(f, 'en')).toBe(line)
+})
+
+// For #28: the dialog counts the model review's findings on the warn line (docs/adr/0006). The same cases are in
+// tests/test_codex.py.
+test('a model review count joins the warn line, or makes one after the danger lines', async () => {
+  const warn = fact('warn', { count: 1, names: [fact('scan_hidden_unicode')] })
+  const nothing = fact('lookup_nothing')
+  expect(countReview(['skill: s', warn, nothing], 2).map(f => say(f, 'zh-TW')))
+    .toEqual(['skill: s', '⚠ 警告 3 項：隱藏 Unicode、模型審查 2 項', '✓ 漏洞、惡意套件查詢：沒有發現'])
+  const danger = fact('danger_malware', { package: 'x', ecosystem: 'npm', ids: ['MAL-1'] })
+  expect(countReview(['skill: s', danger, nothing], 1).map(f => say(f, 'en'))).toEqual([
+    'skill: s', '✕ danger: x (npm) is listed as malicious (MAL-1)', '⚠ warn (1): model review (1)',
+    '✓ advisory and malware lookups: nothing found',
+  ])
+  expect(countReview(['skill: s', fact('scan_no_warn'), nothing], 1).map(f => say(f, 'en'))).toEqual([
+    'skill: s', '⚠ warn (1): model review (1)', '✓ pattern scan: no danger or warn findings',
+    '✓ advisory and malware lookups: nothing found',
+  ])
+  expect(countReview(['skill: s', warn], 0)).toEqual(['skill: s', warn])
+  expect(warn.args.count).toBe(1)
 })
 
 test('a value is put in as it is, even one that looks like a placeholder', async () => {

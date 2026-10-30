@@ -12,7 +12,7 @@ from pathlib import Path
 
 # The wording lives beside the scripts, which can word their facts with it too.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"))
-from words import read_lang  # noqa: E402
+from words import fact, read_lang  # noqa: E402
 
 SCOPES = ("local", "project", "user")
 # The scope dialog's cancel option, the same in every language (the server words its install option, server.py).
@@ -121,6 +121,27 @@ def read_review(raw, sha, review):
     if sha != review["sha"]:
         return [f"model review: unchecked (it read {sha[:7]}, not {review['sha'][:7]}, the one checked here)"], None
     return lines or [f"model review: nothing found ({LABEL})"], None
+
+
+def count_review(facts, n):
+    """The facts with n model review findings counted on the warn line, as the dialog shows them: it counts the
+    review's findings and shows none of the reviewer's text (docs/adr/0006). Without a warn line, it makes one after
+    the danger lines, or before the check's first line. The facts given are left as they are."""
+    if n == 0:
+        return list(facts)
+    review = fact("warn_review", count=n)
+
+    def keyed(f, test):
+        return isinstance(f, dict) and test(f["key"])
+
+    at = next((i for i, f in enumerate(facts) if keyed(f, lambda k: k == "warn")), None)
+    if at is not None:
+        w = facts[at]["args"]
+        return [fact("warn", count=w["count"] + n, names=[*w["names"], review]) if i == at else f for i, f in enumerate(facts)]
+    danger = [i for i, f in enumerate(facts) if keyed(f, lambda k: k.startswith("danger_") or k == "check_blocked")]
+    first = next((i for i, f in enumerate(facts) if keyed(f, lambda k: re.match(r"(check|scan|lookup)_", k))), len(facts))
+    i = danger[-1] + 1 if danger else first
+    return [*facts[:i], fact("warn", count=n, names=[review]), *facts[i:]]
 
 
 def review_note(lines):

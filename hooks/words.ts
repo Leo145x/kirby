@@ -46,6 +46,59 @@ const WORDS = {
     "zh-TW": "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）",
     "zh-CN": "安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）"
   },
+  "check_files_one": {"en": "1 file", "zh-TW": "1 個檔案", "zh-CN": "1 个文件"},
+  "check_files": {"en": "{count} files", "zh-TW": "{count} 個檔案", "zh-CN": "{count} 个文件"},
+  "check_deps_one": {"en": "1 {ecosystem} dependency", "zh-TW": "1 個 {ecosystem} 相依套件", "zh-CN": "1 个 {ecosystem} 依赖包"},
+  "check_deps": {"en": "{count} {ecosystem} dependencies", "zh-TW": "{count} 個 {ecosystem} 相依套件", "zh-CN": "{count} 个 {ecosystem} 依赖包"},
+  "check_nothing": {"en": "✓ check: nothing found ({files}, no npm or Python dependency files, advisory and malware lookups)", "zh-TW": "✓ 檢查：沒有發現（{files}、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）", "zh-CN": "✓ 检查：没有发现（{files}、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）"},
+  "check_nothing_deps": {"en": "✓ check: nothing found ({files}, {deps}, advisory and malware lookups)", "zh-TW": "✓ 檢查：沒有發現（{files}、{deps}、漏洞與惡意套件查詢）", "zh-CN": "✓ 检查：没有发现（{files}、{deps}、漏洞与恶意包查询）"},
+  "check_blocked": {"en": "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered", "zh-TW": "✕ 已擋下：惡意套件查詢找到已知的惡意套件，所以不提供安裝", "zh-CN": "✕ 已拦下：恶意包查询找到已知的恶意包，所以不提供安装"},
+  "check_unchecked": {"en": "? unchecked: pattern scan, advisory lookup and malware lookup ({why})", "zh-TW": "？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（{why}）", "zh-CN": "？ 未检查：pattern 扫描、漏洞查询和恶意包查询（{why}）"},
+  "check_unchecked_not_pinned": {"en": "? unchecked: pattern scan, advisory lookup and malware lookup ({why}); not pinned", "zh-TW": "？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（{why}）；未鎖定版本", "zh-CN": "？ 未检查：pattern 扫描、漏洞查询和恶意包查询（{why}）；未锁定版本"},
+  "scan_no_warn": {"en": "✓ pattern scan: no danger or warn findings", "zh-TW": "✓ pattern 掃描：沒有危險或警告的發現", "zh-CN": "✓ pattern 扫描：没有危险或警告的发现"},
+  "scan_unread": {"en": "? unchecked: pattern scan of {count} binary or large files", "zh-TW": "？ 未檢查：{count} 個二進位或過大檔案的 pattern 掃描", "zh-CN": "？ 未检查：{count} 个二进制或过大文件的 pattern 扫描"},
+  "scan_unchecked": {"en": "? unchecked: pattern scan ({why})", "zh-TW": "？ 未檢查：pattern 掃描（{why}）", "zh-CN": "？ 未检查：pattern 扫描（{why}）"},
+  "scan_send_secrets": {"en": "may send secrets out", "zh-TW": "可能外傳密鑰", "zh-CN": "可能外传密钥"},
+  "scan_download_run": {"en": "may download and run code", "zh-TW": "可能下載並執行程式碼", "zh-CN": "可能下载并执行代码"},
+  "scan_download_decode": {"en": "may download and decode a payload", "zh-TW": "可能下載並解碼資料", "zh-CN": "可能下载并解码数据"},
+  "scan_hidden_unicode": {"en": "hidden Unicode", "zh-TW": "隱藏 Unicode", "zh-CN": "隐藏 Unicode"},
+  "scan_injection_phrase": {"en": "prompt-injection phrases", "zh-TW": "提示詞注入字句", "zh-CN": "提示词注入语句"},
+  "scan_credentials": {"en": "credentials", "zh-TW": "憑證", "zh-CN": "凭据"},
+  "scan_startup_files": {"en": "changes shell startup files", "zh-TW": "修改啟動檔", "zh-CN": "修改启动文件"},
+  "warn": {"en": "⚠ warn ({count}): {names}", "zh-TW": "⚠ 警告 {count} 項：{names}", "zh-CN": "⚠ 警告 {count} 项：{names}"},
+  "warn_review": {"en": "model review ({count})", "zh-TW": "模型審查 {count} 項", "zh-CN": "模型审查 {count} 项"},
+  "warn_package_vulns": {"en": "{vulns} in {package} ({ecosystem})", "zh-TW": "{package} ({ecosystem}) 的 {vulns}", "zh-CN": "{package} ({ecosystem}) 的 {vulns}"},
+  "warn_repo_advisories": {"en": "advisories this repo published ({count})", "zh-TW": "這個 repo 發布的 {count} 則安全公告", "zh-CN": "这个 repo 发布的 {count} 条安全公告"},
+  "danger_malware": {"en": "✕ danger: {package} ({ecosystem}) is listed as malicious ({ids})", "zh-TW": "✕ 危險：{package} ({ecosystem}) 被列為惡意套件（{ids}）", "zh-CN": "✕ 危险：{package} ({ecosystem}) 被列为恶意包（{ids}）"},
+  "danger_malware_by_name": {"en": "✕ danger: {package} ({ecosystem}) is listed as malicious ({ids}); matched by name, the version was not resolved", "zh-TW": "✕ 危險：{package} ({ecosystem}) 被列為惡意套件（{ids}）；以名稱比對，版本未解析", "zh-CN": "✕ 危险：{package} ({ecosystem}) 被列为恶意包（{ids}）；按名称匹配，版本未解析"},
+  "danger_vulns": {"en": "✕ danger: {package} ({ecosystem}) has {vulns}, worst {rating} ({ids})", "zh-TW": "✕ 危險：{package} ({ecosystem}) 有 {vulns}，最嚴重為 {rating}（{ids}）", "zh-CN": "✕ 危险：{package} ({ecosystem}) 有 {vulns}，最严重为 {rating}（{ids}）"},
+  "danger_commit_malware": {"en": "✕ danger: this commit is listed as malicious ({ids})", "zh-TW": "✕ 危險：這個 commit 被列為惡意（{ids}）", "zh-CN": "✕ 危险：这个 commit 被列为恶意（{ids}）"},
+  "danger_package_affected": {"en": "✕ danger: {package} ({ecosystem}) is affected by {vulns} ({ids})", "zh-TW": "✕ 危險：{package} ({ecosystem}) 受 {vulns}影響（{ids}）", "zh-CN": "✕ 危险：{package} ({ecosystem}) 受 {vulns}影响（{ids}）"},
+  "danger_commit_vulns": {"en": "✕ danger: this commit is affected by {vulns} ({ids})", "zh-TW": "✕ 危險：這個 commit 受 {vulns}影響（{ids}）", "zh-CN": "✕ 危险：这个 commit 受 {vulns}影响（{ids}）"},
+  "danger_more": {"en": "✕ danger: {count} more, listed for the model", "zh-TW": "✕ 危險：另有 {count} 項，已交給模型", "zh-CN": "✕ 危险：另有 {count} 项，已交给模型"},
+  "lookup_vulns_one": {"en": "1 published vulnerability", "zh-TW": "1 個已公開漏洞", "zh-CN": "1 个已公开漏洞"},
+  "lookup_vulns": {"en": "{count} published vulnerabilities", "zh-TW": "{count} 個已公開漏洞", "zh-CN": "{count} 个已公开漏洞"},
+  "lookup_deps": {"en": "dependencies: {files}", "zh-TW": "相依套件：{files}", "zh-CN": "依赖包：{files}"},
+  "lookup_deps_file": {"en": "{file}: {count} {ecosystem}", "zh-TW": "{file}：{count} 個 {ecosystem}", "zh-CN": "{file}：{count} 个 {ecosystem}"},
+  "lookup_deps_file_resolved": {"en": "{file}: {count} {ecosystem}, versions resolved at check time", "zh-TW": "{file}：{count} 個 {ecosystem}，版本是檢查當下算出的", "zh-CN": "{file}：{count} 个 {ecosystem}，版本是检查时算出的"},
+  "lookup_deps_file_names": {"en": "{file}: {count} {ecosystem}, names only", "zh-TW": "{file}：{count} 個 {ecosystem}，只有名稱", "zh-CN": "{file}：{count} 个 {ecosystem}，只有名称"},
+  "lookup_deps_file_unreadable": {"en": "{file}: {count} {ecosystem}, could not be read", "zh-TW": "{file}：{count} 個 {ecosystem}，無法讀取", "zh-CN": "{file}：{count} 个 {ecosystem}，无法读取"},
+  "lookup_nothing": {"en": "✓ advisory and malware lookups: nothing found", "zh-TW": "✓ 漏洞、惡意套件查詢：沒有發現", "zh-CN": "✓ 漏洞、恶意包查询：没有发现"},
+  "lookup_nothing_rest": {"en": "✓ advisory and malware lookups: nothing found in the rest", "zh-TW": "✓ 漏洞、惡意套件查詢：其餘沒有發現", "zh-CN": "✓ 漏洞、恶意包查询：其余没有发现"},
+  "lookup_advisory_nothing": {"en": "✓ advisory lookup: nothing found", "zh-TW": "✓ 漏洞查詢：沒有發現", "zh-CN": "✓ 漏洞查询：没有发现"},
+  "lookup_advisory_nothing_rest": {"en": "✓ advisory lookup: nothing found in the rest", "zh-TW": "✓ 漏洞查詢：其餘沒有發現", "zh-CN": "✓ 漏洞查询：其余没有发现"},
+  "lookup_malware_nothing": {"en": "✓ malware lookup: nothing found", "zh-TW": "✓ 惡意套件查詢：沒有發現", "zh-CN": "✓ 恶意包查询：没有发现"},
+  "lookup_malware_nothing_rest": {"en": "✓ malware lookup: nothing found in the rest", "zh-TW": "✓ 惡意套件查詢：其餘沒有發現", "zh-CN": "✓ 恶意包查询：其余没有发现"},
+  "lookup_unchecked_advisory": {"en": "? unchecked: advisory lookup for {parts} ({why})", "zh-TW": "？ 未檢查：{parts} 的漏洞查詢（{why}）", "zh-CN": "？ 未检查：{parts} 的漏洞查询（{why}）"},
+  "lookup_unchecked_malware": {"en": "? unchecked: malware lookup for {parts} ({why})", "zh-TW": "？ 未檢查：{parts} 的惡意套件查詢（{why}）", "zh-CN": "？ 未检查：{parts} 的恶意包查询（{why}）"},
+  "lookup_unchecked_both": {"en": "? unchecked: advisory and malware lookups for {parts} ({why})", "zh-TW": "？ 未檢查：{parts} 的漏洞、惡意套件查詢（{why}）", "zh-CN": "？ 未检查：{parts} 的漏洞、恶意包查询（{why}）"},
+  "lookup_unchecked_split": {"en": "? unchecked: advisory lookup for {advisory}; malware lookup for {malware} ({why})", "zh-TW": "？ 未檢查：{advisory} 的漏洞查詢；{malware} 的惡意套件查詢（{why}）", "zh-CN": "？ 未检查：{advisory} 的漏洞查询；{malware} 的恶意包查询（{why}）"},
+  "lookup_part_commit": {"en": "this commit", "zh-TW": "這個 commit", "zh-CN": "这个 commit"},
+  "lookup_part_package": {"en": "the package {package} ({ecosystem})", "zh-TW": "套件 {package} ({ecosystem})", "zh-CN": "包 {package} ({ecosystem})"},
+  "lookup_part_repo_advisories": {"en": "this repo's advisories", "zh-TW": "這個 repo 的安全公告", "zh-CN": "这个 repo 的安全公告"},
+  "lookup_part_dependencies": {"en": "the dependencies of {package}", "zh-TW": "{package} 的相依套件", "zh-CN": "{package} 的依赖包"},
+  "lookup_part_more_files": {"en": "more dependency files ({files})", "zh-TW": "其他相依套件檔（{files}）", "zh-CN": "其他依赖文件（{files}）"},
+  "lookup_part_ratings": {"en": "the rating of advisories ({count})", "zh-TW": "{count} 則安全公告的評級", "zh-CN": "{count} 条安全公告的评级"},
   "plugin": {
     "en": "plugin: {name} · marketplace {marketplace} · commit {commit}",
     "zh-TW": "外掛：{name} · marketplace {marketplace} · commit {commit}",
@@ -79,6 +132,7 @@ const WORDS = {
     "zh-TW": "來源：{source}，kirby 無法取得",
     "zh-CN": "来源：{source}，kirby 无法获取"
   },
+  "plugin_source_other": {"en": "source: {what}", "zh-TW": "來源：{what}", "zh-CN": "来源：{what}"},
   "plugin_dependencies": {
     "en": "installed along with it, not checked: {plugins}",
     "zh-TW": "會一起安裝、未檢查：{plugins}",
@@ -179,10 +233,12 @@ const WORDS = {
 // words:end
 
 export type Key = Exclude<keyof typeof WORDS, 'list'>
-type Value = string | number | readonly string[]
-export type Fact = string | { key: Key; args: Record<string, Value> }
+// A value can be a fact itself (a name, a count with its noun), said in the same language; a list can hold facts.
+export type Keyed = { key: Key; args: Record<string, Value> }
+type Value = string | number | Keyed | readonly (string | Keyed)[]
+export type Fact = string | Keyed
 
-export function fact(key: Key, args: Record<string, Value> = {}): Fact {
+export function fact(key: Key, args: Record<string, Value> = {}): Keyed {
   return { key, args }
 }
 
@@ -194,9 +250,10 @@ export function readLang(value: unknown): Lang {
 // One fact line in the language given.
 export function say(f: Fact, lang: Lang): string {
   if (typeof f === 'string') return f
+  const one = (v: string | number | Keyed): string => (typeof v === 'object' ? say(v, lang) : String(v))
   return WORDS[f.key][lang].replace(/\{(\w+)\}/g, (_, name: string) => {
     if (!(name in f.args)) throw new Error(`${f.key} needs ${name}`)
     const v = f.args[name]
-    return Array.isArray(v) ? v.join(WORDS.list[lang]) : String(v)
+    return Array.isArray(v) ? v.map(one).join(WORDS.list[lang]) : one(v as string | number | Keyed)
   })
 }

@@ -8,9 +8,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex"))
 
-from dialog import CANCEL, MAX, REVIEW_MAX, SCOPES, english, next_options, read_dialog, read_review  # noqa: E402
+from dialog import CANCEL, MAX, REVIEW_MAX, SCOPES, count_review, english, next_options, read_dialog, read_review  # noqa: E402
 import server  # noqa: E402
-from words import WORDS, fact, read_lang, say  # noqa: E402  (server puts the scripts on the path)
+from words import WORDS, fact, in_english, read_lang, say  # noqa: E402  (server puts the scripts on the path)
+
+
+def printed(c):
+    """A check script's JSON as it prints it: its facts (words.py's) and, beside them, the same in English."""
+    return {**c, "lines": in_english(c["facts"])}
 
 # Where user is the only scope, as the dialog says it with no lang.
 USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
@@ -98,6 +103,26 @@ class Words(unittest.TestCase):
         (fact("scope_cache_off"), "prompt cache：這個外掛帶有 MCP server；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。"),
         (fact("scope_install_at_user_skill"), "安裝在 user（~/.agents/skills/）"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+        # The pre-install check's summary (#26), from the mock-ups in #24.
+        (fact("warn", count=7, names=[fact("scan_send_secrets"), fact("scan_download_run"), fact("scan_download_decode"),
+                                       fact("scan_injection_phrase"), fact("scan_hidden_unicode"), fact("scan_credentials"),
+                                       fact("scan_startup_files")]),
+         "⚠ 警告 7 項：可能外傳密鑰、可能下載並執行程式碼、可能下載並解碼資料、提示詞注入字句、隱藏 Unicode、憑證、修改啟動檔"),
+        (fact("lookup_nothing"), "✓ 漏洞、惡意套件查詢：沒有發現"),
+        (fact("danger_malware", package="flatmap-stream", ecosystem="npm", ids=["MAL-2025-20690"]),
+         "✕ 危險：flatmap-stream (npm) 被列為惡意套件（MAL-2025-20690）"),
+        (fact("danger_vulns", package="lodash@4.17.15", ecosystem="npm", vulns=fact("lookup_vulns", count=2), rating="high",
+              ids=["GHSA-35jh-r3h4-6jhm", "GHSA-p6mc-m468-83gw"]),
+         "✕ 危險：lodash@4.17.15 (npm) 有 2 個已公開漏洞，最嚴重為 high（GHSA-35jh-r3h4-6jhm、GHSA-p6mc-m468-83gw）"),
+        (fact("warn", count=3, names=[fact("scan_send_secrets"), fact("scan_hidden_unicode"), fact("warn_review", count=1)]),
+         "⚠ 警告 3 項：可能外傳密鑰、隱藏 Unicode、模型審查 1 項"),
+        (fact("check_nothing", files=fact("check_files", count=23)),
+         "✓ 檢查：沒有發現（23 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）"),
+        (fact("check_blocked"), "✕ 已擋下：惡意套件查詢找到已知的惡意套件，所以不提供安裝"),
+        (fact("check_unchecked", why="a remote server at a URL"), "？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（a remote server at a URL）"),
+        (fact("lookup_unchecked_split", advisory=[fact("lookup_part_commit"), "package-lock.json"],
+              malware=["package-lock.json"], why="OSV.dev: timed out"),
+         "？ 未檢查：這個 commit、package-lock.json 的漏洞查詢；package-lock.json 的惡意套件查詢（OSV.dev: timed out）"),
     ]
     ZH_CN = [
         (fact("repo", repo="o/r", stars=52770, pushed="2026-09-14"), "o/r ★52770 · 2026-09-14 更新"),
@@ -119,6 +144,25 @@ class Words(unittest.TestCase):
         (fact("scope_cache_off"), "prompt cache：这个插件带有 MCP server；已设置 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 加载它会重建一次 cache。"),
         (fact("scope_install_at_user_skill"), "安装在 user（~/.agents/skills/）"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+        (fact("warn", count=7, names=[fact("scan_send_secrets"), fact("scan_download_run"), fact("scan_download_decode"),
+                                       fact("scan_injection_phrase"), fact("scan_hidden_unicode"), fact("scan_credentials"),
+                                       fact("scan_startup_files")]),
+         "⚠ 警告 7 项：可能外传密钥、可能下载并执行代码、可能下载并解码数据、提示词注入语句、隐藏 Unicode、凭据、修改启动文件"),
+        (fact("lookup_nothing"), "✓ 漏洞、恶意包查询：没有发现"),
+        (fact("danger_malware", package="flatmap-stream", ecosystem="npm", ids=["MAL-2025-20690"]),
+         "✕ 危险：flatmap-stream (npm) 被列为恶意包（MAL-2025-20690）"),
+        (fact("danger_vulns", package="lodash@4.17.15", ecosystem="npm", vulns=fact("lookup_vulns", count=2), rating="high",
+              ids=["GHSA-35jh-r3h4-6jhm", "GHSA-p6mc-m468-83gw"]),
+         "✕ 危险：lodash@4.17.15 (npm) 有 2 个已公开漏洞，最严重为 high（GHSA-35jh-r3h4-6jhm、GHSA-p6mc-m468-83gw）"),
+        (fact("warn", count=3, names=[fact("scan_send_secrets"), fact("scan_hidden_unicode"), fact("warn_review", count=1)]),
+         "⚠ 警告 3 项：可能外传密钥、隐藏 Unicode、模型审查 1 项"),
+        (fact("check_nothing", files=fact("check_files", count=23)),
+         "✓ 检查：没有发现（23 个文件、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）"),
+        (fact("check_blocked"), "✕ 已拦下：恶意包查询找到已知的恶意包，所以不提供安装"),
+        (fact("check_unchecked", why="a remote server at a URL"), "？ 未检查：pattern 扫描、漏洞查询和恶意包查询（a remote server at a URL）"),
+        (fact("lookup_unchecked_split", advisory=[fact("lookup_part_commit"), "package-lock.json"],
+              malware=["package-lock.json"], why="OSV.dev: timed out"),
+         "？ 未检查：这个 commit、package-lock.json 的漏洞查询；package-lock.json 的恶意包查询（OSV.dev: timed out）"),
     ]
     EN = [
         (fact("repo", repo="o/r", stars=52770, pushed="2026-09-14"), "o/r ★52770 · pushed 2026-09-14"),
@@ -142,6 +186,27 @@ class Words(unittest.TestCase):
          "prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once."),
         (fact("scope_install_at_user_skill"), "install at user (~/.agents/skills/)"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+        (fact("warn", count=7, names=[fact("scan_send_secrets"), fact("scan_download_run"), fact("scan_download_decode"),
+                                       fact("scan_injection_phrase"), fact("scan_hidden_unicode"), fact("scan_credentials"),
+                                       fact("scan_startup_files")]),
+         "⚠ warn (7): may send secrets out, may download and run code, may download and decode a payload, "
+         "prompt-injection phrases, hidden Unicode, credentials, changes shell startup files"),
+        (fact("lookup_nothing"), "✓ advisory and malware lookups: nothing found"),
+        (fact("danger_malware", package="flatmap-stream", ecosystem="npm", ids=["MAL-2025-20690"]),
+         "✕ danger: flatmap-stream (npm) is listed as malicious (MAL-2025-20690)"),
+        (fact("danger_vulns", package="lodash@4.17.15", ecosystem="npm", vulns=fact("lookup_vulns", count=2), rating="high",
+              ids=["GHSA-35jh-r3h4-6jhm", "GHSA-p6mc-m468-83gw"]),
+         "✕ danger: lodash@4.17.15 (npm) has 2 published vulnerabilities, worst high (GHSA-35jh-r3h4-6jhm, GHSA-p6mc-m468-83gw)"),
+        (fact("warn", count=3, names=[fact("scan_send_secrets"), fact("scan_hidden_unicode"), fact("warn_review", count=1)]),
+         "⚠ warn (3): may send secrets out, hidden Unicode, model review (1)"),
+        (fact("check_nothing", files=fact("check_files", count=23)),
+         "✓ check: nothing found (23 files, no npm or Python dependency files, advisory and malware lookups)"),
+        (fact("check_blocked"), "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered"),
+        (fact("check_unchecked", why="a remote server at a URL"),
+         "? unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL)"),
+        (fact("lookup_unchecked_split", advisory=[fact("lookup_part_commit"), "package-lock.json"],
+              malware=["package-lock.json"], why="OSV.dev: timed out"),
+         "? unchecked: advisory lookup for this commit, package-lock.json; malware lookup for package-lock.json (OSV.dev: timed out)"),
     ]
 
     def test_kirby_words_each_fact_line_in_the_language_picked(self):
@@ -158,6 +223,23 @@ class Words(unittest.TestCase):
             self.assertEqual(read_lang(lang), lang)
         for lang in (None, "zh-tw", "ja", "zh", 1, ["en"]):
             self.assertEqual(read_lang(lang), "en")
+
+    def test_a_model_review_count_joins_the_warn_line_or_makes_one_after_the_danger_lines(self):
+        # For #28: the dialog counts the model review's findings on the warn line (docs/adr/0006). The same cases
+        # are in tests/dialog.test.ts.
+        warn = fact("warn", count=1, names=[fact("scan_hidden_unicode")])
+        nothing = fact("lookup_nothing")
+        self.assertEqual([say(f, "zh-TW") for f in count_review(["skill: s", warn, nothing], 2)],
+                         ["skill: s", "⚠ 警告 3 項：隱藏 Unicode、模型審查 2 項", "✓ 漏洞、惡意套件查詢：沒有發現"])
+        danger = fact("danger_malware", package="x", ecosystem="npm", ids=["MAL-1"])
+        self.assertEqual([say(f, "en") for f in count_review(["skill: s", danger, nothing], 1)],
+                         ["skill: s", "✕ danger: x (npm) is listed as malicious (MAL-1)", "⚠ warn (1): model review (1)",
+                          "✓ advisory and malware lookups: nothing found"])
+        self.assertEqual([say(f, "en") for f in count_review(["skill: s", fact("scan_no_warn"), nothing], 1)],
+                         ["skill: s", "⚠ warn (1): model review (1)", "✓ pattern scan: no danger or warn findings",
+                          "✓ advisory and malware lookups: nothing found"])
+        self.assertEqual(count_review(["skill: s", warn], 0), ["skill: s", warn])
+        self.assertEqual(warn["args"]["count"], 1)
 
     def test_both_sides_carry_the_same_wording(self):
         ts = (ROOT / "hooks" / "words.ts").read_text()
@@ -319,15 +401,11 @@ class OneScope(unittest.TestCase):
     ARGS = ["probe", "--", "npx", "-y", "probe"]
     FACTS = [fact("mcp_package", package="probe@1.0.0", ecosystem="npm", file="package.json"),
              fact("mcp_pinned", name="probe", version="1.0.0"),
-             "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"]
-    CHECK = {"mcp_args": ["probe", "--", "npx", "-y", "probe@1.0.0"], "blocked": False, "facts": FACTS,
-             "lines": ["package: probe@1.0.0 (npm), named by this repo's package.json; not verified to come from this repo",
-                       "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
-                       "checked when the server starts",
-                       "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"],
+             fact("check_nothing_deps", files=fact("check_files", count=3), deps=[fact("check_deps", count=2, ecosystem="npm")])]
+    CHECK = printed({"mcp_args": ["probe", "--", "npx", "-y", "probe@1.0.0"], "blocked": False, "facts": FACTS,
              "note": "pattern scan: the dialog showed the user no pattern-scan findings in the npm package probe@1.0.0",
              "review": {"needed": False, "package": {"ecosystem": "npm", "name": "probe", "version": "1.0.0"}, "sha": "e" * 64,
-                        "files": ["dist/index.js"]}}
+                        "files": ["dist/index.js"]}})
 
     def install(self, *answers, dialog=GOOD, check=None):
         ran, scripts, run, script = [], [], server.run, server.script
@@ -367,7 +445,7 @@ class OneScope(unittest.TestCase):
             "MCP server：codex mcp add probe -- npx -y probe@1.0.0",
             "套件：probe@1.0.0（npm），由這個 repo 的 package.json 指名；沒有驗證它來自這個 repo",
             "已鎖定：只有 probe，鎖定在 1.0.0；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同",
-            self.CHECK["lines"][2],
+            "✓ 檢查：沒有發現（3 個檔案、2 個 npm 相依套件、漏洞與惡意套件查詢）",
             "安裝位置：user（~/.codex/config.toml，所有專案）",
         ]) + f"\n\n{GOOD['about']}\n\n{GOOD['next']}")
         self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, option]))
@@ -404,18 +482,17 @@ class Blocked(unittest.TestCase):
     """A skill whose malware lookup found something: the first dialog shows the lookups and offers no
     Install, and every result tells the model why."""
 
-    CHECK = {
+    CHECK = printed({
         "name": "s", "commit": "aaaaaaa", "sha": "a" * 40, "files": 2, "scripts": [], "exists": False,
-        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "flagged: nothing",
-                  "dependencies: package-lock.json: 1 npm",
-                  "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-                  "danger: evil@1.0.0 (npm) is a known-malicious package (MAL-2026-1)"],
+        "facts": [fact("check_blocked"), fact("danger_malware", package="evil@1.0.0", ecosystem="npm", ids=["MAL-2026-1"]),
+                  fact("scan_no_warn"), fact("lookup_deps", files=[fact("lookup_deps_file", file="package-lock.json", count=1, ecosystem="npm")]),
+                  fact("lookup_advisory_nothing")],
         "note": "pattern scan: the dialog showed the user no pattern-scan findings\n"
                 "lookups: …\nblocked: the dialog did not offer Install, because …",
         "blocked": True,
         # A blocked install gets no model review: Install is not offered anyway.
         "review": {"needed": False, "repo": "o/r", "sha": "a" * 40, "files": ["s/SKILL.md", "s/package-lock.json"]},
-    }
+    })
 
     def install(self, check, *answers):
         run, script = server.run, server.script
@@ -443,15 +520,15 @@ class Blocked(unittest.TestCase):
 
 class Language(unittest.TestCase):
     """A skill's first dialog shows kirby's lines in the language the model picked (dialog.lang), and the
-    pre-install check's own lines as they are; what the tools answer the model stays English. The same cases
+    pre-install check's lines (the scripts' facts) too; what the tools answer the model stays English. The same cases
     are in tests/register.test.ts."""
 
-    CHECK = {
+    CHECK = printed({
         "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh", "setup.py", "x.sh"], "exists": True,
-        "lines": ["check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)"],
+        "facts": [fact("check_nothing", files=fact("check_files", count=2))],
         "note": "pattern scan: the dialog showed the user no pattern-scan findings", "blocked": False,
         "review": {**NEEDED, "needed": False},
-    }
+    })
 
     def call(self, lang, *, project=None, force=False, tool="install", answers=("取消",)):
         run, script = server.run, server.script
@@ -472,7 +549,7 @@ class Language(unittest.TestCase):
             "o/r ★52770 · 2026-09-14 更新",
             "技能：s · commit aaaaaaa · 2 個檔案",
             "3 個腳本，例如 run.sh、setup.py",
-            *self.CHECK["lines"],
+            "✓ 檢查：沒有發現（2 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）",
             "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）",
         ]) + f"\n\n{GOOD['about']}\n\n{GOOD['next']}")
         self.assertEqual(r, f"not installed: the user cancelled.\n{self.CHECK['note']}")
@@ -490,7 +567,7 @@ class Language(unittest.TestCase):
             "技能：s · commit aaaaaaa · 2 个文件",
             "3 个脚本，例如 run.sh、setup.py",
             "已存在：.agents/skills/s/（安装在 local 或 project 会失败）",
-            *self.CHECK["lines"],
+            "✓ 检查：没有发现（2 个文件、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）",
         ]) + "\n\n"), peer.asked[0][0])
 
     def test_with_en_a_missing_lang_or_any_other_it_is_english_as_before(self):
@@ -530,12 +607,12 @@ class ModelReview(unittest.TestCase):
     """check → the model review, when the check asks for one → install with the sha checked and the review's
     result (docs/adr/0002). install decides from its own check whether a review was needed."""
 
-    CHECK = {
+    CHECK = printed({
         "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh"], "exists": False,
-        "lines": ["pattern scan: 2 files, the ones installed; a pattern match, not a safety review", "warn: credentials ×1 (run.sh:1)"],
-        "note": "pattern scan: the dialog showed the user these pattern-scan findings\nlookups: none", "blocked": False,
+        "facts": [fact("warn", count=1, names=[fact("scan_credentials")]), fact("lookup_nothing")],
+        "note": "pattern scan: the pattern-scan findings\nlookups: none", "blocked": False,
         "review": NEEDED,
-    }
+    })
     FINDING = {"file": "s/run.sh", "line": 1, "reason": "Reads the SSH key."}
     LINE = "warn: s/run.sh:1: Reads the SSH key. (model review, as reported by the model)"
 
@@ -581,12 +658,12 @@ class ModelReview(unittest.TestCase):
         peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消")
         self.assertIn("\n".join([*self.CHECK["lines"], self.LINE, SKILL_USER_ONLY]), peer.asked[0][0])
         self.assertEqual(peer.asked[0][1], GOOD["options"])
-        self.assertEqual(r, "not installed: the user cancelled.\npattern scan: the dialog showed the user these pattern-scan "
+        self.assertEqual(r, "not installed: the user cancelled.\npattern scan: the pattern-scan "
                             f"findings\nlookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
 
     def test_without_a_review_the_dialog_says_so_and_install_stays(self):
         peer, r = self.call(self.SKILL, "取消")
-        self.assertIn("warn: credentials ×1 (run.sh:1)\nmodel review: unchecked (no review result was passed)\n",
+        self.assertIn("✓ advisory and malware lookups: nothing found\nmodel review: unchecked (no review result was passed)\n",
                       peer.asked[0][0])
         self.assertEqual(peer.asked[0][1], GOOD["options"])
         self.assertTrue(r.endswith("\n  model review: unchecked (no review result was passed)"), r)
@@ -632,11 +709,11 @@ class Plugin(unittest.TestCase):
     SHA, OLD = "a" * 40, "c" * 40
     FACTS = [fact("plugin_files", name="p", marketplace="mk", commit="aaaaaaa", files=2),
              fact("plugin_source_folder", path="plugins/p"),
-             "pattern scan: 2 files, the ones installed; a pattern match, not a safety review"]
-    CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
-             "blocked": False, "facts": FACTS, "lines": [say(f, "en") for f in FACTS],
+             fact("check_nothing", files=fact("check_files", count=2))]
+    CHECK = printed({"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
+             "blocked": False, "facts": FACTS,
              "note": "pattern scan: the dialog showed the user no pattern-scan findings in o/mk at commit " + SHA,
-             "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}}
+             "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}})
 
     def install(self, *answers, listed=([],), heads=(), check=None, lang=None):
         """listed: the marketplaces Codex lists, call by call (the last stays); heads: what git rev-parse HEAD
@@ -741,7 +818,7 @@ class Plugin(unittest.TestCase):
                       "marketplace：已加入，名稱 mk，在 commit ccccccc；直接從它安裝\n"
                       "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）\n"
                       "來源：這個 repo 的 plugins/p/\n"
-                      f"{self.CHECK['lines'][2]}\n"
+                      "✓ 檢查：沒有發現（2 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）\n"
                       "安裝位置：user（~/.codex/config.toml，所有專案）\n\n", peer.asked[0][0])
         self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, option]))
         # The answer is the translated label, and it still installs at user.

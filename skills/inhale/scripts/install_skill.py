@@ -14,9 +14,10 @@ SKILL.md is at the repo root. The installed folder is named after the skill's fr
 <skills dir>/<name>/.kirby.json. With --commit (the full sha --check --json reported) that commit
 is installed, even if the repo has moved on since, so the user gets what they were shown; if it can
 no longer be fetched (after a force-push, say), nothing is installed. --check also runs the advisory
-and malware lookups (lookups.py) on the skill's dependency files. With --json, `lines` are the dialog's
-facts (one line when nothing was found), `note` is what the model is told about them, and `review` says whether the model review runs and
-which files it reads, at which commit (docs/adr/0002).
+and malware lookups (lookups.py) on the skill's dependency files. With --json, `facts` are the check's part of
+the dialog, summarised by severity (one line when nothing was found), as words.py facts each side words in the
+dialog's language, and `lines` the same in English; `note` gives the model every finding, and `review` says whether
+the model review runs and which files it reads, at which commit (docs/adr/0002).
 """
 import argparse
 import json
@@ -32,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from lookups import shown  # noqa: E402
+from words import fact, in_english  # noqa: E402
 
 # Claude Code reads user skills from $CLAUDE_CONFIG_DIR/skills when that is set; Codex has no such variable.
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -148,7 +150,6 @@ COMBINATIONS = [
 SEVERITY = {name: severity for name, severity, _, _ in RULES + COMBINATIONS}
 RANK = {"danger": 0, "warn": 1, "info": 2}
 SCAN_MAX_BYTES = 2_000_000
-SHOWN_RULES = 6
 NOTED_HITS = 30
 
 
@@ -181,46 +182,38 @@ def combinations(hits):
     return [(name, f"{name}: {what} ({' + '.join(pair)})") for name, _, pair, what in COMBINATIONS if set(pair) <= found]
 
 
-def scan_lines(hits, unread, scanned, covered="the ones installed"):
-    """The scan as dialog facts: what was covered, then the combination findings, then each flagged
-    rule, led by its severity, with where it hit; warn rules first."""
-    lines = [f"pattern scan: {scanned} files, {covered}; a pattern match, not a safety review"
-             + (f"; not scanned: {len(unread)} binary or large files" if unread else "")]
-    if not hits:
-        return lines + ["flagged: nothing"]
-    lines += [f"{SEVERITY[name]}: {line}" for name, line in combinations(hits)]
-    by_rule = {}
-    for h in by_severity(hits):
-        by_rule.setdefault(h["rule"], []).append(f"{shown(h['file'])}:{h['line']}")
-    for rule, where in list(by_rule.items())[:SHOWN_RULES]:
-        more = f", … (+{len(where) - 2})" if len(where) > 2 else ""
-        lines.append(f"{SEVERITY[rule]}: {rule} ×{len(where)} ({', '.join(where[:2])}{more})")
-    rest = {}
-    for rule, where in list(by_rule.items())[SHOWN_RULES:]:
-        rest.setdefault(SEVERITY[rule], []).append(f"{rule} ×{len(where)}")
-    lines += [f"{severity} also: {', '.join(rules)}" for severity, rules in rest.items()]
-    return lines
+def warn_names(hits):
+    """The scan's warn findings as the dialog names them: the combinations, then each warn rule, in the order of
+    their first hit. Info rules are left out of the dialog."""
+    names = [name for name, _ in combinations(hits)]
+    names += dict.fromkeys(h["rule"] for h in hits if SEVERITY[h["rule"]] != "info")
+    return [fact("scan_" + name.replace("-", "_")) for name in names]
 
 
-def check_lines(hits, unread, scanned, looked, covered="the ones installed"):
-    """The pre-install check as dialog facts: one line when the pattern scan and the lookups (looked,
-    lookups.check's result) found nothing and nothing went unscanned or unchecked (docs/adr/0005);
-    otherwise the scan's lines, then the lookups'. covered says which files the scan read."""
-    if hits or unread or not looked["nothing_found"]:
-        return scan_lines(hits, unread, scanned, covered) + looked["lines"]
-    files = lookups.plural(scanned, "file", "files")
-    return [f"check: nothing found ({files}, {looked['nothing_found']}, advisory and malware lookups)"]
+def check_facts(hits, unread, scanned, looked, why=None):
+    """The pre-install check's part of the dialog, as facts (words.py): one line when the pattern scan and the
+    lookups (looked, lookups.check's result) found nothing and nothing went unscanned or unchecked (docs/adr/0005);
+    otherwise the summary by severity (lookups.summary), with the scan's warn findings named on the warn line, and
+    its own line when it found no danger or warn finding, left files unscanned or (why) did not run."""
+    if why is None and not hits and not unread and looked["nothing_found"] is not None:
+        files = fact("check_files_one") if scanned == 1 else fact("check_files", count=scanned)
+        deps = looked["nothing_found"]
+        return [fact("check_nothing_deps", files=files, deps=deps) if deps else fact("check_nothing", files=files)]
+    warn = [] if why else warn_names(hits)
+    scan_facts = ([fact("scan_unchecked", why=why)] if why else
+                  [*([] if warn else [fact("scan_no_warn")]), *([fact("scan_unread", count=len(unread))] if unread else [])])
+    return lookups.summary(looked, warn, scan_facts)
 
 
 def scan_note(repo, folder, sha, hits, place=None):
     """The pattern scan for the model, so it can read and explain a finding: repo paths at the scanned commit, or,
-    with place (an MCP server's package), paths inside it."""
+    with place (an MCP server's package), paths inside it. The dialog showed the user only a summary."""
     where = place or f"{repo} at commit {sha}"
     if not hits:
         return f"pattern scan: the dialog showed the user no pattern-scan findings in {where} (a pattern match, not a safety review)"
     prefix = "" if folder == "." else f"{folder}/"
-    lines = [f"pattern scan: the dialog showed the user these pattern-scan findings in {where}"
-             + (", as paths inside it:" if place else ":")]
+    lines = [f"pattern scan: the pattern-scan findings in {where}" + (", as paths inside it" if place else "")
+             + " (the dialog showed the user the warn ones by name only, without files or lines, and left out the info ones):"]
     lines += [f"  {SEVERITY[name]} {line}" for name, line in combinations(hits)]
     lines += [f"  {SEVERITY[h['rule']]} {h['rule']} {shown(prefix + h['file'], 160)}:{h['line']}"
               for h in by_severity(hits)[:NOTED_HITS]]
@@ -229,7 +222,6 @@ def scan_note(repo, folder, sha, hits, place=None):
     return "\n".join(lines)
 
 
-UNCHECKED = "unchecked: pattern scan, advisory lookup and malware lookup"
 # A check that read no files gives the model review nothing to read.
 NO_REVIEW = {"needed": False, "files": []}
 
@@ -297,14 +289,15 @@ def main():
         looked = lookups.check(args.repo, sha, src, files) if args.check else None
 
         if args.check:
-            summary = check_lines(hits, unread, len(files) - len(unread), looked)
+            facts = check_facts(hits, unread, len(files) - len(unread), looked)
+            summary = in_english(facts)
             if args.json:
                 print(json.dumps({
                     "repo": args.repo, "folder": folder, "name": name, "commit": sha[:7], "sha": sha,
                     "target": str(target), "exists": exists, "files": len(files),
                     "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
                     "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
-                    "lines": summary, "note": f"{scan_note(args.repo, folder, sha, hits)}\n{looked['note']}",
+                    "facts": facts, "lines": summary, "note": f"{scan_note(args.repo, folder, sha, hits)}\n{looked['note']}",
                     "blocked": looked["blocked"],
                     "review": review({"repo": args.repo, "sha": sha}, files, hits, looked,
                                      prefix="" if folder == "." else f"{folder}/"),

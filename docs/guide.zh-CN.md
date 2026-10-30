@@ -63,7 +63,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 同一个工具在任何文件里匹配到 `network`，又匹配到 `env-secret`、`exec` 或 `decode` 时，会再多一项组合发现，写明是哪两条规则：`send-secrets`（可能把机密发送出去）、`download-run`（可能下载并运行代码）和 `download-decode`（可能下载并解码一段内容）。
 
-对话框先列组合发现，再列每条匹配到的规则和位置。这只是 pattern 匹配，不是安全审查：有发现不代表有害，没有发现也不代表安全。tool 也会把这些发现和扫描的 commit 交给模型，你可以直接问它某一行在做什么；模型用 kirby 的只读 `file` tool 读取那个 commit 的那个文件。
+对话框在警告那行先列组合发现，再列 warn 的规则（见下方的严重度），`info` 的规则不列；模型则拿到每项发现和它的文件、行号。这只是 pattern 匹配，不是安全审查：有发现不代表有害，没有发现也不代表安全。tool 也会把这些发现和扫描的 commit 交给模型，你可以直接问它某一行在做什么；模型用 kirby 的只读 `file` tool 读取那个 commit 的那个文件。
 
 ### 漏洞查询和恶意包查询
 
@@ -73,7 +73,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 ### 严重度
 
-每项发现前面都标着严重度，表示它值得多少关注：
+每项发现都有严重度，表示它值得多少关注：
 
 | 严重度 | 哪些发现 |
 | --- | --- |
@@ -83,13 +83,23 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 有了组合发现，读取机密再发送出去的工具就不会全部只是 `info`，尽管这几条规则单独匹配到时都是 `info`（[ADR 0005](adr/0005-one-click-by-default.md)）。扫描部分，组合发现和 warn 的规则排在前面；查询部分，恶意包排在最前面，接着是检查对象本身的安全公告，再是评级最严重的依赖包。
 
+对话框按严重度汇总检查结果，发现再多也能在一屏内看完：
+
+- 拦下安装时（见下方），`✕ 已拦下：…` 排第一行；
+- 每项 `danger` 发现各占一行，附上 id：`✕ 危险：lodash@4.17.20 (npm) 有 5 个已公开漏洞，最严重为 high（GHSA-…、GHSA-…、… (+3)）`；超过六项时，其余的用一行计数；
+- 所有 `warn` 发现合成一行，只列名称，扫描的排在前面：`⚠ 警告 7 项：可能外传密钥、可能下载并执行代码、…、凭据、修改启动文件`；超过十个名称时写 `… (+N)`；
+- `info` 发现不列；
+- 没有发现的部分用 `✓` 标明（`✓ pattern 扫描：没有危险或警告的发现`、`✓ 漏洞、恶意包查询：没有发现`），没能运行的用 `？`（`？ 未检查：…`，见下方），读到的依赖文件另有一行 `依赖包：`。
+
+tool 告诉模型的内容（`pattern scan:` 和 `lookups:` 区块、`check` tool 的 `findings`）仍含每项发现和它的文件、行号或 id，而且是英文。
+
 ### 拦下安装
 
-只有已知的恶意包会拦下安装：恶意包查询在 OpenSSF Malicious Packages 里找到工具本身或它的某个依赖包。这时对话框会显示 `blocked:`，只剩取消、先看 README 和换一个，模型会告诉你原因，也不会做模型审查。仍然要装的话，只能自己手动安装。其他情况都不会拦：pattern 扫描的发现、漏洞和模型审查的发现不论多严重，都由你判断，因为很多正常的工具也会请求 URL、执行 shell 命令，或依赖有已知 CVE 的包（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
+只有已知的恶意包会拦下安装：恶意包查询在 OpenSSF Malicious Packages 里找到工具本身或它的某个依赖包。这时对话框会显示 `✕ blocked:`（简体中文是 `✕ 已拦下：`），只剩取消、先看 README 和换一个，模型会告诉你原因，也不会做模型审查。仍然要装的话，只能自己手动安装。其他情况都不会拦：pattern 扫描的发现、漏洞和模型审查的发现不论多严重，都由你判断，因为很多正常的工具也会请求 URL、执行 shell 命令，或依赖有已知 CVE 的包（[ADR 0001](adr/0001-block-only-on-confirmed-malware.md)）。
 
 ### unchecked
 
-没能运行的部分会显示为 `unchecked` 并附上原因，不会当成没找到，“安装”也仍然可选：
+没能运行的部分会显示为 `? unchecked`（简体中文是 `？ 未检查`）并附上原因，不会当成没找到，“安装”也仍然可选：
 
 - 查询失败或超时；
 - 算不出版本的依赖包的漏洞查询（没有 npm 或 uv、它们运行失败，或有些包不是来自 npm registry）；
@@ -97,7 +107,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 - 来源不在 GitHub 上，或 kirby 拉取不到来源 repo 的 plugin（扫描和两项查询）；
 - 列出你的 marketplace 失败时，某个 marketplace 是否已经添加过；以及在 Codex 里，kirby 读不到你已添加的 marketplace 停在哪个 commit 时：检查的是 repo 当前的状态，安装后若 kirby 无法确认 plugin 来自那个 commit，就会再把它移除；
 - kirby 解不开的 MCP server 压缩包（加密了，或用了 Python 读不了的压缩方式）：扫描；
-- 用 container image（`docker run …`）运行或通过 URL 连接的远程 MCP server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包：一行 `unchecked:` 说明原因，命令保持原样；
+- 用 container image（`docker run …`）运行或通过 URL 连接的远程 MCP server、没写任何 npm 或 PyPI 包的 repo，以及命令运行的不是 repo 写的任何包：一行 `? unchecked:` 说明原因，命令保持原样；
 - kirby 无法确定会拿到哪个版本的 MCP server（registry 没有响应、没有版本符合命令指定的范围，或 kirby 读不懂那个范围）：对话框会显示 `not pinned:`，扫描是 unchecked，只用包名做恶意包查询；
 - 在 Claude Code 里，GitHub 没有响应，无法判断你已经添加的 marketplace 是否落后于它的 repo；
 - 该做却没做成的模型审查（见下面的模型审查）。
@@ -106,7 +116,7 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 
 这个检查是为了让你知道自己装的是什么，不是为了让安装变麻烦（[ADR 0005](adr/0005-one-click-by-default.md)）。kirby 遇到的每个限制都只是对话框里的一行，不会因此拒绝安装，也不会多一个步骤：没能运行的部分、没有锁定的版本、只是 repo 自称是自己的包、安装时会一并更新的 marketplace，都是如此。唯一的例外是拦下安装。
 
-检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`；否则每个部分各自列出。
+检查什么都没找到、也没有没扫到或没查成的部分时，只有一行，例如 `✓ check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`（简体中文是 `✓ 检查：没有发现（12 个文件、3 个 npm 依赖包、漏洞与恶意包查询）`）；否则对话框按严重度汇总（见上方的严重度）。
 
 kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之后有了新的 commit，skill 仍安装对话框显示的那个；plugin 则是在安装后检查，而不是事先拒绝（见下面的“哪些有锁定”）。
 
@@ -160,7 +170,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 
 ### 对话框语言
 
-对话框的文字由模型按 skill 规定的格式，用你使用的语言写：两个问题、四个选项，以及 `about` 里一句说明这个工具做什么的话（最多 120 个字符），不重复检查结果。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装位置、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 kirby 生成，从不由模型写。模型只用 `dialog.lang` 选它们的语言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三种语言，kirby 对每一行事实都备有这三种语言的写法；没有 `lang` 或是其他值，就用英文。命令、路径、名称、版本和 id 保持原样，方便复制和查询。tool 返回给模型的内容（包括 `check` tool 的 `findings`）保持英文。为什么不让模型翻译事实，见 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻译的是 repo 那行、skill 那行（名称、commit、文件数）、脚本、`exists:` 和 `installs at:`；plugin 那行（名称、marketplace、commit、文件数）、它的说明、来源和脚本、会一起安装的 plugin，以及关于它的 marketplace 的各行（已添加、落后于它的 repo、kirby 无法确定）；MCP server 的命令那行、`package:`、`pinned:` 和 `not pinned:`；以及 prompt cache 提醒。安装前检查本身的各行仍是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`；在 Codex 里只能装在 `user` 时，安装的那个选项也用 `dialog.lang` 选的语言。没有提供文字、格式不完整或超过长度限制时，对话框和其中的事实都显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写：两个问题、四个选项，以及 `about` 里一句说明这个工具做什么的话（最多 120 个字符），不重复检查结果。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装位置、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 kirby 生成，从不由模型写。模型只用 `dialog.lang` 选它们的语言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三种语言，kirby 对每一行事实都备有这三种语言的写法；没有 `lang` 或是其他值，就用英文。命令、路径、名称、版本和 id 保持原样，方便复制和查询。tool 返回给模型的内容（包括 `check` tool 的 `findings`）保持英文。为什么不让模型翻译事实，见 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻译的是 repo 那行、skill 那行（名称、commit、文件数）、脚本、`exists:` 和 `installs at:`；plugin 那行（名称、marketplace、commit、文件数）、它的说明、来源和脚本、会一起安装的 plugin，以及关于它的 marketplace 的各行（已添加、落后于它的 repo、kirby 无法确定）；MCP server 的命令那行、`package:`、`pinned:` 和 `not pinned:`；安装前检查的各行（拦下、危险、警告、扫描和查询的结果、`dependencies:`、未检查和没有发现）；以及 prompt cache 提醒。`unchecked` 那行说明的原因，以及漏洞的评级（`critical`、`high`），仍是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`；在 Codex 里只能装在 `user` 时，安装的那个选项也用 `dialog.lang` 选的语言。没有提供文字、格式不完整或超过长度限制时，对话框和其中的事实都显示英文。
 
 ### 安装与 prompt cache
 
@@ -206,10 +216,10 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `lines`，告诉模型的内容是 `note`，`review` 说明要不要做模型审查、读取哪些文件）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `facts`（给 `words.py`），旁边是它们的英文 `lines`；告诉模型的内容是 `note`，`review` 说明要不要做模型审查、读取哪些文件）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
 | `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，也含上述的 `review`，对话框的各行则是 `facts`（给 `words.py`），旁边是它们的英文 `lines`；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令，`facts` 和 `lines` 和 `check_plugin.py` 的一样，`review` 同上（它的 `sha` 是归档文件的 sha256）。`check_mcp.py --read '<JSON>'` 为 `file` tool 打印这种包里的单个文件。不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
-| `words.py` | kirby 对对话框各行事实的写法，有英文、繁體中文和简体中文，和 mod 的 `hooks/words.ts` 相同。由 Codex MCP server、`check_plugin.py` 和 `check_mcp.py` 使用。不会单独运行 |
+| `words.py` | kirby 对对话框各行事实的写法，有英文、繁體中文和简体中文，和 mod 的 `hooks/words.ts` 相同。由 Codex MCP server、`install_skill.py`、`check_plugin.py`、`check_mcp.py` 和 `lookups.py` 使用。不会单独运行 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。

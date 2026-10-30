@@ -111,19 +111,19 @@ class AnNpmServer(unittest.TestCase):
             "package: @o/srv@1.2.3 (npm), named by this repo's server.json; not verified to come from this repo",
             "pinned: only @o/srv, to 1.2.3; its dependencies are not pinned, so they may differ from those checked "
             "when the server starts",
-            "pattern scan: 2 files, those in srv-1.2.3.tgz; a pattern match, not a safety review",
-            "warn: send-secrets: may send secrets out (network + env-secret)",
-            "info: env-secret ×1 (dist/index.js:1)",
-            "info: network ×1 (dist/index.js:2)",
+            "⚠ warn (1): may send secrets out",
             "dependencies: @o/srv@1.2.3: 1 npm, versions resolved at check time",
-            "advisory lookup: nothing found",
-            "malware lookup: nothing found",
+            "✓ advisory and malware lookups: nothing found",
         ])
+        # The facts each side words in the dialog's language, beside the English lines.
+        self.assertEqual(c["lines"], [say(f, "en") for f in c["facts"]])
+        self.assertEqual(say(c["facts"][2], "zh-TW"), "⚠ 警告 1 項：可能外傳密鑰")
         self.assertFalse(c["blocked"])
         self.assertEqual(c["package"], {"ecosystem": "npm", "name": "@o/srv", "version": "1.2.3", "declared_in": "server.json"})
         self.assertTrue(c["note"].startswith(
-            "pattern scan: the dialog showed the user these pattern-scan findings in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), "
-            "as paths inside it:\n  warn send-secrets: may send secrets out (network + env-secret)\n"
+            "pattern scan: the pattern-scan findings in the npm package @o/srv@1.2.3 (srv-1.2.3.tgz), as paths inside it "
+            "(the dialog showed the user the warn ones by name only, without files or lines, and left out the info ones):\n"
+            "  warn send-secrets: may send secrets out (network + env-secret)\n"
             "  info env-secret dist/index.js:1\n  info network dist/index.js:2\nlookups: "), c["note"])
         self.assertTrue(c["note"].endswith(
             f"\npackage: the command runs @o/srv@1.2.3 (npm), which this repo's server.json names at commit {SHA}; "
@@ -147,7 +147,7 @@ class AnNpmServer(unittest.TestCase):
         self.assertEqual(c["mcp_args"], ["e2e", "--", "npx", "-y", "@o/server-everything@2.1.0"])
         self.assertEqual(c["lines"][0], "package: @o/server-everything@2.1.0 (npm), named by this repo's "
                                         "src/everything/package.json; not verified to come from this repo")
-        self.assertEqual(c["lines"][2:], ["check: nothing found (2 files, 0 npm dependencies, advisory and malware lookups)"])
+        self.assertEqual(c["lines"][2:], ["✓ check: nothing found (2 files, 0 npm dependencies, advisory and malware lookups)"])
 
     def test_a_version_the_command_names_is_the_one_checked(self):
         old = tgz({"index.js": ""})
@@ -173,7 +173,7 @@ class AnNpmServer(unittest.TestCase):
             "package: srv@1.10.0 (npm), named by this repo's package.json; not verified to come from this repo",
             "pinned: only srv, to 1.10.0, the highest version matching ^1.2; its dependencies are not pinned, so they "
             "may differ from those checked when the server starts",
-            "check: nothing found (1 file, 0 npm dependencies, advisory and malware lookups)",
+            "✓ check: nothing found (1 file, 0 npm dependencies, advisory and malware lookups)",
         ])
 
     def test_the_facts_are_kirbys_wording_of_the_lines_with_names_versions_and_ranges_as_they_are(self):
@@ -203,7 +203,7 @@ class AnNpmServer(unittest.TestCase):
             self.assertEqual(c["lines"][:3], [
                 "package: srv (npm), named by this repo's package.json; not verified to come from this repo",
                 f"not pinned: kirby could not tell which version of srv the command installs ({why}); it installs as given",
-                f"unchecked: pattern scan ({why})",
+                f"? unchecked: pattern scan ({why})",
             ])
             self.assertEqual(net.queries[-1:], [{"package": {"name": "srv", "ecosystem": "npm"}}])
 
@@ -231,7 +231,7 @@ class AnNpmServer(unittest.TestCase):
         c = check(["srv", "--", "npx", "-y", "srv"], net)
         self.assertEqual(net.ran, [])
         self.assertIn("dependencies: srv@1.0.0: 2 npm, names only", c["lines"])
-        self.assertIn("unchecked: advisory lookup for the dependencies of srv@1.0.0 (some dependencies come from outside "
+        self.assertIn("? unchecked: advisory lookup for the dependencies of srv@1.0.0 (some dependencies come from outside "
                       "the npm registry, so versions were not resolved)", c["lines"])
         self.assertEqual(c["mcp_args"][-1], "srv@1.0.0")
 
@@ -240,7 +240,7 @@ class AnNpmServer(unittest.TestCase):
         c = check(["srv", "--", "npx", "-y", "srv"], net)
         self.assertEqual(net.got, [f"{NPM}/srv/9.9.9"])
         self.assertEqual(c["mcp_args"], ["srv", "--", "npx", "-y", "srv"])
-        self.assertIn("unchecked: pattern scan (registry.npmjs.org: HTTP 404)", c["lines"])
+        self.assertIn("? unchecked: pattern scan (registry.npmjs.org: HTTP 404)", c["lines"])
         self.assertTrue(c["note"].endswith("kirby could not pin it (registry.npmjs.org: HTTP 404), so the command installs as given."))
 
 
@@ -261,9 +261,11 @@ class APythonServer(unittest.TestCase):
                   resolve={"uv": "mcp-server-time==1.0\nmcp==1.2.0\n"})
         c = check(["time", "--", "uvx", "mcp-server-time", "--local-timezone=UTC"], net)
         self.assertEqual(c["mcp_args"], ["time", "--", "uvx", "mcp-server-time==1.0", "--local-timezone=UTC"])
-        self.assertEqual(c["lines"][2:5], ["pattern scan: 2 files, those in mcp_server_time-1.0-py3-none-any.whl; a pattern match, "
-                                           "not a safety review", "info: exec ×1 (mcp_server_time/__init__.py:2)",
-                                           "dependencies: mcp-server-time@1.0: 1 PyPI, versions resolved at check time"])
+        # The info finding is left out of the dialog; the model gets it.
+        self.assertEqual(c["lines"][2:5], ["✓ pattern scan: no danger or warn findings",
+                                           "dependencies: mcp-server-time@1.0: 1 PyPI, versions resolved at check time",
+                                           "✓ advisory and malware lookups: nothing found"])
+        self.assertIn("\n  info exec mcp_server_time/__init__.py:2", c["note"])
 
     def test_a_range_is_resolved_among_the_releases_that_have_files_and_pinned_with_equals(self):
         whl = {"filename": "w.whl", "url": "https://files.example/w.whl"}
@@ -293,7 +295,7 @@ class APythonServer(unittest.TestCase):
         net = Net(repo={"pyproject.toml": "[project]\nname = 'mcp-server-time'\n"},
                   web={**self.web(files), "https://files.example/s.tgz": sdist}, resolve={"uv": "mcp-server-time==1.0\n"})
         c = check(["time", "--", "uvx", "mcp-server-time"], net)
-        self.assertEqual(c["lines"][2], "check: nothing found (2 files, 0 PyPI dependencies, advisory and malware lookups)")
+        self.assertEqual(c["lines"][2], "✓ check: nothing found (2 files, 0 PyPI dependencies, advisory and malware lookups)")
 
 
 class Unchecked(unittest.TestCase):
@@ -303,10 +305,10 @@ class Unchecked(unittest.TestCase):
 
     def assert_unchecked(self, args, why, repo=None, pinned=True):
         c = check(args, Net(repo=repo if repo is not None else {"package.json": json.dumps({"name": "srv"})}))
-        self.assertEqual(c["lines"], [f"unchecked: pattern scan, advisory lookup and malware lookup ({why})"
+        self.assertEqual(c["lines"], [f"? unchecked: pattern scan, advisory lookup and malware lookup ({why})"
                                       + ("; not pinned" if pinned else "")])
-        # A line kirby has no wording for yet is its own fact, the same in every language.
-        self.assertEqual(c["facts"], c["lines"])
+        self.assertEqual(say(c["facts"][0], "zh-TW"), f"？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（{why}）"
+                         + ("；未鎖定版本" if pinned else ""))
         self.assertEqual(c["mcp_args"], args)
         self.assertFalse(c["blocked"])
         self.assertIsNone(c["package"])
@@ -360,7 +362,7 @@ class Findings(unittest.TestCase):
                   resolve={"npm": lock(("srv", "1.0.0"))}, vulns={("npm", "srv", "1.0.0"): ["MAL-2026-7"]})
         c = check(["srv", "--", "npx", "-y", "srv"], net)
         self.assertTrue(c["blocked"])
-        self.assertIn("danger: the package srv@1.0.0 (npm) is listed as malicious (MAL-2026-7)", c["lines"])
+        self.assertIn("✕ danger: srv@1.0.0 (npm) is listed as malicious (MAL-2026-7)", c["lines"])
         # Install is not offered, so there is nothing to review for.
         self.assertFalse(c["review"]["needed"])
 
@@ -376,7 +378,7 @@ class Findings(unittest.TestCase):
         web = npm_web("srv", "1.0.0", tgz({"i.js": ""}), tag="latest")
         web[f"{NPM}/srv/-/srv-1.0.0.tgz"] = tgz({"i.js": "eval(x)\n"})
         c = check(["srv", "--", "npx", "-y", "srv"], Net(repo=self.REPO, web=web, resolve={"npm": lock(("srv", "1.0.0"))}))
-        self.assertEqual(c["lines"][2], "unchecked: pattern scan (the download does not match the registry's hash)")
+        self.assertEqual(c["lines"][2], "? unchecked: pattern scan (the download does not match the registry's hash)")
         self.assertEqual(c["mcp_args"][-1], "srv@1.0.0")
         # Nothing was unpacked, so a review would have nothing to read.
         self.assertEqual(c["review"], {"needed": False, "files": []})
