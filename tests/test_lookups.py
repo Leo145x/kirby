@@ -99,6 +99,9 @@ class Dependencies(unittest.TestCase):
             "dependencies: package-lock.json: 1 npm",
             "✓ malware lookup: nothing found",
         ])
+        # The rating is worded in the dialog's language too.
+        self.assertEqual(say(lookups.summary(r)[0], "zh-TW"),
+                         "✕ 危險：lodash@4.17.20 (npm) 有 1 個已公開漏洞，最高評級為「高」（GHSA-35jh-r3h4-6jhm）")
         self.assertFalse(r["blocked"])
         # The dialog shows a summary, so the model gets each finding, and is told what the user saw of them.
         self.assertEqual(r["note"], "\n".join([
@@ -156,7 +159,7 @@ class Dependencies(unittest.TestCase):
             "✓ advisory lookup: nothing found in the rest",
         ])
         self.assertEqual(say(lookups.summary(r)[0], "zh-TW"),
-                         "？ 未檢查：這個 commit、package-lock.json 的漏洞、惡意套件查詢（OSV.dev: timed out）")
+                         "？未檢查：這個 commit、package-lock.json 的漏洞、惡意套件查詢（OSV.dev: timed out）")
         self.assertFalse(r["blocked"])
         self.assertIn("\n  unchecked: advisory lookup for this commit", r["note"])
 
@@ -197,6 +200,9 @@ class Resolving(unittest.TestCase):
             "dependencies: package.json: 2 npm, names only",
             "✓ advisory lookup: nothing found in the rest",
         ])
+        # kirby's own reason is worded in the dialog's language; the model reads it in English.
+        self.assertEqual(say(lookups.summary(r)[2], "zh-CN"), "？未检查：package.json 的漏洞查询（找不到 npm，所以没有算出版本）")
+        self.assertIn("\n  unchecked: advisory lookup for package.json (npm not found, so versions were not resolved)\n", r["note"])
 
     def test_a_dependency_from_outside_the_registry_is_not_resolved(self):
         net = Net()
@@ -204,12 +210,17 @@ class Resolving(unittest.TestCase):
         self.assertEqual(net.ran, [])
         self.assertIn("? unchecked: advisory lookup for package.json (some dependencies come from outside the npm "
                       "registry, so versions were not resolved)", en(r))
+        self.assertIn("？未檢查：package.json 的漏洞查詢（有些相依套件來自 npm registry 以外，所以沒有算出版本）",
+                      [say(f, "zh-TW") for f in lookups.summary(r)])
 
     def test_a_failed_resolution_falls_back_to_the_names(self):
         r = check({"package.json": self.PACKAGE}, Net())
         self.assertIn("dependencies: package.json: 2 npm, names only", en(r))
         self.assertIn("? unchecked: advisory lookup for package.json (npm could not resolve the versions: npm ERR! could "
                       "not resolve)", en(r))
+        # The error npm gave stays as it is.
+        self.assertIn("？未檢查：package.json 的漏洞查詢（npm 無法算出版本：npm ERR! could not resolve）",
+                      [say(f, "zh-TW") for f in lookups.summary(r)])
 
     def test_python_requirements_are_resolved_by_uv_without_building(self):
         net = Net(resolve={"uv": "requests==2.19.0\nurllib3==1.23\n"},
@@ -240,6 +251,8 @@ class Resolving(unittest.TestCase):
             "? unchecked: advisory and malware lookups for more dependency files (k/package-lock.json, l/package-lock.json) "
             "(kirby reads at most 10)",
             "✓ advisory and malware lookups: nothing found in the rest"])
+        self.assertEqual(say(lookups.summary(r)[0], "zh-TW"), "？未檢查：其他相依套件檔（k/package-lock.json、l/package-lock.json）"
+                         " 的漏洞、惡意套件查詢（kirby 最多讀 10 個）")
         self.assertIsNone(r["nothing_found"])
         self.assertIn("\n  unchecked: advisory lookup for 2 more dependency files", r["note"])
 

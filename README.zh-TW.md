@@ -27,7 +27,7 @@ kirby 做兩件事，一前一後。
 - **掃描實際要安裝的檔案**：skill 的檔案、plugin 自己的檔案（在另一個 repo 也一樣），或 MCP server 指令所執行的已發布 npm、PyPI 套件（只下載，不安裝也不執行）。找的是值得留意的模式，例如隱藏 Unicode、針對模型的語句、網路呼叫或機密環境變數。這只是 pattern 比對，不是安全審查；被標出的那一行在做什麼，可以直接問模型。
 - **查詢已知漏洞和惡意套件**：查工具本身和它的相依套件，來源是 OSV.dev，以及 repo 自己在 GitHub 發布的 advisory。
 - **有發現時請模型審查檔案**：掃描或查詢找到 danger 或 warn 的發現時，由一個只能讀檔的 subagent（Claude Code 裡是 kirby 的審查 agent）回報最多五項發現。對話框把它們的數量加在警告那行，你問時模型會逐項說明。
-- **依嚴重度彙整**：每項 danger 發現各一行並附上 id，warn 發現合成一行只列名稱，info 發現不列（模型仍拿到每項發現）。沒能執行的部分會標 unchecked，不會當成沒找到；什麼都沒找到的工具只有一行 `✓ check: nothing found`。
+- **依嚴重度彙整**：每項 danger 發現各一行並附上 id，warn 發現合成一行只列名稱，info 發現不列（模型仍拿到每項發現）。沒能執行的部分會標 unchecked（模型審查則標 did not run），不會當成沒找到；什麼都沒找到的工具只有一行 `✓ check: nothing found`。
 - **預設按一下就能裝**：任何發現都不會要你多做一步。只有已知的惡意套件會擋下安裝。
 - **裝的就是你看到的**：skill 安裝對話框顯示的那個 commit，即使 repo 之後有新的 commit；plugin 裝完若發現 marketplace 不在檢查過的 commit，會再移除；MCP server 的指令會鎖定在檢查過的套件版本（它的相依套件不會）。
 

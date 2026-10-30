@@ -30,7 +30,7 @@ from detect import GITHUB_URL, MARKETPLACES  # noqa: E402
 from install_skill import (NO_REVIEW, SCRIPT, VALID_REPO, VALID_SHA, GitFailed, check_facts, checkout,  # noqa: E402
                            inside, listing, review, scan, scan_note)
 from lookups import shown  # noqa: E402
-from words import fact, in_english  # noqa: E402
+from words import fact, in_english, say  # noqa: E402
 
 # The files a plugin declares itself in.
 PLUGIN_MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
@@ -52,7 +52,7 @@ def github_repo(url):
 
 def source_of(entry, doc):
     """Where an entry's plugin comes from: {"in": "marketplace", "path"}, {"in": "repo", "repo", "path",
-    "ref", "sha"}, or {"in": None, "what"} for a source kirby cannot fetch from GitHub."""
+    "ref", "sha"}, or {"in": None, "what"} for a source kirby cannot fetch from GitHub, what being a fact (words.py)."""
     src = entry.get("source")
     if isinstance(src, dict) and src.get("source") == "local":  # Codex's form of a relative path
         src = src.get("path")
@@ -64,17 +64,18 @@ def source_of(entry, doc):
             path = inside(f"{root}/{src}")
         else:
             path = None
-        return {"in": "marketplace", "path": path} if path else {"in": None, "what": f"the path {shown(src, 80)!r}, which is not inside the repo"}
+        return ({"in": "marketplace", "path": path} if path else
+                {"in": None, "what": fact("source_path_outside_repo", path=repr(shown(src, 80)))})
     if not isinstance(src, dict):
-        return {"in": None, "what": "an entry with no source"}
+        return {"in": None, "what": fact("source_none")}
     kind = src.get("source")
     repo = github_repo(src.get("repo") if kind == "github" else src.get("url")) if kind in ("github", "url", "git-subdir") else None
     if not repo:
-        where = f"a {shown(str(kind), 20)} source" if kind not in ("url", "git-subdir") else "a git repo outside GitHub"
+        where = fact("source_kind", kind=shown(str(kind), 20)) if kind not in ("url", "git-subdir") else fact("source_outside_github")
         return {"in": None, "what": where}
     path = inside(src.get("path") or ".") if kind == "git-subdir" else "."
     if not path:
-        return {"in": None, "what": f"the path {shown(str(src.get('path')), 80)!r}, which is not inside {repo}"}
+        return {"in": None, "what": fact("source_path_outside", path=repr(shown(str(src.get("path")), 80)), repo=repo)}
     sha = src.get("sha") if isinstance(src.get("sha"), str) and VALID_SHA.match(src["sha"]) else None
     ref = src.get("ref") if isinstance(src.get("ref"), str) and src["ref"] else None
     return {"in": "repo", "repo": repo, "path": path, "ref": ref, "sha": sha}
@@ -145,14 +146,15 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
                      if isinstance(entry.get("description"), str) and entry["description"] else [])
 
         def unchecked(source, why):
+            """why: kirby's own reason (a fact) or git's error; the model reads it in English."""
             out.update(files=0, scripts=[], mcp_servers=None, blocked=False,
                        note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on "
-                            f"plugin {shown(name, 60)}: {why}", review=dict(NO_REVIEW))
+                            f"plugin {shown(name, 60)}: {say(why, 'en')}", review=dict(NO_REVIEW))
             return worded(out, [fact("plugin", **title), *described, source, fact("check_unchecked", why=why)])
 
         # Three kinds of source: one kirby does not fetch, a folder of the marketplace repo, another GitHub repo.
         if src["in"] is None:
-            return unchecked(fact("plugin_source_other", what=src["what"]), f"its source is {src['what']}, which kirby does not fetch")
+            return unchecked(fact("plugin_source_other", what=src["what"]), fact("why_source_other", what=src["what"]))
         if src["in"] == "marketplace":
             src_repo, src_sha, base = repo, sha, mk_root
         else:

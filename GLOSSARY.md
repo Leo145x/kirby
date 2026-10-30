@@ -37,7 +37,7 @@ The outcome when a finding is a confirmed fact that the tool is malicious: kirby
 _Avoid_: reject, deny, fail
 
 **Unchecked**:
-A part of the pre-install check that could not run for a tool, reported as such rather than as no findings.
+A part of the pre-install check that could not run for a tool, reported as such rather than as no findings: `? unchecked: …` in the dialog, and for the model review, which kirby does not run itself, `? model review: did not run`.
 _Avoid_: skipped, passed
 
 ## Installing what was checked

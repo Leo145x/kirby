@@ -53,7 +53,7 @@ import lookups  # noqa: E402
 from install_skill import (NO_REVIEW, VALID_REPO, VALID_SHA, check_facts, inside, listing, review, scan,  # noqa: E402
                            scan_note)
 from lookups import NPM_NAME, Failed, first_line, package_key, py_name, shown  # noqa: E402
-from words import fact, in_english  # noqa: E402
+from words import fact, in_english, say  # noqa: E402
 
 try:
     import tomllib
@@ -580,28 +580,28 @@ def check(repo, args, net=None):
     out = {"repo": repo, "mcp_args": list(args), "package": None, "blocked": False}
 
     def unchecked(why, pin=True):
+        """why: kirby's own reason, a fact the dialog words in its language; the model reads it in English."""
         facts = [fact("check_unchecked_not_pinned" if pin else "check_unchecked", why=why)]
         out.update(facts=facts, lines=in_english(facts),
                    note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
-                        f"server{', and that its command is not pinned' if pin else ''}: {why}",
+                        f"server{', and that its command is not pinned' if pin else ''}: {say(why, 'en')}",
                    review=dict(NO_REVIEW))
         return out
 
     _, words = command_of(args)
     if remote(args):
-        return unchecked("a remote server at a URL; its code does not install here", pin=False)
+        return unchecked(fact("why_remote"), pin=False)
     if any(runner(w) in CONTAINERS for w in words[:2]):
-        return unchecked("the command runs a container image, which kirby does not check")
+        return unchecked(fact("why_container"))
     try:
         sha, declared = declarations(repo, net)
     except Failed as e:
-        return unchecked(f"could not read this repo's package files: {e}")
+        return unchecked(fact("why_package_files", error=str(e)))
     if not declared:
-        return unchecked("this repo names no npm or PyPI package in a server.json, package.json or pyproject.toml")
+        return unchecked(fact("why_no_package"))
     found = find(args, declared)
     if not found:
-        names = ", ".join(shown(d["name"], 60) for d in declared[:3]) + (f", … (+{len(declared) - 3})" if len(declared) > 3 else "")
-        return unchecked(f"the command runs none of the packages this repo names: {names}")
+        return unchecked(fact("why_none_named", names=lookups.items([shown(d["name"], 60) for d in declared], 3)))
 
     pkg, index, prefix, word, how, spec = found
     eco, name = pkg["ecosystem"], pkg["name"]
@@ -611,8 +611,9 @@ def check(repo, args, net=None):
         # (None) the registry's latest.
         asked = matching(eco, name, spec, net) if how == "range" else spec if how in ("exact", "tag") else pkg["version"]
         rel = release(eco, name, asked, net)
+    # why: kirby's own reason (a fact) or the error a registry gave, as it is.
     except Unreadable:
-        why = f"the command asks for {shown(word, 80)}, a range kirby does not resolve"
+        why = fact("why_range", spec=shown(word, 80))
     except Failed as e:
         why = str(e)
     version = rel["version"] if rel else None
@@ -652,10 +653,10 @@ def check(repo, args, net=None):
                                files, hits, looked)
     else:
         facts += check_facts([], [], 0, looked, why=why)
-        scan_text = f"pattern scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
+        scan_text = f"pattern scan: the dialog showed the user that the pattern scan did not run on {place}: {say(why, 'en')}"
         out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
-           f"kirby could not pin it ({why}), so the command installs as given.")
+           f"kirby could not pin it ({say(why, 'en')}), so the command installs as given.")
     out.update(facts=facts, lines=in_english(facts), blocked=looked["blocked"], note="\n".join([
         scan_text, looked["note"],
         f"package: the command runs {what} ({eco}), which this repo's {shown(pkg['file'])} names at commit {sha}; "

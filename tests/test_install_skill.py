@@ -83,6 +83,14 @@ class Scan(unittest.TestCase):
         self.assertIn("\n  warn send-secrets: may send secrets out (network + env-secret)\n",
                       install_skill.scan_note("o/r", ".", "a" * 40, hits))
 
+    def test_the_note_names_the_scripts_the_dialog_only_counts(self):
+        self.assertEqual(install_skill.scripts_note(["SKILL.md", "run.sh", "lib/a.py"]),
+                         "scripts: the dialog showed the user only how many scripts the skill may run (2): run.sh, lib/a.py")
+        many = [f"s{i}.sh" for i in range(12)]
+        self.assertTrue(install_skill.scripts_note(many).endswith(": s0.sh, s1.sh, s2.sh, s3.sh, s4.sh, s5.sh, s6.sh, s7.sh, "
+                                                                  "s8.sh, s9.sh, … (+2)"))
+        self.assertIsNone(install_skill.scripts_note(["SKILL.md"]))
+
     def test_each_rule_alone_makes_no_combination(self):
         for rule in ("network", "env-secret", "exec", "decode"):
             self.assertEqual(install_skill.combinations([{"rule": rule, "file": "a.sh", "line": 1}]), [])

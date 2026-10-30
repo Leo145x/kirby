@@ -206,6 +206,9 @@ class AnNpmServer(unittest.TestCase):
                 f"? unchecked: pattern scan ({why})",
             ])
             self.assertEqual(net.queries[-1:], [{"package": {"name": "srv", "ecosystem": "npm"}}])
+        # kirby's own reason is worded in the dialog's language; the registry's answer above stays as it is.
+        self.assertEqual(say(c["facts"][1], "zh-TW"),
+                         "未鎖定：kirby 無法確定指令會安裝 srv 的哪個版本（指令要求 srv@>=1 <2 || ~~3，kirby 不解析這種範圍）；會照原樣安裝")
 
     def test_npm_ranges(self):
         versions = ["0.1.0", "0.1.5", "0.2.0", "1.0.0", "1.2.3", "1.2.9", "1.3.0", "1.10.0", "2.0.0-rc.1", "2.0.0", "2.1.0"]
@@ -304,36 +307,42 @@ class Unchecked(unittest.TestCase):
         self.assertEqual(c["review"], {"needed": False, "files": []})
 
     def assert_unchecked(self, args, why, repo=None, pinned=True):
+        """why is kirby's reason, in English and in 繁體中文."""
+        en, zh = why
         c = check(args, Net(repo=repo if repo is not None else {"package.json": json.dumps({"name": "srv"})}))
-        self.assertEqual(c["lines"], [f"? unchecked: pattern scan, advisory lookup and malware lookup ({why})"
+        self.assertEqual(c["lines"], [f"? unchecked: pattern scan, advisory lookup and malware lookup ({en})"
                                       + ("; not pinned" if pinned else "")])
-        self.assertEqual(say(c["facts"][0], "zh-TW"), f"？ 未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（{why}）"
+        self.assertEqual(say(c["facts"][0], "zh-TW"), f"？未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（{zh}）"
                          + ("；未鎖定版本" if pinned else ""))
+        # The model reads the reason in English.
+        self.assertTrue(c["note"].endswith(f": {en}"), c["note"])
         self.assertEqual(c["mcp_args"], args)
         self.assertFalse(c["blocked"])
         self.assertIsNone(c["package"])
 
     def test_a_remote_server_is_unchecked(self):
-        why = "a remote server at a URL; its code does not install here"
+        why = ("a remote server at a URL; its code does not install here", "URL 上的遠端 server；它的程式碼不會安裝在這裡")
         self.assert_unchecked(["srv", "--transport", "http", "https://mcp.example/mcp"], why, pinned=False)
         self.assert_unchecked(["srv", "--url", "https://mcp.example/mcp"], why, pinned=False)
 
     def test_a_container_image_is_unchecked(self):
         self.assert_unchecked(["srv", "--", "docker", "run", "-i", "--rm", "ghcr.io/o/srv"],
-                              "the command runs a container image, which kirby does not check")
+                              ("the command runs a container image, which kirby does not check",
+                               "指令執行的是 container image，kirby 不檢查它"))
 
     def test_a_repo_that_names_no_package_is_unchecked(self):
         self.assert_unchecked(["srv", "--", "npx", "-y", "srv"],
-                              "this repo names no npm or PyPI package in a server.json, package.json or pyproject.toml", repo={})
+                              ("this repo names no npm or PyPI package in a server.json, package.json or pyproject.toml",
+                               "這個 repo 的 server.json、package.json 或 pyproject.toml 沒有寫任何 npm 或 PyPI 套件"), repo={})
 
     def test_a_command_that_runs_another_package_is_unchecked(self):
-        self.assert_unchecked(["srv", "--", "npx", "-y", "someone-elses-srv"],
-                              "the command runs none of the packages this repo names: srv")
-        self.assert_unchecked(["srv", "--", "node", "dist/index.js"], "the command runs none of the packages this repo names: srv")
+        why = ("the command runs none of the packages this repo names: srv", "指令執行的不是這個 repo 寫的任何套件：srv")
+        self.assert_unchecked(["srv", "--", "npx", "-y", "someone-elses-srv"], why)
+        self.assert_unchecked(["srv", "--", "node", "dist/index.js"], why)
 
     def test_only_the_package_the_runner_runs_counts_not_a_later_word(self):
         # npx runs other-pkg; srv is only an argument to it, so checking srv would check the wrong code.
-        why = "the command runs none of the packages this repo names: srv"
+        why = ("the command runs none of the packages this repo names: srv", "指令執行的不是這個 repo 寫的任何套件：srv")
         self.assert_unchecked(["srv", "--", "npx", "-y", "other-pkg", "srv"], why)
         self.assert_unchecked(["srv", "--", "uvx", "other-pkg", "srv"], why,
                               repo={"pyproject.toml": "[project]\nname = 'srv'\n"})

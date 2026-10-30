@@ -104,6 +104,22 @@ def preview(cwd):
     return c
 
 
+SKILL_LINE = {
+    "en": ("{} file", "{} files", "{} script", "{} scripts", ", "),
+    "zh-TW": ("{} 個檔案", "{} 個檔案", "{} 個腳本", "{} 個腳本", "、"),
+    "zh-CN": ("{} 个文件", "{} 个文件", "{} 个脚本", "{} 个脚本", "、"),
+}
+
+
+def skill_line(c, lang="en"):
+    """The skill's one line in dialog 1, as in the mock-up in #24: `security-audit · commit <SHA7> · <N> files, <M>
+    scripts`, the scripts left out when there are none."""
+    file_one, files, script_one, scripts, sep = SKILL_LINE[lang]
+    n, m = c["files"], len(c["scripts"])
+    counts = (file_one if n == 1 else files).format(n) + (sep + (script_one if m == 1 else scripts).format(m) if m else "")
+    return f"security-audit · commit {c['commit']} · {counts}"
+
+
 def plugin_check(repo, plugin, commit=None):
     out = subprocess.run([sys.executable, "-I", str(ROOT / "skills/inhale/scripts/check_plugin.py"), "--agent", "codex",
                           *(["--commit", commit] if commit else []), "--", repo, plugin],
@@ -124,9 +140,11 @@ def main():
     p = Peer("Cancel")
     r = server.install(p, skill, meta)
     q, opts = p.asked[0]
-    scripts = f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}\n" if c["scripts"] else ""
-    check("H1 dialog lists commit, scripts and every check line",
-          f"skill: security-audit · commit {c['commit']} · {c['files']} files\n{scripts}" + "\n".join(c["lines"]) in q, q)
+    check("H1 dialog lists the commit and counts the files and scripts in one line, then every check line",
+          f"{skill_line(c)}\n" + "\n".join(c["lines"]) in q and len(c["scripts"]) > 1, q)
+    check("H1 the model gets the scripts' names in the note",
+          f"\nscripts: the dialog showed the user only how many scripts the skill may run ({len(c['scripts'])}): "
+          f"{', '.join(c['scripts'][:2])}" in r, r)
     check("H1 the check by severity: one warn line naming the 7 warn findings, one line for both lookups (B16)",
           c["lines"] == [WARN_7, "✓ advisory and malware lookups: nothing found"] and c["blocked"] is False, c["lines"])
     check("H1 English options", opts == ENGLISH, opts)
@@ -230,14 +248,12 @@ def main():
     # H15: dialog.lang: kirby words its own lines (repo, skill, scripts, exists, installs at) in 繁體中文 or 简体中文;
     # the check's lines too (#26), and what the tools answer the model stays English. The folder is there from H8.
     c = preview(project)
-    names = "、".join(c["scripts"][:2])
     p = Peer("取消")
     r = server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
     q = p.asked[0][0]
     check("H15 zh-TW: kirby's lines and the check's summary in 繁體中文, the result in English",
           re.match(rf"{re.escape(REPO)} ★\d+ · \d{{4}}-\d\d-\d\d 更新\n", q) is not None
-          and f"\n技能：security-audit · commit {c['commit']} · {c['files']} 個檔案\n"
-              + (f"{len(c['scripts'])} 個腳本，例如 {names}\n" if c["scripts"] else "")
+          and f"\n{skill_line(c, 'zh-TW')}\n"
               + "已存在：.agents/skills/security-audit/（安裝在 local 或 project 會失敗）\n"
               + f"{WARN_7_ZH}\n✓ 漏洞、惡意套件查詢：沒有發現\n" in q
           and r == "not installed: the user cancelled.\n" + c["note"], f"{q}\n      {r}")
@@ -245,20 +261,18 @@ def main():
     server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-CN"}}, None)
     q = p.asked[0][0]
     check("H15 zh-CN without a project: 简体中文, installs at in 简体中文",
-          f"\n技能：security-audit · commit {c['commit']} · {c['files']} 个文件\n" in q
+          f"\n{skill_line(c, 'zh-CN')}\n" in q
           and "\n安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）\n\n測試用。" in q, q)
     for lang in ("en", "ja"):
         p = Peer("取消")
         server.install(p, {**skill, "dialog": {**ZH, "lang": lang}}, meta)
-        check(f"H15 lang {lang!r} -> English facts",
-              f"\nskill: security-audit · commit {c['commit']} · {c['files']} files\n" in p.asked[0][0], p.asked[0][0])
+        check(f"H15 lang {lang!r} -> English facts", f"\n{skill_line(c)}\n" in p.asked[0][0], p.asked[0][0])
     ok, out = server.check(skill, meta)
-    check("H15 check findings stay English", ok and json.loads(out)["findings"][0]
-          == f"skill: security-audit · commit {c['commit']} · {c['files']} files", out[:300])
+    check("H15 check findings stay English", ok and json.loads(out)["findings"][0] == skill_line(c), out[:300])
     p = Peer("Cancel")
     r = server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW", "about": "測" * 121}}, meta)
     check("H15 about over 120 characters -> English, facts too, and the note says why",
-          p.asked[0][1] == ENGLISH and f"\nskill: security-audit · commit {c['commit']} · {c['files']} files\n" in p.asked[0][0]
+          p.asked[0][1] == ENGLISH and f"\n{skill_line(c)}\n" in p.asked[0][0]
           and r.endswith("\nnote: the dialogs were in English because dialog.about, when given, must be at most 120 "
                          "characters; pass dialog as the inhale skill describes."), r)
 
@@ -405,6 +419,12 @@ def main():
           f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{USER_ONLY}" in p.asked[0][0] and not held.argv
           and r.startswith("not installed: the user cancelled.\npattern scan: the dialog showed the user that the pattern scan "
                            "and the lookups did not run on this MCP server"), r)
+    p = Peer("取消")
+    with Held():
+        r = server.install(p, {**mcp, "mcp_args": docker, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    check("H16 zh-TW: kirby's reason for an unchecked line is in 繁體中文 with the full-width ？, and in English for the model",
+          "\n？未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（指令執行的是 container image，kirby 不檢查它）；未鎖定版本\n" in p.asked[0][0]
+          and "not pinned: the command runs a container image, which kirby does not check" in r, f"{p.asked[0][0]}\n      {r}")
 
     # H11: refusals before any dialog. Past the repo and the kind, they also say why the dialogs would be in English,
     # as Claude Code's do.
@@ -477,7 +497,7 @@ def main():
     p = Peer("取消")
     server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}, "sha": "f" * 40, "review": {"findings": []}}, meta)
     check("H14 with zh-TW kirby's reason is in 繁體中文",
-          f"\n？ 模型審查：未執行（它讀的是 fffffff，不是這裡檢查的 {c['sha'][:7]}）\n" in p.asked[0][0], p.asked[0][0])
+          f"\n？模型審查：未執行（它讀的是 fffffff，不是這裡檢查的 {c['sha'][:7]}）\n" in p.asked[0][0], p.asked[0][0])
     p = Peer()
     r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [{**finding, "reason": "x" * 121}]}}, meta)
     check("H14 a reason over 120 characters -> refused, no dialog", not p.asked and r == (
