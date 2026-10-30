@@ -67,6 +67,16 @@ const WORDS = {
   "scan_startup_files": {"en": "changes shell startup files", "zh-TW": "修改啟動檔", "zh-CN": "修改启动文件"},
   "warn": {"en": "⚠ warn ({count}): {names}", "zh-TW": "⚠ 警告 {count} 項：{names}", "zh-CN": "⚠ 警告 {count} 项：{names}"},
   "warn_review": {"en": "model review ({count})", "zh-TW": "模型審查 {count} 項", "zh-CN": "模型审查 {count} 项"},
+  "review_nothing": {"en": "✓ model review: nothing found", "zh-TW": "✓ 模型審查：沒有發現", "zh-CN": "✓ 模型审查：没有发现"},
+  "review_not_run": {"en": "? model review: did not run", "zh-TW": "？ 模型審查：未執行", "zh-CN": "？ 模型审查：未执行"},
+  "review_not_run_why": {"en": "? model review: did not run ({why})", "zh-TW": "？ 模型審查：未執行（{why}）", "zh-CN": "？ 模型审查：未执行（{why}）"},
+  "review_no_result": {"en": "no review result was passed", "zh-TW": "沒有傳入審查結果", "zh-CN": "没有传入审查结果"},
+  "review_no_files": {"en": "kirby had no files of it to read", "zh-TW": "kirby 沒有它的檔案可讀", "zh-CN": "kirby 没有它的文件可读"},
+  "review_other_commit": {
+    "en": "it read {read}, not {checked}, the one checked here",
+    "zh-TW": "它讀的是 {read}，不是這裡檢查的 {checked}",
+    "zh-CN": "它读的是 {read}，不是这里检查的 {checked}"
+  },
   "warn_package_vulns": {"en": "{vulns} in {package} ({ecosystem})", "zh-TW": "{package} ({ecosystem}) 的 {vulns}", "zh-CN": "{package} ({ecosystem}) 的 {vulns}"},
   "warn_repo_advisories": {"en": "advisories this repo published ({count})", "zh-TW": "這個 repo 發布的 {count} 則安全公告", "zh-CN": "这个 repo 发布的 {count} 条安全公告"},
   "danger_malware": {"en": "✕ danger: {package} ({ecosystem}) is listed as malicious ({ids})", "zh-TW": "✕ 危險：{package} ({ecosystem}) 被列為惡意套件（{ids}）", "zh-CN": "✕ 危险：{package} ({ecosystem}) 被列为恶意包（{ids}）"},

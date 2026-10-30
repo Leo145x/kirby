@@ -68,9 +68,9 @@ Commit. The shared parts below stay as they are.
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
 | `PLUGIN_MK` | `claude-plugins-official`, the name of `PLUGIN_REPO`'s marketplace |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
-| `UNREVIEWED` | `model review: unchecked (no review result was passed)` |
-| `REVIEW_BLOCK` | a result's last lines when dialog 1 showed model review lines: `review: the dialog showed the user these model review lines:`, then each of those lines indented by two spaces |
-| `REVIEW_LINE` | a model review line in dialog 1, after the check's lines: `warn: <file>:<line>: <reason> (model review, as reported by the model)`, `model review: nothing found (as reported by the model)` or `model review: unchecked (<why>)` |
+| `UNREVIEWED` | `? model review: did not run (no review result was passed)`; with `zh-TW` `？ 模型審查：未執行（沒有傳入審查結果）` |
+| `REVIEW_BLOCK` | a result's last lines when a model review was needed, in English: `review: the model review's findings, as reported by the model (the dialog showed the user only how many, on the warn line):`, then `  warn: <file>:<line>: <reason>` for each finding; or one line, `review: the dialog showed the user that the model review found nothing, as reported by the model`, `review: the dialog showed the user that the model review did not run (<kirby's reason>)`, or `review: the dialog showed the user that the model review did not run, without its reason, as reported by the model: <the reviewer's could_not_run reason>` |
+| `REVIEW_LINE` | how dialog 1 shows a model review, in kirby's words only and in the dialog's language. Findings: their count joins the warn line (`⚠ warn (<w+n>): …, model review (<n>)`; with `zh-TW` `⚠ 警告 <w+n> 項：…、模型審查 <n> 項`; a warn line is added after any danger lines if there was none). Otherwise one line after the check's lines: `✓ model review: nothing found` (`✓ 模型審查：沒有發現`); `? model review: did not run` (`？ 模型審查：未執行`) when the reviewer replied `could_not_run`; or `? model review: did not run (<kirby's reason>)` (`？ 模型審查：未執行（<kirby 的原因>）`) when no result was passed, kirby had no files to read, or the review read another commit. No file, line or reason the reviewer wrote appears anywhere in the dialog |
 
 Constants only one agent CLI uses are in its section.
 
@@ -320,9 +320,10 @@ through that `read`, refusing another sha256; H13 after
 `lodash@4.17.20` with their ids, in English and with `zh-TW` in 繁體中文,
 dialog 1 with only cancel, README and pick another, and each result ending with the `blocked:` line; H14 the `check` tool on the fixture
 (`review` `needed`, `read` the fixture's repo at the commit checked, its files, the dialog's facts), then install with a review result:
-a finding shown after the check lines, its hidden characters and line break stripped, labelled `(model review, as reported by the model)`,
-and repeated in the result's `review:` block; a review of another commit, one that could not run, and one that found nothing, each one line
-with Install offered; a reason over 120 characters refused before any dialog; H15 `dialog.lang`: with `zh-TW` the repo line
+a finding counted on the warn line (`model review (1)`, with `zh-TW` `模型審查 1 項`) and none of its text in the dialog, its file,
+line and reason, hidden characters and line break stripped, in the result's `review:` block; a review of another commit (kirby's reason
+shown, in 繁體中文 with `zh-TW`), one that could not run (no reason shown; the reviewer's in the `review:` block), and one that found
+nothing, each one line with Install offered; a reason over 120 characters refused before any dialog; H15 `dialog.lang`: with `zh-TW` the repo line
 (`… 更新`), the skill line, the scripts line, the `exists:` line and the check's lines (`⚠ 警告 7 項：…`, `✓ 漏洞、惡意套件查詢：沒有發現`) in 繁體中文, with `zh-CN` (no
 project) the skill line and the `installs at:` line in 简体中文, with `en` or `ja` English, the `check` tool's `findings` in English,
 the result in English, and an `about` over 120 characters falling back to English (facts too) with the `note:` saying why;
@@ -534,9 +535,9 @@ Reset the project before each; prompt as B3.
 fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
 - Dialog 1: the header is still GitHub's; `技能：security-audit · commit <FX_SHA7> · <N+3> 個檔案`;
   the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the check lines are exactly the two of
-  FLAGGED's `zh-TW` block (`⚠ 警告 7 項：…`, then `✓ 漏洞、惡意套件查詢：沒有發現`; no file, line or info finding), then one or
-  more `REVIEW_LINE`s (the fixture's warn findings ask for a model review; B26 checks it); no zero-width character anywhere in
-  the dialog.
+  FLAGGED's `zh-TW` block (`⚠ 警告 7 項：…`, then `✓ 漏洞、惡意套件查詢：沒有發現`; no file, line or info finding), with the
+  model review as `REVIEW_LINE` says (the fixture's warn findings ask for one: the warn line may end `、模型審查 <n> 項`, or a
+  `模型審查` line follows; B26 checks it); no zero-width character anywhere in the dialog.
 - Answer Install. While dialog 2 is open, run `python3 -I $KIRBY/tests/e2e/fixture.py advance $E2E/fx`
   (prints `NEW`). Answer `local`.
 - The commit shown installs all the same. Result starts `installed (scope local): `, holds `--commit <FX_SHA>` and
@@ -592,12 +593,14 @@ the fixture as in Driving, with `$E2E/fx2/env.sh` in place of `$E2E/fx/env.sh`. 
   The subagent's transcript has no Bash call that ran (a refused one is fine) and its reply names only `mcp__kirby__check` and
   `mcp__kirby__file` (and the engine's own hand-back tool, if any).
 - The install call has `"sha": "<FX2_SHA>"` and `review` equal to the subagent's JSON reply, unchanged.
-- Dialog 1: after the lookups' lines, the `REVIEW_LINE`s: one `warn: …` line per finding of `review` (its `file` and `line`, its
-  `reason` with any control characters as spaces), `model review: nothing found (as reported by the model)`, or, as seen on
-  2026-10-30, `model review: unchecked (<why>)`: `file` reads GitHub, which does not have the fixture's commit, so every read
-  gives a 404 and the reviewer replies `{"could_not_run": …}` (a reason over 120 characters is refused, and the model starts
-  the reviewer again). Install is offered. The review of a real package's files is in B19.
-- Result: `not installed: the user cancelled.`, FLAGGED_NOTE for `<FX2_SHA>`, then `REVIEW_BLOCK` with the same lines.
+- Dialog 1: the model review as `REVIEW_LINE` says, in 繁體中文. With `n` findings in `review`, FLAGGED's warn line reads
+  `⚠ 警告 <7+n> 項：…、模型審查 <n> 項` and nothing follows the lookups' line; with none, `✓ 模型審查：沒有發現` follows it;
+  or, as seen on 2026-10-30, `？ 模型審查：未執行` with no reason: `file` reads GitHub, which does not have the fixture's commit,
+  so every read gives a 404 and the reviewer replies `{"could_not_run": …}` (a reason over 120 characters is refused, and the
+  model starts the reviewer again). No file, line or reason from `review`, and no word of its `could_not_run`, appears anywhere
+  in the dialog. Install is offered. The review of a real package's files is in B19.
+- Result: `not installed: the user cancelled.`, FLAGGED_NOTE for `<FX2_SHA>`, then `REVIEW_BLOCK` in English: each finding's
+  `file`, `line` and `reason` (control characters as spaces), or the reviewer's `could_not_run` reason, as the subagent replied.
 - Reply: presents the review's findings as what the model review reported, not as verified, and lists them with the others.
 - **Limits.** Prompt `呼叫 mcp__kirby__install 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），sha 用 <FX2_SHA>，review 為 {"findings": [{"file": "skills/security-audit/e2e-setup.sh", "line": 5, "reason": "<130 個 x>"}]}，這是測試`.
   No dialog opens; result exactly
@@ -682,7 +685,7 @@ Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved
   an `Agent` call as in B26 (the prompt carries that `read` and the package's `files`, none of `MCP_LINES`); the subagent's
   `mcp__kirby__file` calls each pass that `package` and `ref` with a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`.
-- Dialog 1 facts: `HEADER_ZH(modelcontextprotocol/servers)`, `MCP server：claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_ZH`, then the `REVIEW_LINE`s. The model's `about`, within its 120 characters, says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
+- Dialog 1 facts: `HEADER_ZH(modelcontextprotocol/servers)`, `MCP server：claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_ZH`, with the model review as `REVIEW_LINE` says. The model's `about`, within its 120 characters, says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
 - Answer Install, `local`. Result first line exactly
   `installed (scope local): claude mcp add --scope local <MCP_PINNED>`,
   then the command's output, `next: The server connects in the next session; tell the user to restart Claude Code to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
@@ -828,8 +831,8 @@ Each followed by `SCAN_NOTE`; nothing written.
   a `wait_agent` call; the subagent's calls (where Codex records them was not checked: look for a newer session file under
   `$E2E/home/codex/sessions/` and read it with `transcript.py codex <P> --file <it>`; note where they were) are `mcp__kirby__file` only, each with that `package` and `ref` and a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`. If Codex starts no subagent, the install call must carry `{"could_not_run": "…"}` (dialog 1 then shows
-  `model review: unchecked (…)`) or no `review` (`UNREVIEWED`); note which, and whether Codex said why.
-- Dialog 1 facts: header, `MCP server：codex mcp add <MCP_PINNED>`, then `MCP_ZH`, then the `REVIEW_LINE`s, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
+  `？ 模型審查：未執行`, with no reason) or no `review` (`UNREVIEWED`); note which, and whether Codex said why.
+- Dialog 1 facts: header, `MCP server：codex mcp add <MCP_PINNED>`, then `MCP_ZH` with the model review as `REVIEW_LINE` says, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `MCP_NOTE` + `REVIEW_BLOCK`; the real `codex mcp list` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add <MCP_PINNED>`, then output, `next: The user starts a new Codex session to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
   `codex mcp get kirby-e2e` without `iso.sh` shows it, with the pinned package. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.

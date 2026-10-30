@@ -90,11 +90,12 @@ const WORDING = {
 
 // The install or check tool of a skill, with gh and install_skill.py answered and every dialog answered 取消;
 // asked collects the dialogs' questions.
-function skillTool($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1]) {
+function skillTool($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1],
+  check: object = SKILL_CHECK) {
   const asked: string[] = []
   on('ui.log', () => ({ value: undefined }))
   on('process.run', (_, e) => {
-    const stdout = e.argv[0] === 'gh' ? '[52770,"2026-09-14T08:00:00Z",false]' : JSON.stringify(SKILL_CHECK)
+    const stdout = e.argv[0] === 'gh' ? '[52770,"2026-09-14T08:00:00Z",false]' : JSON.stringify(check)
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
@@ -152,6 +153,36 @@ test('with en, a missing lang or any other, it is English as before', async ($, 
     expect(asked.at(-1)?.startsWith(english)).toBe(true)
   }
   expect(asked.length).toBe(3)
+})
+
+// The model review shows in the dialog only in kirby's words (docs/adr/0006); the model gets its text in the
+// review: block. The same cases are in tests/test_codex.py's ModelReview.
+const REVIEWED_CHECK = {
+  ...SKILL_CHECK,
+  facts: [{ key: 'warn', args: { count: 1, names: [{ key: 'scan_credentials', args: {} }] } }, { key: 'lookup_nothing', args: {} }],
+  lines: ['⚠ warn (1): credentials', '✓ advisory and malware lookups: nothing found'],
+  review: { needed: true, repo: 'o/r', sha: 'a'.repeat(40), files: ['s/SKILL.md', 's/run.sh'] },
+}
+
+test("with zh-TW the review's findings are counted on the warn line, and their text goes only to the model", async ($, on) => {
+  const { asked, call } = skillTool($, on, REVIEWED_CHECK)
+  const finding = { file: 's/run.sh', line: 1, reason: 'Reads the SSH key.' }
+  const result = await call({ dialog: { ...WORDING, lang: 'zh-TW' }, sha: 'a'.repeat(40), review: { findings: [finding] } })
+  expect(asked[0]?.split('\n\n')[0]?.split('\n').slice(-2)).toEqual(['⚠ 警告 2 項：憑證、模型審查 1 項', '✓ 漏洞、惡意套件查詢：沒有發現'])
+  expect(asked[0]).not.toContain('SSH')
+  expect(result).toBe(`not installed: the user cancelled.\n${SKILL_CHECK.note}\nreview: the model review's findings, as reported by the ` +
+    'model (the dialog showed the user only how many, on the warn line):\n  warn: s/run.sh:1: Reads the SSH key.')
+})
+
+test("a review that could not run shows no reason in the dialog; kirby's own reason is in the language picked", async ($, on) => {
+  const { asked, call } = skillTool($, on, REVIEWED_CHECK)
+  const result = await call({ dialog: { ...WORDING, lang: 'zh-TW' }, review: { could_not_run: 'No subagent tool.' } })
+  expect(asked[0]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？ 模型審查：未執行')
+  expect(asked[0]).not.toContain('subagent')
+  expect(result.endsWith('\nreview: the dialog showed the user that the model review did not run, without its reason, as reported ' +
+    'by the model: No subagent tool.')).toBe(true)
+  await call({ dialog: { ...WORDING, lang: 'zh-CN' } })
+  expect(asked[1]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？ 模型审查：未执行（没有传入审查结果）')
 })
 
 test("the check tool's findings stay English", async ($, on) => {

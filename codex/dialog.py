@@ -2,8 +2,9 @@
 input, in the format the inhale skill gives) and picks the language of the facts above it (dialog.lang),
 which kirby words itself (skills/inhale/scripts/words.py, docs/adr/0006); the scope dialog's options stay
 the server's own. When the wording is missing or unusable, the dialogs and their facts are in English. The
-model review's result (the install tool's `review` input) also reaches the first dialog, as read_review
-checks it. Pure, so the tests can run it directly; the rules match hooks/dialog.ts.
+model review's result (the install tool's `review` input), once read_review checks it, reaches the first
+dialog only in kirby's words (review_facts) and the model in full (review_note). Pure, so the tests can run
+it directly; the rules match hooks/dialog.ts.
 """
 import re
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 
 # The wording lives beside the scripts, which can word their facts with it too.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"))
-from words import fact, read_lang  # noqa: E402
+from words import fact, read_lang, say  # noqa: E402
 
 SCOPES = ("local", "project", "user")
 # The scope dialog's cancel option, the same in every language (the server words its install option, server.py).
@@ -84,43 +85,61 @@ def _reason(value):
 
 
 def read_review(raw, sha, review):
-    """The model review's lines for the first dialog, and None; or no lines and why the result is refused, so
-    the model sends it again. review is the check's own (whether it was needed, the sha and the files it
-    covered); sha is the one the model says the review read. A review the check did not ask for is left out,
-    and a missing one, or one that could not run, is one unchecked line (docs/adr/0002, docs/adr/0005)."""
+    """The model review's result, checked, and None; or None and why it is refused, so the model sends it again.
+    review is the check's own (whether it was needed, the sha and the files it covered); sha is the one the model
+    says the review read. A review the check did not ask for is left out, and a missing one, or one that could not
+    run, did not run (docs/adr/0002, docs/adr/0005).
+
+    The result is what the dialog shows of the review, in kirby's words (review_facts), and what the model is told
+    (review_note): {"state": "not needed"}, {"state": "found", "findings": [{file, line, reason}]},
+    {"state": "nothing found"}, {"state": "did not run", "why": <kirby's reason, a fact>} or
+    {"state": "did not run", "reviewer": <the reviewer's could_not_run, cleaned>}. The reviewer's own text, its
+    findings' reasons and its could_not_run, reaches only the model (docs/adr/0006)."""
     if not review["needed"]:
-        return [], None
+        return {"state": "not needed"}, None
     if raw is None:
-        why = "no review result was passed" if review["files"] else "kirby had no files of it to read"
-        return [f"model review: unchecked ({why})"], None
+        return {"state": "did not run", "why": fact("review_no_result" if review["files"] else "review_no_files")}, None
     if not isinstance(raw, dict) or len(raw) != 1 or not ({"findings", "could_not_run"} & set(raw)):
-        return [], REVIEW_SHAPE
+        return None, REVIEW_SHAPE
     if "could_not_run" in raw:
         why = _reason(raw["could_not_run"])
         if not why:
-            return [], f"review.could_not_run must be a reason of at most {REVIEW_MAX['reason']} characters"
-        return [f"model review: unchecked ({why})"], None
+            return None, f"review.could_not_run must be a reason of at most {REVIEW_MAX['reason']} characters"
+        return {"state": "did not run", "reviewer": why}, None
     findings = raw["findings"]
     if not isinstance(findings, list) or len(findings) > REVIEW_MAX["findings"]:
-        return [], f"review.findings must be a list of at most {REVIEW_MAX['findings']}"
-    lines = []
+        return None, f"review.findings must be a list of at most {REVIEW_MAX['findings']}"
+    found = []
     for i, f in enumerate(findings):
         at = f"review.findings[{i}]"
         if not isinstance(f, dict) or set(f) != {"file", "line", "reason"}:
-            return [], f"{at} must have exactly file, line and reason"
+            return None, f"{at} must have exactly file, line and reason"
         if f["file"] not in review["files"]:
-            return [], f"{at}.file must be one of the files the check tool listed"
+            return None, f"{at}.file must be one of the files the check tool listed"
         if type(f["line"]) is not int or f["line"] < 1:
-            return [], f"{at}.line must be a line number"
+            return None, f"{at}.line must be a line number"
         reason = _reason(f["reason"])
         if not reason:
-            return [], f"{at}.reason must be one sentence of at most {REVIEW_MAX['reason']} characters"
-        lines.append(f"warn: {f['file']}:{f['line']}: {reason} (model review, {LABEL})")
+            return None, f"{at}.reason must be one sentence of at most {REVIEW_MAX['reason']} characters"
+        found.append({"file": f["file"], "line": f["line"], "reason": reason})
     if not isinstance(sha, str) or not sha:
-        return [], "sha must be the one the check tool returned, which the review read"
+        return None, "sha must be the one the check tool returned, which the review read"
     if sha != review["sha"]:
-        return [f"model review: unchecked (it read {sha[:7]}, not {review['sha'][:7]}, the one checked here)"], None
-    return lines or [f"model review: nothing found ({LABEL})"], None
+        return {"state": "did not run", "why": fact("review_other_commit", read=sha[:7], checked=review["sha"][:7])}, None
+    return ({"state": "found", "findings": found} if found else {"state": "nothing found"}), None
+
+
+def review_facts(facts, reviewed):
+    """The facts with the review's result as the dialog shows it, in kirby's words only: its findings counted on
+    the warn line, or a line saying it found nothing or did not run, with kirby's reason but never the reviewer's."""
+    state = reviewed["state"]
+    if state == "found":
+        return count_review(facts, len(reviewed["findings"]))
+    if state == "nothing found":
+        return [*facts, fact("review_nothing")]
+    if state == "did not run":
+        return [*facts, fact("review_not_run_why", why=reviewed["why"]) if "why" in reviewed else fact("review_not_run")]
+    return list(facts)
 
 
 def count_review(facts, n):
@@ -144,6 +163,18 @@ def count_review(facts, n):
     return [*facts[:i], fact("warn", count=n, names=[review]), *facts[i:]]
 
 
-def review_note(lines):
-    """The review's dialog lines for the model, in every result after the dialog opens; "" without any."""
-    return "review: the dialog showed the user these model review lines:\n" + "\n".join(f"  {l}" for l in lines) if lines else ""
+def review_note(reviewed):
+    """The review's result for the model, in English, in every result after the dialog opens: every finding with its
+    file, line and reason, and the reviewer's reason when it could not run, which the dialog left out; "" without
+    a review."""
+    state = reviewed["state"]
+    if state == "found":
+        return (f"review: the model review's findings, {LABEL} (the dialog showed the user only how many, on the warn line):\n"
+                + "\n".join(f"  warn: {f['file']}:{f['line']}: {f['reason']}" for f in reviewed["findings"]))
+    if state == "nothing found":
+        return f"review: the dialog showed the user that the model review found nothing, {LABEL}"
+    if state == "did not run":
+        if "why" in reviewed:
+            return f"review: the dialog showed the user that the model review did not run ({say(reviewed['why'], 'en')})"
+        return f"review: the dialog showed the user that the model review did not run, without its reason, {LABEL}: {reviewed['reviewer']}"
+    return ""

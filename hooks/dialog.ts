@@ -2,10 +2,11 @@
 // format the inhale skill gives) and picks the language of the facts above it (dialog.lang), which kirby
 // words itself (words.ts, docs/adr/0006); the scope dialog's options stay the tool's own. When the wording
 // is missing or unusable, the dialogs and their facts are in English. The model review's result (the
-// tool's `review` input) also reaches the first dialog, as readReview checks it. Pure: no `$`, so the
+// tool's `review` input), once readReview checks it, reaches the first dialog only in kirby's words
+// (reviewFacts) and the model in full (reviewNote). Pure: no `$`, so the
 // tests can run it directly; the rules match codex/dialog.py.
 
-import { fact, readLang } from './words'
+import { fact, readLang, say } from './words'
 import type { Fact, Keyed, Lang } from './words'
 
 export type Kind = 'skill' | 'plugin' | 'mcp'
@@ -86,15 +87,27 @@ function reason(value: unknown): string | null {
   return typeof value === 'string' && [...value].length <= REVIEW_MAX.reason ? clean(value) || null : null
 }
 
-// The model review's lines for the first dialog; or no lines and why the result is refused, so the model
-// sends it again. review is the check's own; sha is the one the model says the review read. A review the
-// check did not ask for is left out, and a missing one, or one that could not run, is one unchecked line
-// (docs/adr/0002, docs/adr/0005).
-export function readReview(raw: unknown, sha: unknown, review: Review): { lines: string[]; problem?: string } {
-  const refuse = (problem: string) => ({ lines: [], problem })
-  if (!review.needed) return { lines: [] }
+// What the model review's result comes to, once checked: what the dialog shows of it (in kirby's words, through
+// reviewFacts) and what the model is told (reviewNote). The reviewer's own text is in `findings` and `reviewer`,
+// which reach only the model (docs/adr/0006).
+export type ReviewFinding = { file: string; line: number; reason: string }
+export type Reviewed =
+  | { state: 'not needed' }
+  | { state: 'found'; findings: ReviewFinding[] }
+  | { state: 'nothing found' }
+  // why: kirby's own reason, worded in the dialog's language.
+  | { state: 'did not run'; why: Keyed }
+  // reviewer: the reason the reviewer gave (could_not_run), cleaned; the dialog does not show it.
+  | { state: 'did not run'; reviewer: string }
+
+// The model review's result, checked; or why it is refused, so the model sends it again. review is the check's
+// own; sha is the one the model says the review read. A review the check did not ask for is left out, and a
+// missing one, or one that could not run, did not run (docs/adr/0002, docs/adr/0005).
+export function readReview(raw: unknown, sha: unknown, review: Review): { reviewed?: Reviewed; problem?: string } {
+  const refuse = (problem: string) => ({ problem })
+  if (!review.needed) return { reviewed: { state: 'not needed' } }
   if (raw === undefined || raw === null) {
-    return { lines: [`model review: unchecked (${review.files.length ? 'no review result was passed' : 'kirby had no files of it to read'})`] }
+    return { reviewed: { state: 'did not run', why: fact(review.files.length ? 'review_no_result' : 'review_no_files') } }
   }
   const keys = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.keys(raw) : []
   const key = keys.length === 1 ? keys[0] : undefined
@@ -103,13 +116,13 @@ export function readReview(raw: unknown, sha: unknown, review: Review): { lines:
   if (key === 'could_not_run') {
     const why = reason(r.could_not_run)
     if (!why) return refuse(`review.could_not_run must be a reason of at most ${REVIEW_MAX.reason} characters`)
-    return { lines: [`model review: unchecked (${why})`] }
+    return { reviewed: { state: 'did not run', reviewer: why } }
   }
   const findings = r.findings
   if (!Array.isArray(findings) || findings.length > REVIEW_MAX.findings) {
     return refuse(`review.findings must be a list of at most ${REVIEW_MAX.findings}`)
   }
-  const lines: string[] = []
+  const found: ReviewFinding[] = []
   for (const [i, f] of findings.entries()) {
     const at = `review.findings[${i}]`
     const fields = f && typeof f === 'object' && !Array.isArray(f) ? Object.keys(f).sort().join() : ''
@@ -119,13 +132,25 @@ export function readReview(raw: unknown, sha: unknown, review: Review): { lines:
     if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) return refuse(`${at}.line must be a line number`)
     const text = reason(why)
     if (!text) return refuse(`${at}.reason must be one sentence of at most ${REVIEW_MAX.reason} characters`)
-    lines.push(`warn: ${file}:${line}: ${text} (model review, ${LABEL})`)
+    found.push({ file, line, reason: text })
   }
   if (typeof sha !== 'string' || !sha) return refuse('sha must be the one the check tool returned, which the review read')
   if (sha !== review.sha) {
-    return { lines: [`model review: unchecked (it read ${sha.slice(0, 7)}, not ${String(review.sha).slice(0, 7)}, the one checked here)`] }
+    const why = fact('review_other_commit', { read: sha.slice(0, 7), checked: String(review.sha).slice(0, 7) })
+    return { reviewed: { state: 'did not run', why } }
   }
-  return { lines: lines.length ? lines : [`model review: nothing found (${LABEL})`] }
+  return { reviewed: found.length ? { state: 'found', findings: found } : { state: 'nothing found' } }
+}
+
+// The facts with the review's result as the dialog shows it, in kirby's words only: its findings counted on the warn
+// line, or a line saying it found nothing or did not run, with kirby's reason but never the reviewer's.
+export function reviewFacts(facts: readonly Fact[], r: Reviewed): Fact[] {
+  switch (r.state) {
+    case 'not needed': return [...facts]
+    case 'found': return countReview(facts, r.findings.length)
+    case 'nothing found': return [...facts, fact('review_nothing')]
+    case 'did not run': return [...facts, 'why' in r ? fact('review_not_run_why', { why: r.why }) : fact('review_not_run')]
+  }
 }
 
 // The facts with n model review findings counted on the warn line, as the dialog shows them: it counts the review's
@@ -147,7 +172,16 @@ export function countReview(facts: readonly Fact[], n: number): Fact[] {
   return [...facts.slice(0, i), fact('warn', { count: n, names: [review] }), ...facts.slice(i)]
 }
 
-// The review's dialog lines for the model, in every result after the dialog opens; '' without any.
-export function reviewNote(lines: readonly string[]): string {
-  return lines.length ? `review: the dialog showed the user these model review lines:\n${lines.map(l => `  ${l}`).join('\n')}` : ''
+// The review's result for the model, in English, in every result after the dialog opens: every finding with its file,
+// line and reason, and the reviewer's reason when it could not run, which the dialog left out; '' without a review.
+export function reviewNote(r: Reviewed): string {
+  switch (r.state) {
+    case 'not needed': return ''
+    case 'found': return `review: the model review's findings, ${LABEL} (the dialog showed the user only how many, on the warn line):\n` +
+      r.findings.map(f => `  warn: ${f.file}:${f.line}: ${f.reason}`).join('\n')
+    case 'nothing found': return `review: the dialog showed the user that the model review found nothing, ${LABEL}`
+    case 'did not run': return 'why' in r
+      ? `review: the dialog showed the user that the model review did not run (${say(r.why, 'en')})`
+      : `review: the dialog showed the user that the model review did not run, without its reason, ${LABEL}: ${r.reviewer}`
+  }
 }

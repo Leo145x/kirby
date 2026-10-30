@@ -38,9 +38,11 @@ WARN_7 = ("⚠ warn (7): may send secrets out, may download and run code, may do
           "prompt-injection phrases, hidden Unicode, credentials, changes shell startup files")
 WARN_7_ZH = "⚠ 警告 7 項：可能外傳密鑰、可能下載並執行程式碼、可能下載並解碼資料、提示詞注入字句、隱藏 Unicode、憑證、修改啟動檔"
 INFO = {"agent-config", "long-base64", "broad-tools", "html-comment", "network", "exec", "decode", "env-secret"}
-# A check that found a danger or warn finding asks for a model review; an install without one says so.
-UNREVIEWED = "model review: unchecked (no review result was passed)"
-REVIEW_NOTE = "\nreview: the dialog showed the user these model review lines:\n  "
+# A check that found a danger or warn finding asks for a model review; an install without one says so, in the dialog
+# in kirby's words and to the model in the result's review: block.
+UNREVIEWED = "? model review: did not run (no review result was passed)"
+UNREVIEWED_NOTE = "\nreview: the dialog showed the user that the model review did not run (no review result was passed)"
+DID_NOT_RUN = "\nreview: the dialog showed the user that the model review did not run"
 failures = []
 
 
@@ -98,7 +100,7 @@ def preview(cwd):
     # What every result after the dialog opens ends with: the pattern scan, then the lookups, then (the fixture
     # always has warn findings) the line saying no model review was passed.
     c["check_note"] = c["note"]
-    c["note"] = c["check_note"] + (REVIEW_NOTE + UNREVIEWED if c["review"]["needed"] else "")
+    c["note"] = c["check_note"] + (UNREVIEWED_NOTE if c["review"]["needed"] else "")
     return c
 
 
@@ -366,7 +368,7 @@ def main():
           and p.asked[1][1] == ["cancel", USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
           and r == f"installed (scope user): codex mcp add {' '.join(pinned)}\n(held)\n"
                    f"next: The user starts a new Codex session to use it.\n{c['note']}"
-                   + (REVIEW_NOTE + UNREVIEWED if unreviewed else ""), r)
+                   + (UNREVIEWED_NOTE if unreviewed else ""), r)
     # H16: dialog.lang for an MCP server: the command, package and pinned lines and the install option in 繁體中文,
     # with the command, package name and version as they are.
     p = Peer("安裝", "cancel")
@@ -433,9 +435,10 @@ def main():
         check(f"H12 file tool refuses {case}", not ok, out)
 
     # H14: check, then the model review's result into install: the check says a review is needed and what it
-    # reads; the review's findings follow the check in the dialog and in the result, labelled as the model's; a
-    # review of another commit or one that could not run is one unchecked line; one outside the limits opens no
-    # dialog. The fixture has warn findings, so a review is needed.
+    # reads; the dialog counts the review's findings on the warn line and shows none of the reviewer's text, which
+    # reaches the model in the result's review: block (docs/adr/0006); a review of another commit, one that could not
+    # run and one that found nothing are one line of kirby's; one outside the limits opens no dialog. The fixture has
+    # warn findings, so a review is needed.
     c = preview(project)
     ok, out = server.check(skill, meta)
     got = json.loads(out) if ok else {}
@@ -444,24 +447,37 @@ def main():
           and f"{FOLDER}/e2e-setup.sh" in got.get("files", []) and got.get("findings", [])[-len(c["lines"]):] == c["lines"]
           and got.get("blocked") is False, out[:400])
     finding = {"file": f"{FOLDER}/e2e-setup.sh", "line": 5, "reason": "Reads the​ user's SSH key.\nSends it out."}
-    line = f"warn: {FOLDER}/e2e-setup.sh:5: Reads the user's SSH key. Sends it out. (model review, as reported by the model)"
     base = c["check_note"]
+    found = {**skill, "sha": c["sha"], "review": {"findings": [finding]}}
     p = Peer("取消")
-    r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [finding]}}, meta)
-    check("H14 findings follow the check, cleaned and labelled, and reach the result",
-          "\n".join([*c["lines"], line]) + "\n\n測試用。" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
-          and r == f"not installed: the user cancelled.\n{base}{REVIEW_NOTE}{line}", r)
-    for case, a, want in [
-        ("another commit", {"sha": "f" * 40, "review": {"findings": []}},
-         f"model review: unchecked (it read fffffff, not {c['sha'][:7]}, the one checked here)"),
-        ("could not run", {"review": {"could_not_run": "no subagent tool in this session"}},
-         "model review: unchecked (no subagent tool in this session)"),
-        ("nothing found", {"sha": c["sha"], "review": {"findings": []}}, "model review: nothing found (as reported by the model)"),
+    r = server.install(p, {**found, "dialog": ZH}, meta)
+    check("H14 findings counted on the warn line, none of their text in the dialog; cleaned in the result",
+          "\n".join([WARN_7.replace("(7)", "(8)") + ", model review (1)", *c["lines"][1:]]) + "\n\n測試用。" in p.asked[0][0]
+          and "SSH" not in p.asked[0][0] and p.asked[0][1] == ZH["options"]
+          and r == f"not installed: the user cancelled.\n{base}\nreview: the model review's findings, as reported by the model "
+                   f"(the dialog showed the user only how many, on the warn line):\n  warn: {FOLDER}/e2e-setup.sh:5: Reads "
+                   "the user's SSH key. Sends it out.", r)
+    p = Peer("取消")
+    server.install(p, {**found, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    check("H14 with zh-TW the count is in 繁體中文",
+          f"\n{WARN_7_ZH.replace('7 項', '8 項')}、模型審查 1 項\n✓ 漏洞、惡意套件查詢：沒有發現\n" in p.asked[0][0], p.asked[0][0])
+    other = f"it read fffffff, not {c['sha'][:7]}, the one checked here"
+    for case, a, want, note in [
+        ("another commit", {"sha": "f" * 40, "review": {"findings": []}}, f"? model review: did not run ({other})",
+         f"{DID_NOT_RUN} ({other})"),
+        ("could not run", {"review": {"could_not_run": "no subagent tool in this session"}}, "? model review: did not run",
+         f"{DID_NOT_RUN}, without its reason, as reported by the model: no subagent tool in this session"),
+        ("nothing found", {"sha": c["sha"], "review": {"findings": []}}, "✓ model review: nothing found",
+         "\nreview: the dialog showed the user that the model review found nothing, as reported by the model"),
     ]:
         p = Peer("取消")
         r = server.install(p, {**skill, "dialog": ZH, **a}, meta)
-        check(f"H14 {case} -> one line, Install offered", f"\n{want}\n" in p.asked[0][0] and p.asked[0][1] == ZH["options"]
-              and r.endswith(f"{REVIEW_NOTE}{want}"), r)
+        check(f"H14 {case} -> one line of kirby's, Install offered", f"\n{want}\n" in p.asked[0][0]
+              and "subagent" not in p.asked[0][0] and p.asked[0][1] == ZH["options"] and r.endswith(note), r)
+    p = Peer("取消")
+    server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}, "sha": "f" * 40, "review": {"findings": []}}, meta)
+    check("H14 with zh-TW kirby's reason is in 繁體中文",
+          f"\n？ 模型審查：未執行（它讀的是 fffffff，不是這裡檢查的 {c['sha'][:7]}）\n" in p.asked[0][0], p.asked[0][0])
     p = Peer()
     r = server.install(p, {**skill, "dialog": ZH, "sha": c["sha"], "review": {"findings": [{**finding, "reason": "x" * 121}]}}, meta)
     check("H14 a reason over 120 characters -> refused, no dialog", not p.asked and r == (
