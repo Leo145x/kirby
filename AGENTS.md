@@ -52,8 +52,9 @@ The strings the install tool returns to the model (`not installed: …`, `instal
 |---|------|---------|
 | 1 | `hooks/register.ts`, `hooks/plugin.ts` ↔ `codex/server.py` | result strings; the notes they add after the scripts' `pattern scan:`, `lookups:` and `package:` blocks (the `review:` block of model review lines, the `note: the dialogs were in English …` line); the unchecked lines each side writes itself, such as `notListed` ↔ `not_listed` |
 | 1a | `hooks/rows.ts`, `tests/rows.test.ts` | the result line shown in Claude Code's transcript, which reads the start of each result |
-| 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` and `REVIEW_MAX` limits, the rules in `readDialog` / `read_dialog` and `readReview` / `read_review`, `clean`, `reviewNote` / `review_note` |
-| 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog and review rules and of a plugin's install steps |
+| 2 | `hooks/dialog.ts` ↔ `codex/dialog.py` | `english()`, the `MAX` and `REVIEW_MAX` limits, the rules in `readDialog` ↔ `read_dialog` and `readReview` ↔ `read_review`, `clean`, `reviewFacts` ↔ `review_facts`, `countReview` ↔ `count_review`, `reviewNote` ↔ `review_note` |
+| 2a | `hooks/words.ts` ↔ `skills/inhale/scripts/words.py` | each dialog line's wording in every language (the `WORDS` table, the same JSON on both sides), `fact`, `counted`, `say` |
+| 3 | `tests/dialog.test.ts`, `tests/plugin.test.ts` ↔ `tests/test_codex.py` | tests of the dialog and review rules and of a plugin's install steps; `test_both_sides_carry_the_same_wording` checks the two `WORDS` tables match |
 | 4 | `skills/inhale/SKILL.md`, `codex/skills/inhale/SKILL.md`, `hooks/check.ts` (`REVIEWER`) | the `dialog` format, the review prompt's result format, Limits, and each result under Act on the result |
 | 5 | `tests/e2e/codex_server.py`, `tests/e2e/RUNBOOK.md` | expected results checked word for word |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Install flow section (and the README Features list, if a feature it names changes) |
@@ -65,6 +66,7 @@ When a scan rule in `install_skill.py` is added, removed or renamed, or its seve
 | # | File | What to update |
 |---|------|---------|
 | 1 | `skills/inhale/scripts/install_skill.py` | `RULES` |
+| 1a | `hooks/words.ts`, `skills/inhale/scripts/words.py` | a warn rule's or combination's name on the dialog's warn line: the `scan_<name>` key, `-` written `_` |
 | 2 | `tests/test_install_skill.py` | the expected rule, file and line of each hit, and each rule's severity |
 | 3 | `tests/e2e/fixture.py` | the fixture's files, so they hit every rule |
 | 4 | `tests/e2e/RUNBOOK.md` | the rule count and the cases that use it |
@@ -77,9 +79,9 @@ When the arguments or output format of `skills/inhale/scripts/*.py` change:
 
 | # | File | What to update |
 |---|------|---------|
-| 1 | `skills/inhale/scripts/*.py` | arguments and output |
-| 2 | `hooks/register.ts`, `hooks/check.ts` | the arguments they pass to `install_skill.py`, `check_plugin.py` and `check_mcp.py` (its `--read` too), and the JSON fields they read (`review` among them) |
-| 3 | `codex/server.py` | the arguments it passes to each script, and how it parses the output |
+| 1 | `skills/inhale/scripts/*.py` | arguments and output: the dialog's lines as `facts` (`words.py`), with `lines` their English |
+| 2 | `hooks/register.ts`, `hooks/check.ts` | the arguments they pass to `install_skill.py`, `check_plugin.py` and `check_mcp.py` (its `--read` too), and the JSON fields they read (`facts` and `review` among them) |
+| 3 | `codex/server.py` | the arguments it passes to each script, and how it parses the output (`facts` among it) |
 | 4 | `skills/inhale/SKILL.md` | usage and output in sections 1a, 1b and 2 |
 | 5 | `tests/test_install_skill.py`, `tests/test_lookups.py`, `tests/test_check_plugin.py`, `tests/test_check_mcp.py`, `tests/e2e/scripts_check.py` | the matching tests and format checks |
 | 6 | `docs/guide.md`, `docs/guide.zh-TW.md`, `docs/guide.zh-CN.md` | the Scripts table |

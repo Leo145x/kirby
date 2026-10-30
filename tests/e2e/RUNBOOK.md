@@ -68,9 +68,9 @@ Commit. The shared parts below stay as they are.
 | `MCP_REPO`, `MCP_ARGS` | `modelcontextprotocol/servers`, `kirby-e2e -- npx -y @modelcontextprotocol/server-everything` |
 | `PLUGIN_MK` | `claude-plugins-official`, the name of `PLUGIN_REPO`'s marketplace |
 | `ENGLISH_NOTE` | `note: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes.` |
-| `UNREVIEWED` | `? model review: did not run (no review result was passed)`; with `zh-TW` `？ 模型審查：未執行（沒有傳入審查結果）` |
+| `UNREVIEWED` | `? model review: did not run (no review result was passed)`; with `zh-TW` `？模型審查：未執行（沒有傳入審查結果）` |
 | `REVIEW_BLOCK` | a result's last lines when a model review was needed, in English: `review: the model review's findings, as reported by the model (the dialog showed the user only how many, on the warn line):`, then `  warn: <file>:<line>: <reason>` for each finding; or one line, `review: the dialog showed the user that the model review found nothing, as reported by the model`, `review: the dialog showed the user that the model review did not run (<kirby's reason>)`, or `review: the dialog showed the user that the model review did not run, without its reason, as reported by the model: <the reviewer's could_not_run reason>` |
-| `REVIEW_LINE` | how dialog 1 shows a model review, in kirby's words only and in the dialog's language. Findings: their count joins the warn line (`⚠ warn (<w+n>): …, model review (<n>)`; with `zh-TW` `⚠ 警告 <w+n> 項：…、模型審查 <n> 項`; a warn line is added after any danger lines if there was none). Otherwise one line after the check's lines: `✓ model review: nothing found` (`✓ 模型審查：沒有發現`); `? model review: did not run` (`？ 模型審查：未執行`) when the reviewer replied `could_not_run`; or `? model review: did not run (<kirby's reason>)` (`？ 模型審查：未執行（<kirby 的原因>）`) when no result was passed, kirby had no files to read, or the review read another commit. No file, line or reason the reviewer wrote appears anywhere in the dialog |
+| `REVIEW_LINE` | how dialog 1 shows a model review, in kirby's words only and in the dialog's language. Findings: their count joins the warn line (`⚠ warn (<w+n>): …, model review (<n>)`; with `zh-TW` `⚠ 警告 <w+n> 項：…、模型審查 <n> 項`; a warn line is added after any danger lines if there was none). Otherwise one line after the check's lines: `✓ model review: nothing found` (`✓ 模型審查：沒有發現`); `? model review: did not run` (`？模型審查：未執行`) when the reviewer replied `could_not_run`; or `? model review: did not run (<kirby's reason>)` (`？模型審查：未執行（<kirby 的原因>）`) when no result was passed, kirby had no files to read, or the review read another commit. No file, line or reason the reviewer wrote appears anywhere in the dialog |
 
 Constants only one agent CLI uses are in its section.
 
@@ -91,7 +91,7 @@ python3 -I $KIRBY/skills/inhale/scripts/install_skill.py cloudflare/security-aud
 Record `SHA` (40 hex), `SHA7` (`commit`, equal to `SHA[:7]`), `N` (`files`), `SCRIPTS` (`scripts`),
 `CHECK_LINES` (`lines`), `BLOCKED` (`blocked`, must be `false`), `review.needed` (must be `false`: its
 only findings are info, so no model review runs for it; if it is now `true`, the cases below gain the review of B26, so note it)
-and `SCAN_NOTE` (`note`: the `pattern scan:` block, a newline, then the `lookups:` block); every result after the dialog opens ends
+and `SCAN_NOTE` (`note`: the `pattern scan:` block, the `scripts:` line naming the scripts the dialog only counts, then the `lookups:` block); every result after the dialog opens ends
 with it. `SHA` must equal the `ls-remote` HEAD. The lookups ask OSV.dev and GitHub at check time, so
 `CHECK_LINES` can change when a new advisory is published; record it, do not expect the values below.
 At the time of writing (`SHA` `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`): 20 files, 4 scripts, and
@@ -105,13 +105,14 @@ At the time of writing (`SHA` `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`): 20 fi
 (the check summed up by severity: the first line is the pattern scan's, which found only info findings (`exec` in the two
 `validate-*.test.cjs`), the dialog leaving those out; the second is the lookups'. With no finding at all and nothing unscanned
 or unchecked, `lines` is the one line `✓ check: nothing found (<n> files, <dependencies>, advisory and malware lookups)`).
-Record `CHECK_ZH`, those lines in 繁體中文 (`ZH(<this run>)`, below, without its first two lines, the skill and scripts lines):
+Record `CHECK_ZH`, those lines in 繁體中文 (`ZH(<this run>)`, below):
 at the time of writing `✓ pattern 掃描：沒有危險或警告的發現` and `✓ 漏洞、惡意套件查詢：沒有發現`. Record also `SCAN_NOTE`:
 
 ```
 pattern scan: the pattern-scan findings in cloudflare/security-audit-skill at commit <SHA> (the dialog showed the user the warn ones by name only, without files or lines, and left out the info ones):
   info exec skills/security-audit/validate-coverage-ledger.test.cjs:5
   info exec skills/security-audit/validate-findings.test.cjs:5
+scripts: the dialog showed the user only how many scripts the skill may run (4): validate-coverage-ledger.cjs, validate-coverage-ledger.test.cjs, validate-findings.cjs, validate-findings.test.cjs
 lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <SHA>
 dependencies: no npm or Python dependency files
 ```
@@ -281,7 +282,7 @@ before anything else; it lists every place a case can leave something behind.
 | A5 | both | `install_skill.py` with `--commit abc` | exits non-zero with `--commit needs a full 40-character sha: 'abc'` before cloning |
 | A6 | both | in an empty dir: `install_skill.py cloudflare/security-audit-skill skills/nope --scope project --check --json` | exit 1, `cloudflare/security-audit-skill:skills/nope has no SKILL.md` |
 | A7 | both | in a dir with `.claude/skills/security-audit/`: `install_skill.py … --scope local --commit <SHA>` | exit 1, `.claude/skills/security-audit already exists; pass --force to replace it` |
-| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `lines` = FLAGGED (below) followed by the last line of `CHECK_LINES` (the lookups'); `scan.combinations` = `["send-secrets", "download-run", "download-decode"]`; `note` starts with FLAGGED_NOTE's `pattern scan:` block (below: its 3 combination lines and 15 finding lines), then a `lookups:` block; no `check_lines`, `scan_note` or `lookup_note` field; `blocked` `false` |
+| A8 | both | in an empty dir, in one command: `(. $E2E/fx/env.sh && python3 -I $KIRBY/skills/inhale/scripts/install_skill.py … --scope project --check --json)` | `sha` = `FX_SHA`; `files` = `N + 3`; `lines` = FLAGGED (below) followed by the last line of `CHECK_LINES` (the lookups'); `scan.combinations` = `["send-secrets", "download-run", "download-decode"]`; `note` starts with FLAGGED_NOTE's `pattern scan:` block (below: its 3 combination lines and 15 finding lines), then its `scripts:` line and a `lookups:` block; no `check_lines`, `scan_note` or `lookup_note` field; `blocked` `false` |
 | A9 | Codex | `python3 -I $KIRBY/tests/e2e/codex_server.py $E2E/fx $E2E/codex/h` (the server's log lines on stderr are expected) | every line `PASS`, last line `all passed`, exit 0. H6 adds a commit to the fixture and takes it away again, and H13 adds one: record the new HEAD as `FX_SHA` (`git -C $E2E/fx/upstream.git rev-parse HEAD`) |
 | A17 | both | in an empty dir: the `check_mcp.py` run of Values to record (MCP server), then `check_mcp.py --read '{"ecosystem": "npm", "name": "@modelcontextprotocol/server-everything", "version": "<MCP_VERSION>", "sha": "<MCP_REVIEW_SHA>", "path": "package.json"}'`; again with `"sha"` 64 zeros; then `check_mcp.py --read 'x'` | the first prints that package's `package.json` (its `name` is `@modelcontextprotocol/server-everything`, its `version` `<MCP_VERSION>`); the second exits 1 with `the registry now gives another archive than the one checked`; the third exits 1 with `--read needs {"ecosystem": "npm" or "PyPI", "name", "version", "sha": 64 hex, "path"}`; nothing is left in the dir |
 | A13 | both | in an empty dir: `install_skill.py Leo145x/kirby skills/inhale --scope project --commit d4f7a5f5dca68fb15d6a40ba63c5b8d6d643070f` (an older commit, not the tip); then the same with `--commit 0123456789abcdef0123456789abcdef01234567` in another empty dir | the first exits 0 with `installed Leo145x/kirby:skills/inhale@d4f7a5f -> .claude/skills/inhale (5 files)`, `.kirby.json` has that `commit`, and `scripts/install_skill.py` equals `git -C $KIRBY show d4f7a5f:skills/inhale/scripts/install_skill.py`; the second exits 1 with `could not fetch Leo145x/kirby at commit 0123456, the one shown to the user; nothing installed (a force-push can remove a commit). git: fatal: remote error: upload-pack: not our ref 0123456789abcdef0123456789abcdef01234567` and writes nothing |
@@ -292,8 +293,8 @@ before anything else; it lists every place a case can leave something behind.
 | A15 | both | `check_mcp.py -- modelcontextprotocol/servers '["time", "--", "uvx", "mcp-server-time"]'` (a PyPI server in a folder of the repo) | exit 0; `mcp_args[3]` matches `^mcp-server-time==\S+$` and `package.version` is that version; `lines[0]` is `package: mcp-server-time@<version> (PyPI), named by this repo's src/time/pyproject.toml; not verified to come from this repo`; `lines[1]` starts `pinned: only mcp-server-time, to <version>; `; `lines[2]` is the one `✓ check: nothing found (<n> files, <m> PyPI dependencies, advisory and malware lookups)` line (on 2026-10-30: 7 files, 30 PyPI dependencies), or, if the check now finds something, the lines summed up by severity with a `dependencies: mcp-server-time@<version>: <m> PyPI, …` line among them; `blocked` `false`; nothing is left in the scratch directory |
 | A16 | both | `check_mcp.py -- modelcontextprotocol/servers '["e", "--", "docker", "run", "-i", "mcp/time"]'`; then `'["e", "--url", "https://mcp.example/mcp"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@^999"]'`; then `'["e", "--", "npx", "-y", "@modelcontextprotocol/server-everything@~2026.1"]'`; then `'["e", "--", "npx", "-y", "other-pkg", "@modelcontextprotocol/server-everything"]'`; then `check_mcp.py -- modelcontextprotocol/servers 'not json'` | the first: `lines` is exactly `["? unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which kirby does not check); not pinned"]` and `mcp_args` unchanged; the second: `["? unchecked: pattern scan, advisory lookup and malware lookup (a remote server at a URL; its code does not install here)"]`; the third: `lines[1]` is `not pinned: kirby could not tell which version of @modelcontextprotocol/server-everything the command installs (no version of @modelcontextprotocol/server-everything matches ^999); it installs as given` and `mcp_args` unchanged; the fourth: `mcp_args[4]` is `@modelcontextprotocol/server-everything@<V>` and `lines[1]` starts `pinned: only @modelcontextprotocol/server-everything, to <V>, the highest version matching ~2026.1; `, with `<V>` the highest `2026.1.x` in `npm view @modelcontextprotocol/server-everything versions --json` (2026.1.26 on 2026-10-30); the fifth (npx runs `other-pkg`, so the package the repo names is only an argument): `lines` is exactly `["? unchecked: pattern scan, advisory lookup and malware lookup (the command runs none of the packages this repo names: <names>); not pinned"]` and `mcp_args` unchanged; the last exits 1 with `mcp_args must be a JSON list of strings` |
 
-What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts and check lines
-(summed up by severity: one `⚠ warn (7): …` line naming the warn findings, then one `✓ advisory and malware lookups: nothing found`
+What A9 covers, against the Codex server with scripted answers: H1 the dialog's facts (the skill's one line counting its
+files and scripts, whose names are in the note's `scripts:` line) and check lines (summed up by severity: one `⚠ warn (7): …` line naming the warn findings, then one `✓ advisory and malware lookups: nothing found`
 line; every finding, info ones too, with its file and line in the model's note), English options and `ENGLISH_NOTE`, all 12 rules and the 3 combinations fired, the zero-width name shown as `we?ird.py`,
 and, as the fixture's warn findings ask for a model review and none was passed, the `UNREVIEWED` line with Install still offered;
 H2 the model's wording and the README / pick another / dismiss results; H3 unusable wording falls
@@ -324,13 +325,14 @@ a finding counted on the warn line (`model review (1)`, with `zh-TW` `模型審�
 line and reason, hidden characters and line break stripped, in the result's `review:` block; a review of another commit (kirby's reason
 shown, in 繁體中文 with `zh-TW`), one that could not run (no reason shown; the reviewer's in the `review:` block), and one that found
 nothing, each one line with Install offered; a reason over 120 characters refused before any dialog; H15 `dialog.lang`: with `zh-TW` the repo line
-(`… 更新`), the skill line, the scripts line, the `exists:` line and the check's lines (`⚠ 警告 7 項：…`, `✓ 漏洞、惡意套件查詢：沒有發現`) in 繁體中文, with `zh-CN` (no
+(`… 更新`), the skill line (`… 個檔案、… 個腳本`), the `exists:` line and the check's lines (`⚠ 警告 7 項：…`, `✓ 漏洞、惡意套件查詢：沒有發現`) in 繁體中文, with `zh-CN` (no
 project) the skill line and the `installs at:` line in 简体中文, with `en` or `ja` English, the `check` tool's `findings` in English,
 the result in English, and an `about` over 120 characters falling back to English (facts too) with the `note:` saying why;
 H16 `dialog.lang` `zh-TW` for a plugin and an MCP server: the plugin line, the marketplace lines (`已加入`, `Claude Code 格式`),
 the description and source lines, the `MCP server：` command line, the package and pinned lines and, for both, the check's lines in 繁體中文, with commands, names,
 versions and paths as they are, and the scope dialog's install option `安裝在 user（~/.codex/config.toml，所有專案）`, which installs
-at user, while the result's marketplace line stays English.
+at user, while the result's marketplace line stays English; and a container image's unchecked line with kirby's reason in
+繁體中文 and the full-width `？` (`？未檢查：…（指令執行的是 container image，kirby 不檢查它）；未鎖定版本`), the reason in English in the result.
 It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run,
 and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
@@ -350,7 +352,8 @@ With `dialog.lang` `zh-TW` it reads (the #24 mock-up), and the lookups' line aft
 
 FLAGGED_NOTE, the `pattern scan:` block in every result for the fixture (`<FX_SHA>` is the commit the dialog
 showed; the model gets every finding with its file and line, the `exec` findings in `validate-*` following the upstream
-files at the fixed commit), followed by the fixture's `lookups:` block (as at the time of writing, with `<FX_SHA>`):
+files at the fixed commit), followed by the `scripts:` line naming the scripts the dialog only counts and the fixture's
+`lookups:` block (as at the time of writing, with `<FX_SHA>`):
 
 ```
 pattern scan: the pattern-scan findings in cloudflare/security-audit-skill at commit <FX_SHA> (the dialog showed the user the warn ones by name only, without files or lines, and left out the info ones):
@@ -372,6 +375,7 @@ pattern scan: the pattern-scan findings in cloudflare/security-audit-skill at co
   info exec skills/security-audit/validate-coverage-ledger.test.cjs:5
   info exec skills/security-audit/validate-findings.test.cjs:5
   info exec skills/security-audit/we?ird.py:1
+scripts: the dialog showed the user only how many scripts the skill may run (6): e2e-setup.sh, validate-coverage-ledger.cjs, validate-coverage-ledger.test.cjs, validate-findings.cjs, validate-findings.test.cjs, we?ird.py
 lookups: the dialog showed the user no findings from the advisory and malware lookups for cloudflare/security-audit-skill at commit <FX_SHA>
 dependencies: no npm or Python dependency files
 ```
@@ -445,8 +449,7 @@ Dialog 1 for `SKILL_REPO` (facts, verbatim):
 
 ```
 HEADER_ZH(cloudflare/security-audit-skill)
-技能：security-audit · commit <SHA7> · <N> 個檔案
-<len(SCRIPTS)> 個腳本，例如 <SCRIPTS[0]>、<SCRIPTS[1]>
+security-audit · commit <SHA7> · <N> 個檔案、<len(SCRIPTS)> 個腳本
 <CHECK_ZH, one per line>
 ```
 
@@ -518,14 +521,14 @@ Reset the project before each; prompt as B3.
 **B14 Scope step.** Answer Install, then option 1 (`cancel`): `not installed: the user cancelled at the scope step.` + `SCAN_NOTE`. Again with `esc` on dialog 2: `not installed: the user dismissed the scope dialog.` + `SCAN_NOTE`. Nothing written either time.
 
 **B15 English fallback.** Prompt `直接呼叫 mcp__kirby__install 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數，也不要先載入 skill。` Answer Cancel.
-- Dialog 1's facts are in English: `HEADER(cloudflare/security-audit-skill)`, `skill: security-audit · commit <SHA7> · <N> files`,
-  `scripts: <len(SCRIPTS)>, e.g. <SCRIPTS[0]>, <SCRIPTS[1]>`, then `CHECK_LINES`. It ends `What next?`, options `Cancel`, `Read README first`, `Pick another`, `Install`.
+- Dialog 1's facts are in English: `HEADER(cloudflare/security-audit-skill)`,
+  `security-audit · commit <SHA7> · <N> files, <len(SCRIPTS)> scripts`, then `CHECK_LINES`. It ends `What next?`, options `Cancel`, `Read README first`, `Pick another`, `Install`.
 - Result `not installed: the user cancelled.`, `SCAN_NOTE`, then `ENGLISH_NOTE`. If the model loads the skill and passes `dialog` anyway, mark N/A.
 
 **B27 简体中文.** Prompt `用 kirby 安装 cloudflare/security-audit-skill 的 security-audit skill（folder 是 skills/security-audit）`. Answer option 1.
 - The install call's `dialog` has `"lang": "zh-CN"` and its wording is in 简体中文.
-- Dialog 1's facts: `HEADER_ZH(cloudflare/security-audit-skill)`, `技能：security-audit · commit <SHA7> · <N> 个文件`,
-  `<len(SCRIPTS)> 个脚本，例如 <SCRIPTS[0]>、<SCRIPTS[1]>`, then `CHECK_LINES` in 简体中文 (as `CHECK_ZH`, with `zh-CN` in the
+- Dialog 1's facts: `HEADER_ZH(cloudflare/security-audit-skill)`, `security-audit · commit <SHA7> · <N> 个文件、<len(SCRIPTS)> 个脚本`,
+  then `CHECK_LINES` in 简体中文 (as `CHECK_ZH`, with `zh-CN` in the
   `ZH` command: at the time of writing `✓ pattern 扫描：没有危险或警告的发现` and `✓ 漏洞、恶意包查询：没有发现`).
 - Result `not installed: the user cancelled.` + `SCAN_NOTE`, in English; no `note:` line.
 
@@ -533,8 +536,8 @@ Reset the project before each; prompt as B3.
 
 **B16 Flagged scan, then the repo moves on.** New project `$E2E/claude/fx`; start Claude Code with the
 fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
-- Dialog 1: the header is still GitHub's; `技能：security-audit · commit <FX_SHA7> · <N+3> 個檔案`;
-  the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the check lines are exactly the two of
+- Dialog 1: the header is still GitHub's; `security-audit · commit <FX_SHA7> · <N+3> 個檔案、<len(SCRIPTS)+2> 個腳本`
+  (the scripts counted include the fixture's `e2e-setup.sh` and `we?ird.py`, whose names are in the result's `scripts:` line, not the dialog); the check lines are exactly the two of
   FLAGGED's `zh-TW` block (`⚠ 警告 7 項：…`, then `✓ 漏洞、惡意套件查詢：沒有發現`; no file, line or info finding), with the
   model review as `REVIEW_LINE` says (the fixture's warn findings ask for one: the warn line may end `、模型審查 <n> 項`, or a
   `模型審查` line follows; B26 checks it); no zero-width character anywhere in the dialog.
@@ -561,7 +564,7 @@ fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/f
   of them starting `✕ 危險：lodash@4.17.20 (npm) 有 `; then FLAGGED's `⚠ 警告 7 項：…` line and `相依套件：package-lock.json：2 個 npm`.
   Three options only: cancel, read the README first, pick another.
 - Answer cancel. Result starts `not installed: the user cancelled.`, then the `pattern scan:` block of
-  FLAGGED_NOTE for the new `<FX_SHA>`, then a `lookups:` block (in place of FLAGGED_NOTE's last two
+  FLAGGED_NOTE for the new `<FX_SHA>` and its `scripts:` line, then a `lookups:` block (in place of FLAGGED_NOTE's last two
   lines) whose lines include `  danger malware flatmap-stream@0.1.1 (npm) MAL-2025-20690: in OpenSSF Malicious Packages`
   and that ends with
   `blocked: the dialog did not offer Install, because the malware lookup lists flatmap-stream@0.1.1 (npm) as known-malicious. kirby will not install it; tell the user why, and that installing it anyway means doing it by hand.`,
@@ -595,7 +598,7 @@ the fixture as in Driving, with `$E2E/fx2/env.sh` in place of `$E2E/fx/env.sh`. 
 - The install call has `"sha": "<FX2_SHA>"` and `review` equal to the subagent's JSON reply, unchanged.
 - Dialog 1: the model review as `REVIEW_LINE` says, in 繁體中文. With `n` findings in `review`, FLAGGED's warn line reads
   `⚠ 警告 <7+n> 項：…、模型審查 <n> 項` and nothing follows the lookups' line; with none, `✓ 模型審查：沒有發現` follows it;
-  or, as seen on 2026-10-30, `？ 模型審查：未執行` with no reason: `file` reads GitHub, which does not have the fixture's commit,
+  or, as seen on 2026-10-30, `？模型審查：未執行` with no reason: `file` reads GitHub, which does not have the fixture's commit,
   so every read gives a 404 and the reviewer replies `{"could_not_run": …}` (a reason over 120 characters is refused, and the
   model starts the reviewer again). No file, line or reason from `review`, and no word of its `could_not_run`, appears anywhere
   in the dialog. Install is offered. The review of a real package's files is in B19.
@@ -831,7 +834,7 @@ Each followed by `SCAN_NOTE`; nothing written.
   a `wait_agent` call; the subagent's calls (where Codex records them was not checked: look for a newer session file under
   `$E2E/home/codex/sessions/` and read it with `transcript.py codex <P> --file <it>`; note where they were) are `mcp__kirby__file` only, each with that `package` and `ref` and a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`. If Codex starts no subagent, the install call must carry `{"could_not_run": "…"}` (dialog 1 then shows
-  `？ 模型審查：未執行`, with no reason) or no `review` (`UNREVIEWED`); note which, and whether Codex said why.
+  `？模型審查：未執行`, with no reason) or no `review` (`UNREVIEWED`); note which, and whether Codex said why.
 - Dialog 1 facts: header, `MCP server：codex mcp add <MCP_PINNED>`, then `MCP_ZH` with the model review as `REVIEW_LINE` says, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `MCP_NOTE` + `REVIEW_BLOCK`; the real `codex mcp list` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add <MCP_PINNED>`, then output, `next: The user starts a new Codex session to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.

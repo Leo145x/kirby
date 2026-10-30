@@ -28,7 +28,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "script
 sys.path.insert(0, str(SCRIPTS))
 # A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
 from detect import GITHUB_URL  # noqa: E402
-from words import fact, say  # noqa: E402
+from words import counted, fact, say  # noqa: E402
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -355,7 +355,7 @@ def not_listed(why):
 
 
 def preview(kind, a, project):
-    """What the install would do: the facts for the dialog (lines, then where it installs, each a line or a
+    """What the install would do: the facts for the dialog (facts, then where it installs, each a line or a
     fact for words.say), the scopes on offer, what the model review reads and whether it is needed (review,
     the check's own), and anything the command needs."""
     repo = a["repo"]
@@ -368,15 +368,16 @@ def preview(kind, a, project):
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        lines = [fact("skill", name=c["name"], commit=c["commit"], files=c["files"])]
-        if c["scripts"]:
-            lines.append(fact("scripts", count=len(c["scripts"]), names=c["scripts"][:2]))
+        # One line, its files and scripts counted (the scripts' names are in the note, for the model).
+        files, n = counted("check_files", c["files"]), len(c["scripts"])
+        facts = [fact("skill_scripts", name=c["name"], commit=c["commit"], files=files, scripts=counted("script_count", n)) if n
+                 else fact("skill", name=c["name"], commit=c["commit"], files=files)]
         if project and c["exists"]:
             exists = "exists_replaces" if a.get("force") is True else "exists_fails"
-            lines.append(fact(exists, path=f".agents/skills/{c['name']}/"))
-        lines += c["facts"]
+            facts.append(fact(exists, path=f".agents/skills/{c['name']}/"))
+        facts += c["facts"]
         # The commit shown is the one installed.
-        return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
+        return {"facts": facts, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
                 "scan": c["note"], "commit": c["sha"], "blocked": c["blocked"] is True,
                 "review": c["review"]}
     if kind == "plugin":
@@ -406,7 +407,7 @@ def preview(kind, a, project):
         scan = [c["note"], *(say(f, "en") for f in about)]
         if c["marketplace_file"].startswith(".claude-plugin/"):
             about.append(fact("marketplace_claude_format", file=c["marketplace_file"]))
-        return {"lines": [c["facts"][0], *about, *c["facts"][1:]], "where": [USER_ONLY], "scopes": ("user",),
+        return {"facts": [c["facts"][0], *about, *c["facts"][1:]], "where": [USER_ONLY], "scopes": ("user",),
                 "scan": "\n".join(scan), "commit": c["sha"], "blocked": c["blocked"] is True, "review": c["review"],
                 "marketplace": added["name"] if added else c["marketplace"], "added": added}
     args = a.get("mcp_args")
@@ -418,7 +419,7 @@ def preview(kind, a, project):
     if not ok:
         raise Refusal(out)
     c = json.loads(out)
-    return {"lines": [fact("mcp_server", command=f"codex mcp add {' '.join(c['mcp_args'])}"), *c["facts"]], "where": [USER_ONLY],
+    return {"facts": [fact("mcp_server", command=f"codex mcp add {' '.join(c['mcp_args'])}"), *c["facts"]], "where": [USER_ONLY],
             "scopes": ("user",), "scan": c["note"], "mcp_args": c["mcp_args"], "blocked": c["blocked"] is True,
             "review": c["review"]}
 
@@ -466,7 +467,7 @@ def check(a, meta):
         if len(r["files"]) > FILES_SHOWN:
             out["more_files"] = len(r["files"]) - FILES_SHOWN
     # The model reads the facts in English, whatever language the dialog shows them in.
-    out.update(findings=[say(f, "en") for f in [*plan["lines"], *plan["where"]]], blocked=plan["blocked"])
+    out.update(findings=[say(f, "en") for f in [*plan["facts"], *plan["where"]]], blocked=plan["blocked"])
     return True, json.dumps(out, ensure_ascii=False)
 
 
@@ -501,7 +502,7 @@ def install(peer, a, meta):
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
     # The review shows only in kirby's words: its findings counted on the warn line (docs/adr/0006).
-    facts = [say(f, d["lang"]) for f in [header, *review_facts(plan["lines"], reviewed), *plan["where"]]]
+    facts = [say(f, d["lang"]) for f in [header, *review_facts(plan["facts"], reviewed), *plan["where"]]]
     nxt = peer.ask("\n".join(facts) + f"{about}\n\n{d['next']}", next_options(d, plan.get("blocked", False)))
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:

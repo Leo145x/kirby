@@ -17,7 +17,7 @@ import type { Kind, Scope } from './dialog'
 import { alreadyAdded, findAdded, headOf, installPlugin, notListed } from './plugin'
 import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
-import { fact, say } from './words'
+import { counted, fact, say } from './words'
 import type { Fact } from './words'
 
 type $ = EngineInterface
@@ -161,8 +161,11 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
       facts: Fact[]; note: string; blocked: boolean; review: ReviewOf
     }
-    const facts: Fact[] = [fact('skill', { name: c.name, commit: c.commit, files: c.files })]
-    if (c.scripts.length) facts.push(fact('scripts', { count: c.scripts.length, names: c.scripts.slice(0, 2) }))
+    // One line, its files and scripts counted (the scripts' names are in the note, for the model).
+    const files = counted('check_files', c.files)
+    const facts: Fact[] = [c.scripts.length
+      ? fact('skill_scripts', { name: c.name, commit: c.commit, files, scripts: counted('script_count', c.scripts.length) })
+      : fact('skill', { name: c.name, commit: c.commit, files })]
     if (c.exists) facts.push(fact(input.force === true ? 'exists_replaces' : 'exists_fails', { path: `.claude/skills/${c.name}/` }))
     facts.push(...c.facts)
     return { facts, cache: null, scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true }

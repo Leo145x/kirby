@@ -69,7 +69,7 @@ test('a marketplace list that fails is one unchecked line, and the check goes ah
   expect(ran.some(c => c.includes('check_plugin.py') && !c.includes('--commit'))).toBe(true)
   expect(out.findings).toEqual([
     'plugin: p · marketplace mk · commit aaaaaaa · 1 files',
-    'unchecked: whether this marketplace is already added (claude plugin marketplace list failed: not this one); the check is of ' +
+    '? unchecked: whether this marketplace is already added (claude plugin marketplace list failed: not this one); the check is of ' +
       'its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit',
     'check: nothing found',
   ])
@@ -120,8 +120,7 @@ test("with zh-TW kirby's lines are in 繁體中文", async ($, on) => {
   const { asked, result } = await skill($, on, { dialog: { ...WORDING, lang: 'zh-TW' } })
   expect(asked).toEqual([[
     'o/r ★52770 · 2026-09-14 更新',
-    '技能：s · commit aaaaaaa · 2 個檔案',
-    '3 個腳本，例如 run.sh、setup.py',
+    's · commit aaaaaaa · 2 個檔案、3 個腳本',
     '已存在：.claude/skills/s/（安裝在 local 或 project 會失敗）',
     '✓ 檢查：沒有發現（2 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）',
   ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`])
@@ -132,8 +131,7 @@ test("with zh-CN kirby's lines are in 简体中文", async ($, on) => {
   const { asked } = await skill($, on, { force: true, dialog: { ...WORDING, lang: 'zh-CN' } })
   expect(asked[0]?.startsWith([
     'o/r ★52770 · 2026-09-14 更新',
-    '技能：s · commit aaaaaaa · 2 个文件',
-    '3 个脚本，例如 run.sh、setup.py',
+    's · commit aaaaaaa · 2 个文件、3 个脚本',
     '已存在：.claude/skills/s/（安装在 local 或 project 会替换它）',
     '✓ 检查：没有发现（2 个文件、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）',
   ].join('\n') + '\n\n')).toBe(true)
@@ -142,8 +140,7 @@ test("with zh-CN kirby's lines are in 简体中文", async ($, on) => {
 test('with en, a missing lang or any other, it is English as before', async ($, on) => {
   const english = [
     'o/r ★52770 · pushed 2026-09-14',
-    'skill: s · commit aaaaaaa · 2 files',
-    'scripts: 3, e.g. run.sh, setup.py',
+    's · commit aaaaaaa · 2 files, 3 scripts',
     'exists: .claude/skills/s/ (installing at local or project fails)',
     ...SKILL_CHECK.lines,
   ].join('\n') + '\n\n'
@@ -177,20 +174,26 @@ test("with zh-TW the review's findings are counted on the warn line, and their t
 test("a review that could not run shows no reason in the dialog; kirby's own reason is in the language picked", async ($, on) => {
   const { asked, call } = skillTool($, on, REVIEWED_CHECK)
   const result = await call({ dialog: { ...WORDING, lang: 'zh-TW' }, review: { could_not_run: 'No subagent tool.' } })
-  expect(asked[0]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？ 模型審查：未執行')
+  expect(asked[0]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？模型審查：未執行')
   expect(asked[0]).not.toContain('subagent')
   expect(result.endsWith('\nreview: the dialog showed the user that the model review did not run, without its reason, as reported ' +
     'by the model: No subagent tool.')).toBe(true)
   await call({ dialog: { ...WORDING, lang: 'zh-CN' } })
-  expect(asked[1]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？ 模型审查：未执行（没有传入审查结果）')
+  expect(asked[1]?.split('\n\n')[0]?.split('\n').at(-1)).toBe('？模型审查：未执行（没有传入审查结果）')
 })
 
 test("the check tool's findings stay English", async ($, on) => {
   const { result } = await skill($, on, {}, 'mcp__kirby__check')
   expect((JSON.parse(result) as { findings: string[] }).findings).toEqual([
-    'skill: s · commit aaaaaaa · 2 files', 'scripts: 3, e.g. run.sh, setup.py',
+    's · commit aaaaaaa · 2 files, 3 scripts',
     'exists: .claude/skills/s/ (installing at local or project fails)', ...SKILL_CHECK.lines,
   ])
+})
+
+test('a skill with one file and no scripts says so in one line', async ($, on) => {
+  const { asked, call } = skillTool($, on, { ...SKILL_CHECK, files: 1, scripts: [], exists: false })
+  await call({ dialog: { ...WORDING, lang: 'zh-TW' } })
+  expect(asked[0]?.split('\n')[1]).toBe('s · commit aaaaaaa · 1 個檔案')
 })
 
 test('the install tool takes dialog.lang', async ($, on) => {
@@ -229,7 +232,7 @@ async function tool($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters
   return { asked, result: String((r as { result?: unknown }).result) }
 }
 
-const NOT_LISTED = 'unchecked: whether this marketplace is already added (claude plugin marketplace list failed: boom); the check is ' +
+const NOT_LISTED = '? unchecked: whether this marketplace is already added (claude plugin marketplace list failed: boom); the check is ' +
   'of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit'
 
 test("with zh-TW a plugin's lines and the prompt-cache note are in 繁體中文; the model reads them in English", async ($, on) => {
@@ -240,7 +243,7 @@ test("with zh-TW a plugin's lines and the prompt-cache note are in 繁體中文;
     [
       'o/r ★52770 · 2026-09-14 更新',
       '外掛：p · marketplace mk · commit aaaaaaa · 1 個檔案',
-      '未檢查：這個 marketplace 是否已加入（claude plugin marketplace list failed: boom）；檢查的是它的 repo 目前的狀態，若 kirby ' +
+      '？未檢查：這個 marketplace 是否已加入（claude plugin marketplace list failed: boom）；檢查的是它的 repo 目前的狀態，若 kirby ' +
         '無法確認外掛是從那個 commit 安裝的，會再移除',
       'check: nothing found',
     ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`,

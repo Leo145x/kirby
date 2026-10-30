@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from lookups import shown  # noqa: E402
-from words import fact, in_english  # noqa: E402
+from words import counted, fact, in_english  # noqa: E402
 
 # Claude Code reads user skills from $CLAUDE_CONFIG_DIR/skills when that is set; Codex has no such variable.
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -196,7 +196,7 @@ def check_facts(hits, unread, scanned, looked, why=None):
     otherwise the summary by severity (lookups.summary), with the scan's warn findings named on the warn line, and
     its own line when it found no danger or warn finding, left files unscanned or (why) did not run."""
     if why is None and not hits and not unread and looked["nothing_found"] is not None:
-        files = fact("check_files_one") if scanned == 1 else fact("check_files", count=scanned)
+        files = counted("check_files", scanned)
         deps = looked["nothing_found"]
         return [fact("check_nothing_deps", files=files, deps=deps) if deps else fact("check_nothing", files=files)]
     warn = [] if why else warn_names(hits)
@@ -220,6 +220,18 @@ def scan_note(repo, folder, sha, hits, place=None):
     if len(hits) > NOTED_HITS:
         lines.append(f"  … (+{len(hits) - NOTED_HITS} more)")
     return "\n".join(lines)
+
+
+SCRIPTS_NOTED = 10
+
+
+def scripts_note(files):
+    """The skill's scripts for the model, by name: the dialog's skill line only counts them. None without any."""
+    scripts = [shown(f) for f in files if f.endswith(SCRIPT)]
+    if not scripts:
+        return None
+    names = ", ".join(lookups.items(scripts, SCRIPTS_NOTED))
+    return f"scripts: the dialog showed the user only how many scripts the skill may run ({len(scripts)}): {names}"
 
 
 # A check that read no files gives the model review nothing to read.
@@ -297,7 +309,8 @@ def main():
                     "target": str(target), "exists": exists, "files": len(files),
                     "scripts": [shown(f) for f in files if f.endswith(SCRIPT)],
                     "scan": {"hits": hits, "unread": unread, "combinations": [c for c, _ in combinations(hits)]},
-                    "facts": facts, "lines": summary, "note": f"{scan_note(args.repo, folder, sha, hits)}\n{looked['note']}",
+                    "facts": facts, "lines": summary,
+                    "note": "\n".join(filter(None, [scan_note(args.repo, folder, sha, hits), scripts_note(files), looked["note"]])),
                     "blocked": looked["blocked"],
                     "review": review({"repo": args.repo, "sha": sha}, files, hits, looked,
                                      prefix="" if folder == "." else f"{folder}/"),

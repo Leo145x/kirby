@@ -216,14 +216,15 @@ class InAnotherRepo(unittest.TestCase):
             f"? unchecked: pattern scan, advisory lookup and malware lookup (git fetch {self.SRC} {SRC_SHA} failed: not found)",
         ])
         self.assertEqual(say(c["facts"][-1], "zh-CN"),
-                         f"？ 未检查：pattern 扫描、漏洞查询和恶意包查询（git fetch {self.SRC} {SRC_SHA} failed: not found）")
+                         f"？未检查：pattern 扫描、漏洞查询和恶意包查询（git fetch {self.SRC} {SRC_SHA} failed: not found）")
         self.assertFalse(c["blocked"])
         self.assertEqual(c["review"], {"needed": False, "files": []})
 
     def test_a_source_kirby_cannot_fetch_from_github_is_unchecked(self):
-        for source, what in [({"source": "npm", "package": "p"}, "a npm source"),
-                             ({"source": "url", "url": "https://gitlab.com/x/src.git"}, "a git repo outside GitHub"),
-                             ({"source": "git-subdir", "url": "x/src", "path": "../up"}, "the path '../up', which is not inside x/src")]:
+        for source, what, zh in [({"source": "npm", "package": "p"}, "a npm source", "npm 來源"),
+                                 ({"source": "url", "url": "https://gitlab.com/x/src.git"}, "a git repo outside GitHub", "GitHub 以外的 git repo"),
+                                 ({"source": "git-subdir", "url": "x/src", "path": "../up"}, "the path '../up', which is not inside x/src",
+                                  "路徑 '../up'，不在 x/src 裡")]:
             c, git = check({MK: {None: (MK_SHA, self.entry(**source))}})
             self.assertEqual(git.fetched, [(MK, None)])
             self.assertEqual(c["lines"], [
@@ -231,6 +232,8 @@ class InAnotherRepo(unittest.TestCase):
                 f"source: {what}",
                 f"? unchecked: pattern scan, advisory lookup and malware lookup (its source is {what}, which kirby does not fetch)",
             ])
+            self.assertEqual([say(f, "zh-TW") for f in c["facts"][1:]], [f"來源：{zh}", f"？未檢查：pattern 掃描、漏洞查詢和惡意套件查詢（kirby 不抓取這個來源：{zh}）"])
+            self.assertTrue(c["note"].endswith(f": its source is {what}, which kirby does not fetch"), c["note"])
             self.assertFalse(c["blocked"])
             self.assertIsNone(c["mcp_servers"])
             self.assertEqual(c["review"], {"needed": False, "files": []})

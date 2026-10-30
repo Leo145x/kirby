@@ -86,10 +86,10 @@ skill 会要求模型只用这些 tool 安装，但这只是指示，不是硬�
 对话框按严重度汇总检查结果，发现再多也能在一屏内看完：
 
 - 拦下安装时（见下方），`✕ 已拦下：…` 排第一行；
-- 每项 `danger` 发现各占一行，附上 id：`✕ 危险：lodash@4.17.20 (npm) 有 5 个已公开漏洞，最严重为 high（GHSA-…、GHSA-…、… (+3)）`；超过六项时，其余的用一行计数；
+- 每项 `danger` 发现各占一行，附上 id：`✕ 危险：lodash@4.17.20 (npm) 有 5 个已公开漏洞，最高评级为“高”（GHSA-…、GHSA-…、… (+3)）`；超过六项时，其余的用一行计数；
 - 所有 `warn` 发现合成一行，只列名称，扫描的排在前面：`⚠ 警告 7 项：可能外传密钥、可能下载并执行代码、…、凭据、修改启动文件`；超过十个名称时写 `… (+N)`；
 - `info` 发现不列；
-- 没有发现的部分用 `✓` 标明（`✓ pattern 扫描：没有危险或警告的发现`、`✓ 漏洞、恶意包查询：没有发现`），没能运行的用 `？`（`？ 未检查：…`，见下方），读到的依赖文件另有一行 `依赖包：`。
+- 没有发现的部分用 `✓` 标明（`✓ pattern 扫描：没有危险或警告的发现`、`✓ 漏洞、恶意包查询：没有发现`），没能运行的用 `？`（`？未检查：…`，见下方），读到的依赖文件另有一行 `依赖包：`。
 
 tool 告诉模型的内容（`pattern scan:` 和 `lookups:` 区块、`check` tool 的 `findings`）仍含每项发现和它的文件、行号或 id，而且是英文。
 
@@ -99,7 +99,7 @@ tool 告诉模型的内容（`pattern scan:` 和 `lookups:` 区块、`check` too
 
 ### unchecked
 
-没能运行的部分会显示为 `? unchecked`（简体中文是 `？ 未检查`）并附上原因，不会当成没找到，“安装”也仍然可选：
+没能运行的部分会显示为 `? unchecked`（简体中文是 `？未检查`）并附上原因（没能运行的模型审查则是 `? model review: did not run`，简体中文是 `？模型审查：未执行`），不会当成没找到，“安装”也仍然可选：
 
 - 查询失败或超时；
 - 算不出版本的依赖包的漏洞查询（没有 npm 或 uv、它们运行失败，或有些包不是来自 npm registry）；
@@ -129,7 +129,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 - **审查的对象。** 就是要安装的东西：skill 的文件、plugin 的来源（在另一个 repo 也一样），MCP server 则是检查时解开的已发布包。读取包时，`file` 会重新下载同一个归档文件，比对 registry 的哈希和检查给出的 sha256，再解开到临时文件夹；里面的东西都不会安装或运行。
 - **结果。** 最多 5 项发现，每项是检查列出的某个文件、行号，以及一句不超过 120 个字符、不引用文件内容的理由；或是附上理由的 `could_not_run`。安装 tool 会检查这个结构、去掉隐藏字符和控制字符；不符合的结果在任何对话框出现前就会被拒绝，让模型重新发送。
 - **在对话框里。** 审查只用 kirby 自己的文字、以对话框的语言显示：它的发现数加在警告那行（`⚠ 警告 3 项：隐藏 Unicode、模型审查 2 项`；原本没有警告那行就加上一行），没有发现时则用一行说明。发现的理由、文件和行号交给模型，你问时由它说明；审查者写的文字都不会出现在对话框（[ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)）。审查的发现只会增加：不会移除或降低其他发现，也不会拦下安装。
-- **没有审查。** 需不需要审查由安装 tool 按自己的检查决定。需要却没有传入、审查无法运行，或审查读取的不是检查的那个 commit 或包时，对话框用一行 `? model review: did not run`（简体中文是 `？ 模型审查：未执行`）说明，“安装”仍然保留。这行会附上 kirby 自己的原因（没有传入审查结果、没有文件可读，或读取的是另一个 commit）；审查者说明自己为何无法运行的原因只交给模型。
+- **没有审查。** 需不需要审查由安装 tool 按自己的检查决定。需要却没有传入、审查无法运行，或审查读取的不是检查的那个 commit 或包时，对话框用一行 `? model review: did not run`（简体中文是 `？模型审查：未执行`）说明，“安装”仍然保留。这行会附上 kirby 自己的原因（没有传入审查结果、没有文件可读，或读取的是另一个 commit）；审查者说明自己为何无法运行的原因只交给模型。
 
 结果是由模型转交的，kirby 无法证明审查途中没有被改动、也确实做了，所以模型收到的发现都标为模型报告，它也按审查报告的内容转述。
 
@@ -148,7 +148,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 **plugin。** 锁定的是 marketplace 的 commit（[ADR 0003](adr/0003-verify-plugin-commit-after-adding-marketplace.md)）：
 
 - **两个 CLI 都一样**：两边都没有 kirby 能用的方式安装指定的 commit，所以安装 tool 在你还没添加 marketplace 时照常添加（不指定 ref），安装 plugin，再读取 marketplace 的 clone 在哪个 commit。不是检查过的那个 commit，就把 plugin 移除并说明原因；marketplace 保留。
-- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 kirby 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。kirby 读不到你的 marketplace 所在的 commit 时，不会说 `behind its repo`，只说读不到那个 commit，以及安装会把它更新到检查过的 commit。kirby 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
+- **Claude Code**，已经添加 marketplace：Claude Code 从落后于 repo 的 marketplace 安装时会先更新它。所以 kirby 检查的是 repo 当前的 commit，也就是安装会带来的那个，对话框会说明：`installs from it as it is`，或 `behind its repo; installing refreshes it to <commit>`。kirby 读不到你的 marketplace 所在的 commit 时，不会说 `behind its repo`，只说读不到那个 commit，以及安装会把它更新到检查过的 commit。kirby 无法判断它是否落后时（GitHub 没有响应），对话框会用一行 `? unchecked:` 说明，检查的则是你的 marketplace 当前所在的 commit。
 - **Codex**，已经添加 marketplace：`codex plugin add` 不会更新它，所以 kirby 检查它当前所在的 commit，并从它安装。
 
 **MCP server。** 命令会改写成检查过的版本（`npx -y pkg@1.2.3`、`uvx pkg==1.2.3`），对话框显示的就是改写后的命令。只有那个包会锁定：它的依赖通常写成版本范围，版本是检查时算出的，server 启动时 npm 或 uv 可能会选到别的版本。对话框的 `pinned:` 那行会注明。所以 MCP server 不像 skill 那样，装的就是检查过的那一份。
@@ -157,7 +157,27 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 
 你选定要安装的 repo 后，mod 会弹出两层对话框：
 
-1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出类型、commit、文件数、包含的脚本和安装前检查的结果（见上方）。检查拦下安装时，不会提供“安装”。
+1. **下一步**：取消 / 先看 README / 换一个 / 安装。对话框会列出 repo，接着是工具那一行（skill 的话是名称、commit、文件数和包含几个脚本；脚本的名称交给模型），再是按严重度汇总的安装前检查结果（见上方）和模型审查，最下方是模型写的一句说明和问题。检查拦下安装时，不会提供“安装”。一个有七项 warn 发现的 skill，`dialog.lang` 是 `zh-CN` 时：
+
+   ```
+   cloudflare/security-audit-skill ★52770 · 2026-09-14 更新
+   security-audit · commit b673708 · 23 个文件、6 个脚本
+   ⚠ 警告 7 项：可能外传密钥、可能下载并执行代码、可能下载并解码数据、提示词注入语句、隐藏 Unicode、凭据、修改启动文件
+   ✓ 漏洞、恶意包查询：没有发现
+   ？模型审查：未执行
+
+   安装 security-audit skill，用来审计代码的安全漏洞。
+
+   下一步？
+   ```
+
+   danger 发现各占一行，排在警告那行之前；模型审查的发现则计入警告那行：
+
+   ```
+   ✕ 危险：lodash@4.17.15 (npm) 有 2 个已公开漏洞，最高评级为“高”（GHSA-…、GHSA-…）
+   ⚠ 警告 3 项：可能外传密钥、隐藏 Unicode、模型审查 1 项
+   ```
+
 2. **scope**（选择“安装”后才会出现）：
 
 | scope | skill | plugin | MCP |
@@ -170,7 +190,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 
 ### 对话框语言
 
-对话框的文字由模型按 skill 规定的格式，用你使用的语言写：两个问题、四个选项，以及 `about` 里一句说明这个工具做什么的话（最多 120 个字符），不重复检查结果。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装位置、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 kirby 生成，从不由模型写。模型只用 `dialog.lang` 选它们的语言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三种语言，kirby 对每一行事实都备有这三种语言的写法；没有 `lang` 或是其他值，就用英文。命令、路径、名称、版本和 id 保持原样，方便复制和查询。tool 返回给模型的内容（包括 `check` tool 的 `findings`）保持英文。为什么不让模型翻译事实，见 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻译的是 repo 那行、skill 那行（名称、commit、文件数）、脚本、`exists:` 和 `installs at:`；plugin 那行（名称、marketplace、commit、文件数）、它的说明、来源和脚本、会一起安装的 plugin，以及关于它的 marketplace 的各行（已添加、落后于它的 repo、kirby 无法确定）；MCP server 的命令那行、`package:`、`pinned:` 和 `not pinned:`；安装前检查的各行（拦下、危险、警告、扫描和查询的结果、`dependencies:`、未检查和没有发现）；模型审查加在警告那行的数量和它自己那行（没有发现，或未执行及 kirby 的原因）；以及 prompt cache 提醒。`unchecked` 那行说明的原因，以及漏洞的评级（`critical`、`high`），仍是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`；在 Codex 里只能装在 `user` 时，安装的那个选项也用 `dialog.lang` 选的语言。没有提供文字、格式不完整或超过长度限制时，对话框和其中的事实都显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写：两个问题、四个选项，以及 `about` 里一句说明这个工具做什么的话（最多 120 个字符），不重复检查结果。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装位置、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 kirby 生成，从不由模型写。模型只用 `dialog.lang` 选它们的语言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三种语言，kirby 对每一行事实都备有这三种语言的写法；没有 `lang` 或是其他值，就用英文。命令、路径、名称、版本和 id 保持原样，方便复制和查询。tool 返回给模型的内容（包括 `check` tool 的 `findings`）保持英文。为什么不让模型翻译事实，见 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻译的是 repo 那行、skill 那行（名称、commit、文件数和脚本数）、`exists:` 和 `installs at:`；plugin 那行（名称、marketplace、commit、文件数）、它的说明、来源和脚本、会一起安装的 plugin，以及关于它的 marketplace 的各行（已添加、落后于它的 repo、kirby 无法确定）；MCP server 的命令那行、`package:`、`pinned:` 和 `not pinned:`；安装前检查的各行（拦下、危险、警告、扫描和查询的结果、`dependencies:`、未检查和没有发现），包括未检查那行里 kirby 自己写的原因，以及漏洞的评级；模型审查加在警告那行的数量和它自己那行（没有发现，或未执行及 kirby 的原因）；以及 prompt cache 提醒。工具或服务返回的错误信息（`gh api: …`、`OSV.dev: …`、`git fetch … failed: …`、registry 的响应）保持原样。繁體中文和简体中文里，没能运行的部分用全角的 `？` 标示（`？未检查：…`）。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`；在 Codex 里只能装在 `user` 时，安装的那个选项也用 `dialog.lang` 选的语言。没有提供文字、格式不完整或超过长度限制时，对话框和其中的事实都显示英文。
 
 ### 安装与 prompt cache
 
@@ -216,7 +236,7 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `stars.py` | 读取你的 star 和 star list（GraphQL），缓存在 `~/.cache/kirby/stars.json`，24 小时更新一次 |
 | `public.py` | 按 agent 工具类 topic 搜索公开的 GitHub repo |
 | `detect.py` | 判断 repo 是 marketplace、plugin、skill 还是 MCP server，以及安装所需的信息 |
-| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `facts`（给 `words.py`），旁边是它们的英文 `lines`；告诉模型的内容是 `note`，`review` 说明要不要做模型审查、读取哪些文件）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
+| `install_skill.py` | 把 skill 文件夹复制到指定 scope 的 skills 目录，来源 commit 记录在 `.kirby.json`。加上 `--check` 只列出将要安装的内容、扫描和查询结果，不会写入（加上 `--json` 时，对话框的那几行是 `facts`（给 `words.py`），旁边是它们的英文 `lines`；告诉模型的内容是 `note`，里面也列出对话框只计数的脚本名称，`review` 说明要不要做模型审查、读取哪些文件）；`--commit` 安装对话框显示的那个 commit，即使 repo 之后又有新的 commit。由 mod 和 Codex 的 MCP server 调用 |
 | `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，也含上述的 `review`，对话框的各行则是 `facts`（给 `words.py`），旁边是它们的英文 `lines`；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令，`facts` 和 `lines` 和 `check_plugin.py` 的一样，`review` 同上（它的 `sha` 是归档文件的 sha256）。`check_mcp.py --read '<JSON>'` 为 `file` tool 打印这种包里的单个文件。不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
