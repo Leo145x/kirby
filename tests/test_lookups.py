@@ -13,6 +13,12 @@ spec = importlib.util.spec_from_file_location("lookups", SCRIPTS / "lookups.py")
 assert spec and spec.loader
 lookups = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lookups)
+from words import in_english, say  # noqa: E402
+
+
+def en(r):
+    """The lookups' part of the dialog, in English, as the check tool's findings give it."""
+    return in_english(lookups.summary(r))
 
 SHA = "c" * 40
 LODASH_HIGH = {"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"], "summary": "Command Injection in lodash",
@@ -88,14 +94,16 @@ class Dependencies(unittest.TestCase):
     def test_a_high_vulnerability_in_a_locked_dependency_is_danger(self):
         net = Net(vulns={("npm", "lodash", "4.17.20"): ["GHSA-35jh-r3h4-6jhm"]}, records=[LODASH_HIGH])
         r = check({"SKILL.md": "", "package-lock.json": lock(("lodash", "4.17.20"))}, net)
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "✕ danger: lodash@4.17.20 (npm) has 1 published vulnerability, worst high (GHSA-35jh-r3h4-6jhm)",
             "dependencies: package-lock.json: 1 npm",
-            "danger: lodash@4.17.20 (npm): 1 vulnerability, worst high (GHSA-35jh-r3h4-6jhm)",
-            "malware lookup: nothing found",
+            "✓ malware lookup: nothing found",
         ])
         self.assertFalse(r["blocked"])
+        # The dialog shows a summary, so the model gets each finding, and is told what the user saw of them.
         self.assertEqual(r["note"], "\n".join([
-            f"lookups: the dialog showed the user these advisory and malware lookup findings for o/r at commit {SHA}:",
+            f"lookups: the advisory and malware lookup findings for o/r at commit {SHA} (the dialog showed the user each "
+            "danger one with its ids, and the warn ones by name only):",
             "  danger advisory lodash@4.17.20 (npm) GHSA-35jh-r3h4-6jhm high: Command Injection in lodash",
             "dependencies: package-lock.json: 1 npm",
         ]))
@@ -104,23 +112,31 @@ class Dependencies(unittest.TestCase):
         net = Net(vulns={("npm", "flatmap-stream", "0.1.1"): ["MAL-2025-20690"]})
         r = check({"package-lock.json": lock(("flatmap-stream", "0.1.1"))}, net)
         self.assertTrue(r["blocked"])
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered",
+            "✕ danger: flatmap-stream@0.1.1 (npm) is listed as malicious (MAL-2025-20690)",
             "dependencies: package-lock.json: 1 npm",
-            "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-            "danger: flatmap-stream@0.1.1 (npm) is a known-malicious package (MAL-2025-20690)",
-            "advisory lookup: nothing found",
+            "✓ advisory lookup: nothing found",
         ])
         self.assertTrue(r["note"].endswith(
             "\nblocked: the dialog did not offer Install, because the malware lookup lists flatmap-stream@0.1.1 (npm) as "
             "known-malicious. kirby will not install it; tell the user why, and that installing it anyway means doing it "
             "by hand."), r["note"])
 
+    def test_each_danger_finding_has_a_line_of_its_own_up_to_six_and_the_rest_are_counted(self):
+        names = [f"evil{i}" for i in range(8)]
+        net = Net(vulns={("npm", n, "1.0.0"): [f"MAL-2026-{i}"] for i, n in enumerate(names)})
+        lines = en(check({"package-lock.json": lock(*[(n, "1.0.0") for n in names])}, net))
+        self.assertEqual(lines[1:8], [f"✕ danger: evil{i}@1.0.0 (npm) is listed as malicious (MAL-2026-{i})" for i in range(6)]
+                         + ["✕ danger: 2 more, listed for the model"])
+
     def test_a_moderate_or_unrated_vulnerability_is_warn_and_does_not_block(self):
         records = [{"id": "GHSA-aaaa-aaaa-aaaa", "database_specific": {"severity": "MODERATE"}}, {"id": "GHSA-bbbb-bbbb-bbbb"}]
         net = Net(vulns={("npm", "a", "1.0.0"): ["GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"]}, records=records)
         r = check({"package-lock.json": lock(("a", "1.0.0"))}, net)
-        self.assertEqual(r["lines"][1], "warn: a@1.0.0 (npm): 2 vulnerabilities, worst moderate (GHSA-aaaa-aaaa-aaaa, "
-                                        "GHSA-bbbb-bbbb-bbbb)")
+        # A warn finding is named on the one warn line, without its ids, which the model gets.
+        self.assertEqual(en(r)[0], "⚠ warn (1): 2 published vulnerabilities in a@1.0.0 (npm)")
+        self.assertIn("\n  warn advisory a@1.0.0 (npm) GHSA-aaaa-aaaa-aaaa moderate\n", r["note"])
         self.assertFalse(r["blocked"])
 
     def test_the_worst_rated_come_first_and_a_record_without_a_summary_has_none(self):
@@ -128,26 +144,27 @@ class Dependencies(unittest.TestCase):
         net = Net(vulns={("npm", "a", "1.0.0"): ["GHSA-35jh-r3h4-6jhm"], ("npm", "z", "1.0.0"): ["GHSA-zzzz-zzzz-zzzz"]},
                   records=records)
         r = check({"package-lock.json": lock(("a", "1.0.0"), ("z", "1.0.0"))}, net)
-        self.assertEqual([line.split(" (")[0] for line in r["lines"][1:3]], ["danger: z@1.0.0", "danger: a@1.0.0"])
+        self.assertEqual([line.split(" (")[0] for line in en(r)[:2]], ["✕ danger: z@1.0.0", "✕ danger: a@1.0.0"])
         self.assertIn("\n  danger advisory z@1.0.0 (npm) GHSA-zzzz-zzzz-zzzz critical\n", r["note"])
 
     def test_a_failed_lookup_is_unchecked_not_nothing_found(self):
         r = check({"package-lock.json": lock(("lodash", "4.17.20"))}, Net(fail=("osv",)))
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "? unchecked: advisory and malware lookups for this commit, package-lock.json (OSV.dev: timed out)",
             "dependencies: package-lock.json: 1 npm",
-            "unchecked: advisory lookup for this commit, package-lock.json; malware lookup for this commit, "
-            "package-lock.json (OSV.dev: timed out)",
             # GitHub still answered for the repo's own advisories.
-            "advisory lookup: nothing found in the rest",
+            "✓ advisory lookup: nothing found in the rest",
         ])
+        self.assertEqual(say(lookups.summary(r)[0], "zh-TW"),
+                         "？ 未檢查：這個 commit、package-lock.json 的漏洞、惡意套件查詢（OSV.dev: timed out）")
         self.assertFalse(r["blocked"])
         self.assertIn("\n  unchecked: advisory lookup for this commit", r["note"])
 
     def test_with_no_dependency_files_only_the_repo_is_looked_up(self):
         net = Net()
         r = check({"SKILL.md": "", "scripts/run.py": ""}, net)
-        self.assertEqual(r["lines"], ["dependencies: no npm or Python dependency files",
-                                      "advisory lookup: nothing found", "malware lookup: nothing found"])
+        # No line for the missing dependency files, and one line for both lookups.
+        self.assertEqual(en(r), ["✓ advisory and malware lookups: nothing found"])
         self.assertEqual(net.queries, [{"commit": SHA}])
         self.assertEqual(r["note"], f"lookups: the dialog showed the user no findings from the advisory and malware "
                                     f"lookups for o/r at commit {SHA}\ndependencies: no npm or Python dependency files")
@@ -162,9 +179,9 @@ class Resolving(unittest.TestCase):
         r = check({"package.json": self.PACKAGE, ".npmrc": "registry=https://evil.invalid/"}, net)
         self.assertEqual(net.ran, [(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
                                     ["package.json"])])
-        self.assertEqual(r["lines"][:2], [
+        self.assertEqual(en(r)[:2], [
+            "✕ danger: lodash@4.17.20 (npm) has 1 published vulnerability, worst high (GHSA-35jh-r3h4-6jhm)",
             "dependencies: package.json: 2 npm, versions resolved at check time",
-            "danger: lodash@4.17.20 (npm): 1 vulnerability, worst high (GHSA-35jh-r3h4-6jhm)",
         ])
 
     def test_without_npm_the_names_are_looked_up_for_malware_and_the_advisory_lookup_is_unchecked(self):
@@ -173,26 +190,26 @@ class Resolving(unittest.TestCase):
         self.assertIn({"package": {"name": "lodash", "ecosystem": "npm"}}, net.queries)
         self.assertEqual(net.ran, [])
         self.assertTrue(r["blocked"])
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered",
+            "✕ danger: left-pad (npm) is listed as malicious (MAL-2024-1); matched by name, the version was not resolved",
+            "? unchecked: advisory lookup for package.json (npm not found, so versions were not resolved)",
             "dependencies: package.json: 2 npm, names only",
-            "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-            "danger: left-pad (npm) is listed as a malicious package (MAL-2024-1); matched by name, the version was not resolved",
-            "unchecked: advisory lookup for package.json (npm not found, so versions were not resolved)",
-            "advisory lookup: nothing found in the rest",
+            "✓ advisory lookup: nothing found in the rest",
         ])
 
     def test_a_dependency_from_outside_the_registry_is_not_resolved(self):
         net = Net()
         r = check({"package.json": json.dumps({"dependencies": {"x": "github:evil/x", "y": "^1.0.0"}})}, net)
         self.assertEqual(net.ran, [])
-        self.assertIn("unchecked: advisory lookup for package.json (some dependencies come from outside the npm "
-                      "registry, so versions were not resolved)", r["lines"])
+        self.assertIn("? unchecked: advisory lookup for package.json (some dependencies come from outside the npm "
+                      "registry, so versions were not resolved)", en(r))
 
     def test_a_failed_resolution_falls_back_to_the_names(self):
         r = check({"package.json": self.PACKAGE}, Net())
-        self.assertEqual(r["lines"][0], "dependencies: package.json: 2 npm, names only")
-        self.assertIn("unchecked: advisory lookup for package.json (npm could not resolve the versions: npm ERR! could "
-                      "not resolve)", r["lines"])
+        self.assertIn("dependencies: package.json: 2 npm, names only", en(r))
+        self.assertIn("? unchecked: advisory lookup for package.json (npm could not resolve the versions: npm ERR! could "
+                      "not resolve)", en(r))
 
     def test_python_requirements_are_resolved_by_uv_without_building(self):
         net = Net(resolve={"uv": "requests==2.19.0\nurllib3==1.23\n"},
@@ -201,9 +218,9 @@ class Resolving(unittest.TestCase):
         argv, _ = net.ran[0]
         self.assertEqual(argv[:4] + argv[-1:], ["uv", "pip", "compile", "--no-build", "requirements.txt"])
         self.assertIn("--no-config", argv)
-        self.assertEqual(r["lines"][:2], [
+        self.assertEqual(en(r)[:2], [
+            "⚠ warn (1): 1 published vulnerability in requests@2.19.0 (PyPI)",
             "dependencies: scripts/requirements.txt: 2 PyPI, versions resolved at check time",
-            "warn: requests@2.19.0 (PyPI): 1 vulnerability, worst not rated (PYSEC-2018-28)",
         ])
 
     def test_lockfiles_are_read_as_they_are(self):
@@ -213,23 +230,23 @@ class Resolving(unittest.TestCase):
         r = check({"uv.lock": uv, "pyproject.toml": "[project]\ndependencies = ['requests']\n",
                    "package-lock.json": lock(("a", "1.0.0"), ("b", "2.0.0")), "package.json": self.PACKAGE}, net)
         self.assertEqual(net.ran, [])
-        self.assertEqual(r["lines"][0], "dependencies: package-lock.json: 2 npm; uv.lock: 1 PyPI")
+        self.assertEqual(en(r)[0], "dependencies: package-lock.json: 2 npm, uv.lock: 1 PyPI")
         self.assertIn({"package": {"name": "requests", "ecosystem": "PyPI"}, "version": "2.19.0"}, net.queries)
 
     def test_dependency_files_past_the_tenth_are_unchecked_not_dropped(self):
         files = {f"{d}/package-lock.json": lock(("a", "1.0.0")) for d in "abcdefghijkl"}
         r = check(files, Net())
-        self.assertEqual(r["lines"][1:], [
-            "unchecked: advisory lookup for 2 more dependency files (k/package-lock.json, l/package-lock.json); malware lookup "
-            "for 2 more dependency files (k/package-lock.json, l/package-lock.json) (kirby reads at most 10)",
-            "advisory lookup: nothing found in the rest", "malware lookup: nothing found in the rest"])
+        self.assertEqual([en(r)[0], *en(r)[2:]], [
+            "? unchecked: advisory and malware lookups for more dependency files (k/package-lock.json, l/package-lock.json) "
+            "(kirby reads at most 10)",
+            "✓ advisory and malware lookups: nothing found in the rest"])
         self.assertIsNone(r["nothing_found"])
         self.assertIn("\n  unchecked: advisory lookup for 2 more dependency files", r["note"])
 
     def test_the_dialog_names_at_most_four_dependency_files(self):
         files = {f"{d}/package-lock.json": lock(("a", "1.0.0")) for d in "abcdef"}
-        self.assertEqual(check(files, Net())["lines"][0], "dependencies: a/package-lock.json: 1 npm; b/package-lock.json: "
-                         "1 npm; c/package-lock.json: 1 npm; d/package-lock.json: 1 npm; … (+2 files)")
+        self.assertEqual(en(check(files, Net()))[0], "dependencies: a/package-lock.json: 1 npm, b/package-lock.json: "
+                         "1 npm, c/package-lock.json: 1 npm, d/package-lock.json: 1 npm, … (+2)")
 
 
 class TheToolItself(unittest.TestCase):
@@ -241,19 +258,18 @@ class TheToolItself(unittest.TestCase):
             {"ghsa_id": "GHSA-3333-3333-3333", "severity": "low", "state": "published", "withdrawn_at": "2026-01-01"},
         ]
         r = check({"SKILL.md": ""}, Net(commit=["CVE-2026-1"], records=records, advisories=advisories))
-        self.assertEqual(r["lines"], [
-            "dependencies: no npm or Python dependency files",
-            "danger: this commit is affected by 1 published vulnerability (CVE-2026-1)",
-            "warn: this repo published 1 advisory (GHSA-2222-2222-2222 medium); could not tell whether it affects this commit",
-            "malware lookup: nothing found",
+        self.assertEqual(en(r), [
+            "✕ danger: this commit is affected by 1 published vulnerability (CVE-2026-1)",
+            "⚠ warn (1): advisories this repo published (1)",
+            "✓ malware lookup: nothing found",
         ])
         self.assertIn("\n  warn repo-advisory GHSA-2222-2222-2222 medium: could not tell whether it affects this commit",
                       r["note"])
 
     def test_the_repos_advisories_that_cannot_be_read_are_unchecked(self):
         r = check({"SKILL.md": ""}, Net(fail=("gh",)))
-        self.assertEqual(r["lines"][1:], ["unchecked: advisory lookup for this repo's advisories (gh api: HTTP 404)",
-                                          "advisory lookup: nothing found in the rest", "malware lookup: nothing found"])
+        self.assertEqual(en(r), ["? unchecked: advisory lookup for this repo's advisories (gh api: HTTP 404)",
+                                 "✓ advisory lookup: nothing found in the rest", "✓ malware lookup: nothing found"])
 
 
 class ThePackageOfAnMcpServer(unittest.TestCase):
@@ -273,10 +289,10 @@ class ThePackageOfAnMcpServer(unittest.TestCase):
         self.assertEqual(json.loads(net.given[0]["package.json"])["dependencies"], {"srv": "1.2.3"})
         self.assertEqual(net.queries, [{"package": {"name": "srv", "ecosystem": "npm"}, "version": "1.2.3"},
                                        {"package": {"name": "lodash", "ecosystem": "npm"}, "version": "4.17.20"}])
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "✕ danger: srv@1.2.3 (npm) is affected by 1 published vulnerability (GHSA-srv1-srv1-srv1)",
             "dependencies: srv@1.2.3: 1 npm, versions resolved at check time",
-            "danger: the package srv@1.2.3 (npm) is affected by 1 published vulnerability (GHSA-srv1-srv1-srv1)",
-            "malware lookup: nothing found",
+            "✓ malware lookup: nothing found",
         ])
         self.assertIn("\n  danger advisory the package srv@1.2.3 (npm) GHSA-srv1-srv1-srv1 low: SSRF\n", r["note"])
 
@@ -284,7 +300,7 @@ class ThePackageOfAnMcpServer(unittest.TestCase):
         net = Net(resolve={"uv": "mcp-server-x==1.0\nrequests==2.19.0\n"})
         r = self.package("PyPI", "MCP_Server.X", "1.0", net)
         self.assertEqual(net.given[0], {"requirements.txt": "MCP_Server.X==1.0\n"})
-        self.assertEqual(r["nothing_found"], "1 PyPI dependency")
+        self.assertEqual(in_english(r["nothing_found"]), ["1 PyPI dependency"])
         self.assertEqual(r["note"], "lookups: the dialog showed the user no findings from the advisory and malware lookups "
                                     "for the package MCP_Server.X@1.0 (PyPI)\ndependencies: MCP_Server.X@1.0: 1 PyPI, "
                                     "versions resolved at check time")
@@ -293,19 +309,19 @@ class ThePackageOfAnMcpServer(unittest.TestCase):
         net = Net(tools=(), vulns={("npm", "evil", None): ["MAL-2026-9"]})
         r = self.package("npm", "srv", "1.2.3", net, direct=["evil", "zod"])
         self.assertTrue(r["blocked"])
-        self.assertEqual(r["lines"], [
+        self.assertEqual(en(r), [
+            "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered",
+            "✕ danger: evil (npm) is listed as malicious (MAL-2026-9); matched by name, the version was not resolved",
+            "? unchecked: advisory lookup for the dependencies of srv@1.2.3 (npm not found, so versions were not resolved)",
             "dependencies: srv@1.2.3: 2 npm, names only",
-            "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-            "danger: evil (npm) is listed as a malicious package (MAL-2026-9); matched by name, the version was not resolved",
-            "unchecked: advisory lookup for the dependencies of srv@1.2.3 (npm not found, so versions were not resolved)",
-            "advisory lookup: nothing found in the rest",
+            "✓ advisory lookup: nothing found in the rest",
         ])
 
     def test_a_known_malicious_package_itself_blocks(self):
         net = Net(resolve={"npm": lock(("srv", "1.2.3"))}, vulns={("npm", "srv", "1.2.3"): ["MAL-2026-1"]})
         r = self.package("npm", "srv", "1.2.3", net)
         self.assertTrue(r["blocked"])
-        self.assertIn("danger: the package srv@1.2.3 (npm) is listed as malicious (MAL-2026-1)", r["lines"])
+        self.assertIn("✕ danger: srv@1.2.3 (npm) is listed as malicious (MAL-2026-1)", en(r))
         self.assertIn("because the malware lookup lists the package srv@1.2.3 (npm) as known-malicious", r["note"])
 
     def test_of_the_repos_advisories_only_those_for_this_package_count(self):
@@ -315,20 +331,19 @@ class ThePackageOfAnMcpServer(unittest.TestCase):
         advisories = [advisory("GHSA-1111-1111-1111", ("npm", "other-server")), advisory("GHSA-2222-2222-2222", ("pip", "my_srv")),
                       advisory("GHSA-3333-3333-3333"), advisory("GHSA-4444-4444-4444", ("npm", "my-srv"))]
         r = self.package("PyPI", "My-Srv", "1.0", Net(resolve={"uv": "my-srv==1.0\n"}, advisories=advisories))
-        self.assertIn("warn: this repo published 2 advisories (GHSA-2222-2222-2222 medium, GHSA-3333-3333-3333 medium); "
-                      "could not tell whether they affect the package My-Srv@1.0 (PyPI)", r["lines"])
+        self.assertIn("⚠ warn (1): advisories this repo published (2)", en(r))
+        self.assertIn("\n  warn repo-advisory GHSA-3333-3333-3333 medium: could not tell whether it affects the package "
+                      "My-Srv@1.0 (PyPI)", r["note"])
 
     def test_without_a_version_only_the_malware_lookup_of_the_package_runs(self):
         net = Net(vulns={("npm", "srv", None): ["GHSA-aaaa-aaaa-aaaa"]})
         r = self.package("npm", "srv", None, net, why="npm registry: HTTP 404")
         self.assertEqual(net.queries, [{"package": {"name": "srv", "ecosystem": "npm"}}])
         self.assertEqual(net.ran, [])
-        self.assertEqual(r["lines"], [
-            "dependencies: not known",
-            "unchecked: advisory lookup for the package srv (npm), the dependencies of srv; malware lookup for the "
+        self.assertEqual(en(r), [
+            "? unchecked: advisory lookup for the package srv (npm), the dependencies of srv; malware lookup for the "
             "dependencies of srv (npm registry: HTTP 404)",
-            "advisory lookup: nothing found in the rest",
-            "malware lookup: nothing found in the rest",
+            "✓ advisory and malware lookups: nothing found in the rest",
         ])
         self.assertIsNone(r["nothing_found"])
 
@@ -352,7 +367,7 @@ class Ratings(unittest.TestCase):
         net = Net(vulns={("PyPI", "requests", "2.19.0"): ["PYSEC-2026-1872", "GHSA-9hjg-9r4m-mvj7"]}, records=records)
         r = check({"uv.lock": 'version = 1\n[[package]]\nname = "requests"\nversion = "2.19.0"\n'
                               'source = { registry = "https://pypi.org/simple" }\n'}, net)
-        self.assertEqual(r["lines"][1], "danger: requests@2.19.0 (PyPI): 1 vulnerability, worst high (GHSA-9hjg-9r4m-mvj7)")
+        self.assertEqual(en(r)[0], "✕ danger: requests@2.19.0 (PyPI) has 1 published vulnerability, worst high (GHSA-9hjg-9r4m-mvj7)")
 
 
 if __name__ == "__main__":

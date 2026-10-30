@@ -63,7 +63,7 @@ The scan reads every file it checks for patterns worth a look. In any file: hidd
 
 One tool matching `network` together with `env-secret`, `exec` or `decode`, in any of its files, also gets a combination finding that names the pair: `send-secrets` (may send secrets out), `download-run` (may download and run code) and `download-decode` (may download and decode a payload).
 
-The dialog lists the combination findings first, then each flagged rule with where it matched. It is a pattern match, not a safety review: a finding is not proof of harm, and no finding is not proof of safety. The tool also gives the model the findings with the scanned commit, so you can ask it what a flagged line does; the model reads that file at that commit with kirby's read-only `file` tool.
+The dialog names the combination findings first, then the warn rules, on the warn line (see Severities below), and leaves out the `info` rules; the model gets every finding with its file and line. It is a pattern match, not a safety review: a finding is not proof of harm, and no finding is not proof of safety. The tool also gives the model the findings with the scanned commit, so you can ask it what a flagged line does; the model reads that file at that commit with kirby's read-only `file` tool.
 
 ### Advisory and malware lookups
 
@@ -73,7 +73,7 @@ The dialog lists the combination findings first, then each flagged rule with whe
 
 ### Severities
 
-Every finding is led by its severity: how much weight it deserves.
+Every finding has a severity: how much weight it deserves.
 
 | Severity | Findings |
 | --- | --- |
@@ -83,13 +83,23 @@ Every finding is led by its severity: how much weight it deserves.
 
 The combination findings are why a tool that reads a secret and sends it out is not all `info`, though each of those rules alone is ([ADR 0005](adr/0005-one-click-by-default.md)). Within the scan, combination findings and warn rules come first; among the lookups, malware first, then the subject's own advisories, then the worst-rated dependencies.
 
+The dialog sums the check up by severity, so a tool with many findings still fits on a screen:
+
+- `✕ blocked: …` first, when the install is blocked (below);
+- each `danger` finding on a line of its own, with its ids: `✕ danger: lodash@4.17.20 (npm) has 5 published vulnerabilities, worst high (GHSA-…, GHSA-…, … (+3))`; past the sixth, one line counts the rest;
+- all `warn` findings on one line, by name only, the scan's first: `⚠ warn (7): may send secrets out, may download and run code, …, credentials, changes shell startup files`; past ten names, `… (+N)`;
+- the `info` findings are left out;
+- a part that found nothing says so with `✓` (`✓ pattern scan: no danger or warn findings`, `✓ advisory and malware lookups: nothing found`), one that could not run with `?` (`? unchecked: …`, below), and the dependency files read on a `dependencies:` line.
+
+What the tools tell the model (the `pattern scan:` and `lookups:` blocks, the `check` tool's `findings`) still holds every finding, with its file and line or its ids, in English.
+
 ### Blocking
 
-Only a known-malicious package blocks: the malware lookup finds the tool or one of its dependencies in OpenSSF Malicious Packages. The dialog then says `blocked:` and offers only Cancel, Read README first and Pick another, the model tells you why, and no model review runs. To install such a tool anyway, you do it by hand. Nothing else blocks: pattern-scan findings, vulnerabilities and model-review findings, however severe, are for you to weigh, because plenty of honest tools fetch URLs, run shell commands or depend on a package with a known CVE ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
+Only a known-malicious package blocks: the malware lookup finds the tool or one of its dependencies in OpenSSF Malicious Packages. The dialog then says `✕ blocked:` and offers only Cancel, Read README first and Pick another, the model tells you why, and no model review runs. To install such a tool anyway, you do it by hand. Nothing else blocks: pattern-scan findings, vulnerabilities and model-review findings, however severe, are for you to weigh, because plenty of honest tools fetch URLs, run shell commands or depend on a package with a known CVE ([ADR 0001](adr/0001-block-only-on-confirmed-malware.md)).
 
 ### Unchecked
 
-A part that could not run is shown as `unchecked`, with why, never as nothing found, and Install stays available:
+A part that could not run is shown as `? unchecked`, with why, never as nothing found, and Install stays available:
 
 - a lookup that fails or runs out of time;
 - the advisory lookup of dependencies whose versions could not be resolved (npm or uv is missing or failed, or some come from outside the npm registry);
@@ -97,7 +107,7 @@ A part that could not run is shown as `unchecked`, with why, never as nothing fo
 - a plugin whose source is not on GitHub, or whose source repo kirby cannot fetch (the scan and both lookups);
 - whether a marketplace is already added, when listing your marketplaces fails, and, in Codex, which commit one you already added is at, when kirby cannot read it: the check is of the repo as it stands, and the install removes the plugin again if kirby cannot tell it came from that commit;
 - an MCP server's archive that kirby cannot unpack (encrypted, or compressed in a way Python cannot read): the scan;
-- an MCP server run from a container image (`docker run …`) or a remote server at a URL, a repo that names no npm or PyPI package, or a command that runs none of the packages the repo names: one `unchecked:` line says why, and the command stays as given;
+- an MCP server run from a container image (`docker run …`) or a remote server at a URL, a repo that names no npm or PyPI package, or a command that runs none of the packages the repo names: one `? unchecked:` line says why, and the command stays as given;
 - an MCP server whose version kirby cannot tell (the registry does not answer, no version matches the range the command asks for, or kirby does not read that range): the dialog says `not pinned:`, the scan is unchecked, and only the malware lookup runs, on the package's name;
 - in Claude Code, whether a marketplace you already added is behind its repo, when GitHub does not answer;
 - a model review that should have run and did not (see Model review below).
@@ -106,7 +116,7 @@ A part that could not run is shown as `unchecked`, with why, never as nothing fo
 
 The check is there so that you know what you are installing, not to make installing a chore ([ADR 0005](adr/0005-one-click-by-default.md)). Each limit kirby runs into is one line in the dialog, never a refusal or an extra step: a part that could not run, a version that is not pinned, a package the repo only claims as its own, a marketplace that installing will refresh. The one exception is a block.
 
-When the check finds nothing and nothing went unscanned or unchecked, it is a single line, such as `check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise each part has its own lines.
+When the check finds nothing and nothing went unscanned or unchecked, it is a single line, such as `✓ check: nothing found (12 files, 3 npm dependencies, advisory and malware lookups)`; otherwise the dialog sums it up by severity (Severities above).
 
 Where kirby can remove a stop by doing more work itself, it does: a skill installs the commit the dialog showed even if the repo has moved on, and a plugin is checked after the install rather than refused before it (see What is pinned below).
 
@@ -160,7 +170,7 @@ Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Dialog language
 
-The model writes the dialogs' wording in the language you write in, in the format the skill gives: the questions, the four options, and in `about` one sentence (at most 120 characters) on what the tool does, which does not repeat the findings. The facts above it (repo, stars, commit, files, scripts, an existing folder, where it installs, the pre-install check) and the prompt-cache note below the scope question come from kirby, never from the model. The model only picks their language with `dialog.lang`: `en`, `zh-TW` or `zh-CN`, the languages of the READMEs, for which kirby carries its own wording of each fact line; a missing `lang` or any other value gets English. Commands, paths, names, versions and ids stay as they are, so they can be copied and looked up. What the tools return to the model, the `check` tool's `findings` among them, stays in English. [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md) says why the model does not translate the facts. For now kirby words the repo line, a skill's line (name, commit, file count), its scripts, `exists:` and `installs at:`; a plugin's line (name, marketplace, commit, file count), its description, source and scripts lines, the plugins installed along with it, and the lines about its marketplace (already added, behind its repo, or kirby could not tell); an MCP server's command line, `package:`, `pinned:` and `not pinned:`; and the prompt-cache note. The pre-install check's own lines are still in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`; in Codex, where `user` is the only scope, its install option is worded in the dialog's language too. If the wording is missing, incomplete or over a limit, the dialogs and their facts are in English.
+The model writes the dialogs' wording in the language you write in, in the format the skill gives: the questions, the four options, and in `about` one sentence (at most 120 characters) on what the tool does, which does not repeat the findings. The facts above it (repo, stars, commit, files, scripts, an existing folder, where it installs, the pre-install check) and the prompt-cache note below the scope question come from kirby, never from the model. The model only picks their language with `dialog.lang`: `en`, `zh-TW` or `zh-CN`, the languages of the READMEs, for which kirby carries its own wording of each fact line; a missing `lang` or any other value gets English. Commands, paths, names, versions and ids stay as they are, so they can be copied and looked up. What the tools return to the model, the `check` tool's `findings` among them, stays in English. [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md) says why the model does not translate the facts. For now kirby words the repo line, a skill's line (name, commit, file count), its scripts, `exists:` and `installs at:`; a plugin's line (name, marketplace, commit, file count), its description, source and scripts lines, the plugins installed along with it, and the lines about its marketplace (already added, behind its repo, or kirby could not tell); an MCP server's command line, `package:`, `pinned:` and `not pinned:`; the pre-install check's lines (blocked, danger, warn, the scan's and the lookups', `dependencies:`, unchecked and nothing found); and the prompt-cache note. The reason an `unchecked` line gives and a vulnerability's rating (`critical`, `high`) are still in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`; in Codex, where `user` is the only scope, its install option is worded in the dialog's language too. If the wording is missing, incomplete or over a limit, the dialogs and their facts are in English.
 
 ### Installs and the prompt cache
 
@@ -206,10 +216,10 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `stars.py` | Reads your stars and star lists (GraphQL), cached in `~/.cache/kirby/stars.json` for 24 hours |
 | `public.py` | Searches public GitHub by agent-tooling topic |
 | `detect.py` | Tells whether a repo is a marketplace, plugin, skill or MCP server, with what installing it needs |
-| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `lines`, what the model is told about them is `note`, and `review` says whether the model review runs and which files it reads); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
+| `install_skill.py` | Copies a skill folder into the chosen scope's skills directory and records the source commit in `.kirby.json`. `--check` only lists what would be installed, with the scan and the lookups (with `--json`, the dialog's lines are `facts`, for `words.py`, beside their English, `lines`; what the model is told about them is `note`, and `review` says whether the model review runs and which files it reads); `--commit` installs the commit the dialog showed, even if the repo has moved on. Called by the mod and the Codex MCP server |
 | `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON, with `review` as above and the dialog's lines as `facts` (for `words.py`) beside their English, `lines`; installs nothing. Called by the mod and the Codex MCP server |
 | `check_mcp.py` | The pre-install check of an MCP server: `check_mcp.py owner/repo '<mcp_args as JSON>'` finds which package the repo names and the command runs, downloads and unpacks that version without installing it, and runs the scan and the lookups on it. Prints JSON, with the command pinned to that version as `mcp_args`, `facts` and `lines` as `check_plugin.py` gives them, and `review` as above (its `sha` is the archive's sha256). `check_mcp.py --read '<JSON>'` prints one file of such a package for the `file` tool. Installs nothing. Called by the mod and the Codex MCP server |
 | `lookups.py` | The advisory and malware lookups `install_skill.py --check`, `check_plugin.py` and `check_mcp.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
-| `words.py` | kirby's wording of the dialog's fact lines in English, 繁體中文 and 简体中文, the same as the mod's `hooks/words.ts`. Used by the Codex MCP server, `check_plugin.py` and `check_mcp.py`. Not run on its own |
+| `words.py` | kirby's wording of the dialog's fact lines in English, 繁體中文 and 简体中文, the same as the mod's `hooks/words.ts`. Used by the Codex MCP server, `install_skill.py`, `check_plugin.py`, `check_mcp.py` and `lookups.py`. Not run on its own |
 
 `detect.py --agent codex` looks for Codex marketplaces (`.agents/plugins/marketplace.json`) first; `install_skill.py --agent codex` installs into `.agents/skills/`.

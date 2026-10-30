@@ -9,8 +9,8 @@ plugin's entry in its marketplace file and follows the entry's source: a folder 
 repo, or another GitHub repo, at the entry's sha when it gives one and as it stands otherwise. It runs
 the pattern scan (install_skill.py's) and the advisory and malware lookups (lookups.py) on the
 plugin's files, and prints JSON: the dialog's facts (`facts`, each a line or a key and its values for
-words.py, which each side words in the dialog's language), the same in English (`lines`) and for the
-model (`note`),
+words.py, which each side words in the dialog's language; the check's part summarised by severity), the
+same in English (`lines`), every finding for the model (`note`),
 `blocked`, the marketplace's name and commit, the source, and `review`: whether the model review runs
 and which files it reads, in which repo at which commit (docs/adr/0002). Nothing is installed.
 
@@ -27,10 +27,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lookups  # noqa: E402
 from detect import GITHUB_URL, MARKETPLACES  # noqa: E402
-from install_skill import (NO_REVIEW, SCRIPT, UNCHECKED, VALID_REPO, VALID_SHA, GitFailed, check_lines, checkout,  # noqa: E402
+from install_skill import (NO_REVIEW, SCRIPT, VALID_REPO, VALID_SHA, GitFailed, check_facts, checkout,  # noqa: E402
                            inside, listing, review, scan, scan_note)
 from lookups import shown  # noqa: E402
-from words import fact, say  # noqa: E402
+from words import fact, in_english  # noqa: E402
 
 # The files a plugin declares itself in.
 PLUGIN_MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
@@ -148,11 +148,11 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
             out.update(files=0, scripts=[], mcp_servers=None, blocked=False,
                        note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on "
                             f"plugin {shown(name, 60)}: {why}", review=dict(NO_REVIEW))
-            return worded(out, [fact("plugin", **title), *described, source, f"{UNCHECKED} ({why})"])
+            return worded(out, [fact("plugin", **title), *described, source, fact("check_unchecked", why=why)])
 
         # Three kinds of source: one kirby does not fetch, a folder of the marketplace repo, another GitHub repo.
         if src["in"] is None:
-            return unchecked(f"source: {src['what']}", f"its source is {src['what']}, which kirby does not fetch")
+            return unchecked(fact("plugin_source_other", what=src["what"]), f"its source is {src['what']}, which kirby does not fetch")
         if src["in"] == "marketplace":
             src_repo, src_sha, base = repo, sha, mk_root
         else:
@@ -174,7 +174,7 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
             facts.append(fact("scripts", count=len(scripts), names=scripts[:2]))
         hits, unread = scan(root, files)
         looked = lookups.check(src_repo, src_sha, root, files, net)
-        facts += check_lines(hits, unread, len(files) - len(unread), looked)
+        facts += check_facts(hits, unread, len(files) - len(unread), looked)
         note = f"{scan_note(src_repo, src['path'], src_sha, hits)}\n{looked['note']}"
         if src["in"] == "repo" and not src["sha"]:
             note += (f"\nsource: not pinned; the marketplace entry gives no sha, so {src_repo} may be at a later "
@@ -191,7 +191,7 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
 def worded(out, facts):
     """out with the dialog's facts (each a line or a fact for words.say, which each side words in the dialog's
     language) and the same in English as lines."""
-    out.update(facts=facts, lines=[say(f, "en") for f in facts])
+    out.update(facts=facts, lines=in_english(facts))
     return out
 
 

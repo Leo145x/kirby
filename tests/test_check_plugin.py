@@ -17,7 +17,7 @@ from words import say  # noqa: E402
 
 MK_SHA, SRC_SHA, OLD_SHA = "a" * 40, "b" * 40, "c" * 40
 MK = "https://github.com/o/mk.git"
-NOTHING = ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found", "malware lookup: nothing found"]
+NOTHING = ["✓ advisory and malware lookups: nothing found"]
 
 
 def marketplace(*plugins, path=".claude-plugin/marketplace.json", **top):
@@ -63,15 +63,16 @@ class InTheMarketplace(unittest.TestCase):
             "description: Does p things",
             "source: plugins/p/ in this repo",
             "scripts: 1, e.g. scripts/run.sh",
-            "pattern scan: 2 files, the ones installed; a pattern match, not a safety review",
-            "warn: download-run: may download and run code (network + exec)",
-            "info: network ×1 (scripts/run.sh:1)",
-            "info: exec ×1 (scripts/run.sh:1)",
+            "⚠ warn (1): may download and run code",
             *NOTHING,
         ])
+        # The facts each side words in the dialog's language, beside the English lines.
+        self.assertEqual(c["lines"], [say(f, "en") for f in c["facts"]])
+        self.assertEqual(say(c["facts"][4], "zh-TW"), "⚠ 警告 1 項：可能下載並執行程式碼")
         self.assertFalse(c["blocked"])
         self.assertTrue(c["note"].startswith(
-            f"pattern scan: the dialog showed the user these pattern-scan findings in o/mk at commit {MK_SHA}:\n"
+            f"pattern scan: the pattern-scan findings in o/mk at commit {MK_SHA} (the dialog showed the user the warn ones "
+            "by name only, without files or lines, and left out the info ones):\n"
             "  warn download-run: may download and run code (network + exec)\n  info network plugins/p/scripts/run.sh:1\n  info exec plugins/p/scripts/run.sh:1\n"
             f"lookups: the dialog showed the user no findings from the advisory and malware lookups for o/mk at commit {MK_SHA}"),
             c["note"])
@@ -85,7 +86,7 @@ class InTheMarketplace(unittest.TestCase):
         c, _ = check({MK: {None: (MK_SHA, files)}})
         self.assertEqual(c["lines"][3:], [
             "scripts: 1, e.g. scripts/run.sh",
-            "check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)",
+            "✓ check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)",
         ])
         self.assertFalse(c["review"]["needed"])
 
@@ -100,8 +101,7 @@ class InTheMarketplace(unittest.TestCase):
         c, _ = check({MK: {None: (MK_SHA, files)}}, agent="codex")
         self.assertEqual(c["marketplace_file"], ".agents/plugins/marketplace.json")
         self.assertEqual(c["lines"][1:5], ["source: plugins/q/ in this repo", "scripts: 1, e.g. evil.sh",
-                                           "pattern scan: 1 files, the ones installed; a pattern match, not a safety review",
-                                           "warn: credentials ×1 (evil.sh:1)"])
+                                           "⚠ warn (1): credentials", *NOTHING])
 
     def test_a_bare_name_resolves_under_plugin_root(self):
         files = {**self.FILES, **marketplace({"name": "p", "source": "p"}, metadata={"pluginRoot": "./plugins"})}
@@ -156,7 +156,8 @@ class InTheMarketplace(unittest.TestCase):
         net = Net(vulns={("npm", "evil", "1.0.0"): ["MAL-2026-1"]})
         c, _ = check({MK: {None: (MK_SHA, {**self.FILES, "plugins/p/package-lock.json": lock})}}, net=net)
         self.assertTrue(c["blocked"])
-        self.assertIn("blocked: the malware lookup found a known-malicious package, so Install is not offered", c["lines"])
+        self.assertIn("✕ blocked: the malware lookup found a known-malicious package, so Install is not offered", c["lines"])
+        self.assertIn("✕ danger: evil@1.0.0 (npm) is listed as malicious (MAL-2026-1)", c["lines"])
 
 
 class InAnotherRepo(unittest.TestCase):
@@ -212,8 +213,10 @@ class InAnotherRepo(unittest.TestCase):
         self.assertEqual(c["lines"], [
             "plugin: p · marketplace mk · commit aaaaaaa",
             "source: x/src, which kirby could not fetch",
-            f"unchecked: pattern scan, advisory lookup and malware lookup (git fetch {self.SRC} {SRC_SHA} failed: not found)",
+            f"? unchecked: pattern scan, advisory lookup and malware lookup (git fetch {self.SRC} {SRC_SHA} failed: not found)",
         ])
+        self.assertEqual(say(c["facts"][-1], "zh-CN"),
+                         f"？ 未检查：pattern 扫描、漏洞查询和恶意包查询（git fetch {self.SRC} {SRC_SHA} failed: not found）")
         self.assertFalse(c["blocked"])
         self.assertEqual(c["review"], {"needed": False, "files": []})
 
@@ -226,7 +229,7 @@ class InAnotherRepo(unittest.TestCase):
             self.assertEqual(c["lines"], [
                 "plugin: p · marketplace mk · commit aaaaaaa",
                 f"source: {what}",
-                f"unchecked: pattern scan, advisory lookup and malware lookup (its source is {what}, which kirby does not fetch)",
+                f"? unchecked: pattern scan, advisory lookup and malware lookup (its source is {what}, which kirby does not fetch)",
             ])
             self.assertFalse(c["blocked"])
             self.assertIsNone(c["mcp_servers"])

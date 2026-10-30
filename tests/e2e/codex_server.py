@@ -33,6 +33,11 @@ USER_ONLY, SKILL_USER_ONLY = say(server.USER_ONLY, "en"), say(server.SKILL_USER_
 # The scope dialog's install option where user is the only scope, as it reads with no lang.
 USER_OPTION, SKILL_USER_OPTION = say(server.USER_OPTION, "en"), say(server.SKILL_USER_OPTION, "en")
 NO_DIALOG = "\nnote: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes."
+# The fixture's warn findings as dialog 1 names them (#26), in English and in 繁體中文 (the mock-up in #24).
+WARN_7 = ("⚠ warn (7): may send secrets out, may download and run code, may download and decode a payload, "
+          "prompt-injection phrases, hidden Unicode, credentials, changes shell startup files")
+WARN_7_ZH = "⚠ 警告 7 項：可能外傳密鑰、可能下載並執行程式碼、可能下載並解碼資料、提示詞注入字句、隱藏 Unicode、憑證、修改啟動檔"
+INFO = {"agent-config", "long-base64", "broad-tools", "html-comment", "network", "exec", "decode", "env-secret"}
 # A check that found a danger or warn finding asks for a model review; an install without one says so.
 UNREVIEWED = "model review: unchecked (no review result was passed)"
 REVIEW_NOTE = "\nreview: the dialog showed the user these model review lines:\n  "
@@ -120,18 +125,17 @@ def main():
     scripts = f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}\n" if c["scripts"] else ""
     check("H1 dialog lists commit, scripts and every check line",
           f"skill: security-audit · commit {c['commit']} · {c['files']} files\n{scripts}" + "\n".join(c["lines"]) in q, q)
-    check("H1 lookups: no dependency files, nothing found, each on its own line as the scan found something",
-          c["lines"][-3:] == ["dependencies: no npm or Python dependency files", "advisory lookup: nothing found",
-                                    "malware lookup: nothing found"] and c["blocked"] is False, c["lines"])
+    check("H1 the check by severity: one warn line naming the 7 warn findings, one line for both lookups (B16)",
+          c["lines"] == [WARN_7, "✓ advisory and malware lookups: nothing found"] and c["blocked"] is False, c["lines"])
     check("H1 English options", opts == ENGLISH, opts)
     check("H1 result = cancelled + scan and lookup notes + English note",
           r == "not installed: the user cancelled.\n" + c["note"] + NO_DIALOG, r)
-    check("H1 fixture fires all 12 rules and the 3 combinations", len({h["rule"] for h in c["scan"]["hits"]}) == 12
+    check("H1 fixture fires all 12 rules and the 3 combinations; the model gets each finding with its file and line",
+          len({h["rule"] for h in c["scan"]["hits"]}) == 12
           and c["scan"]["combinations"] == ["send-secrets", "download-run", "download-decode"]
-          and c["lines"][1:4] == ["warn: send-secrets: may send secrets out (network + env-secret)",
-                                        "warn: download-run: may download and run code (network + exec)",
-                                        "warn: download-decode: may download and decode a payload (network + decode)"],
-          c["lines"][:4])
+          and all(f"\n  {s} {h['rule']} {FOLDER}/" in c["check_note"] for h in c["scan"]["hits"]
+                  for s in ("warn", "info") if s == ("info" if h["rule"] in INFO else "warn")),
+          c["check_note"][:400])
     check("H1 file names are cleaned", "we?ird.py" in c["check_note"] and "\N{ZERO WIDTH SPACE}" not in q + r)
     check("H1 warn findings and no review passed -> one unchecked line, Install offered",
           c["review"]["needed"] is True and f"\n{UNREVIEWED}\n" in q and "Install" in opts, q)
@@ -222,17 +226,18 @@ def main():
           (project / ".gitignore").read_text().splitlines().count("/.agents/skills/security-audit/") == 1)
 
     # H15: dialog.lang: kirby words its own lines (repo, skill, scripts, exists, installs at) in 繁體中文 or 简体中文;
-    # the check's lines stay as they are, and what the tools answer the model stays English. The folder is there from H8.
+    # the check's lines too (#26), and what the tools answer the model stays English. The folder is there from H8.
     c = preview(project)
     names = "、".join(c["scripts"][:2])
     p = Peer("取消")
     r = server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
     q = p.asked[0][0]
-    check("H15 zh-TW: kirby's lines in 繁體中文, the check's as they are, the result in English",
+    check("H15 zh-TW: kirby's lines and the check's summary in 繁體中文, the result in English",
           re.match(rf"{re.escape(REPO)} ★\d+ · \d{{4}}-\d\d-\d\d 更新\n", q) is not None
           and f"\n技能：security-audit · commit {c['commit']} · {c['files']} 個檔案\n"
               + (f"{len(c['scripts'])} 個腳本，例如 {names}\n" if c["scripts"] else "")
-              + "已存在：.agents/skills/security-audit/（安裝在 local 或 project 會失敗）\n" + "\n".join(c["lines"]) in q
+              + "已存在：.agents/skills/security-audit/（安裝在 local 或 project 會失敗）\n"
+              + f"{WARN_7_ZH}\n✓ 漏洞、惡意套件查詢：沒有發現\n" in q
           and r == "not installed: the user cancelled.\n" + c["note"], f"{q}\n      {r}")
     p = Peer("取消")
     server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-CN"}}, None)
@@ -310,7 +315,10 @@ def main():
                      f"marketplace：已加入，名稱 {mk_name}，在 commit {head[:7]}；直接從它安裝",
                      "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）",
                      "說明：Development kit for working with the Claude Agent SDK",
-                     "來源：這個 repo 的 plugins/agent-sdk-dev/"]) in p.asked[0][0]
+                     "來源：這個 repo 的 plugins/agent-sdk-dev/",
+                     # The check's summary in 繁體中文 too (#26).
+                     *(say(f, "zh-TW") for f in pc["facts"][3:])]) in p.asked[0][0]
+          and "✓ 檢查：沒有發現（" in p.asked[0][0]
           and "\n安裝位置：user（~/.codex/config.toml，所有專案）\n\n" in p.asked[0][0]
           and p.asked[1] == ("裝在哪個範圍？", ["cancel", option])
           and held.argv == [["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
@@ -348,7 +356,7 @@ def main():
           and c["lines"][0] == f"package: {pinned[4]} (npm), named by this repo's src/everything/package.json; not "
                                "verified to come from this repo"
           and c["lines"][1].startswith("pinned: only @modelcontextprotocol/server-everything, to ")
-          and c["lines"][2].startswith(("pattern scan: ", "check: ")), out[:600])
+          and c["lines"][2].startswith(("⚠ warn (", "✓ check: nothing found (", "✓ pattern scan: ", "✕ ")), out[:600])
     p = Peer("安裝", USER_OPTION)
     with Held() as held:
         r = server.install(p, {**mcp, "mcp_args": args}, meta)
@@ -368,6 +376,8 @@ def main():
     check("H16 zh-TW MCP server: its lines and the install option in 繁體中文",
           f"\nMCP server：codex mcp add {' '.join(pinned)}\n套件：{pinned[4]}（npm），由這個 repo 的 src/everything/package.json "
           "指名；沒有驗證它來自這個 repo\n已鎖定：只有 @modelcontextprotocol/server-everything，鎖定在 " in q
+          # The check's summary in 繁體中文 too (#26).
+          and "\n".join(say(f, "zh-TW") for f in c["facts"][2:]) + "\n" in q
           and "\n安裝位置：user（~/.codex/config.toml，所有專案）\n\n" in q
           and p.asked[1][1] == ["cancel", "安裝在 user（~/.codex/config.toml，所有專案）"] and not held.argv, f"{p.asked}")
     # The review of an MCP server reads the package the check unpacked, through the file tool.
@@ -387,7 +397,7 @@ def main():
     p = Peer("取消")
     with Held() as held:
         r = server.install(p, {**mcp, "mcp_args": docker}, meta)
-    unchecked = ("unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which "
+    unchecked = ("? unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which "
                  "kirby does not check); not pinned")
     check("H10 a container image is unchecked and not pinned",
           f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{USER_ONLY}" in p.asked[0][0] and not held.argv
@@ -465,13 +475,18 @@ def main():
     shutil.rmtree(project / ".agents", ignore_errors=True)
     c = preview(project)
     name, version = fixture.MALWARE
-    deps = "dependencies: package-lock.json: 2 npm"
-    looked = c["lines"][c["lines"].index(deps):] if deps in c["lines"] else []
-    check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and looked[:3] == [
-        deps,
-        "blocked: the malware lookup found a known-malicious package, so Install is not offered",
-        f"danger: {name}@{version} (npm) is a known-malicious package (MAL-2025-20690)",
-    ] and any(l.startswith("danger: lodash@4.17.20 (npm): ") for l in looked), c["lines"])
+    # The block line, then each danger finding on a line of its own with its ids (#26).
+    check("H13 lookups found the malicious package and the advisory", c["blocked"] is True and c["lines"][:2] == [
+        "✕ blocked: the malware lookup found a known-malicious package, so Install is not offered",
+        f"✕ danger: {name}@{version} (npm) is listed as malicious (MAL-2025-20690)",
+    ] and any(l.startswith("✕ danger: lodash@4.17.20 (npm) has ") for l in c["lines"])
+      and "dependencies: package-lock.json: 2 npm" in c["lines"], c["lines"])
+    p = Peer("取消")
+    server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    check("H13 zh-TW: the block and danger lines in 繁體中文, ids as they are",
+          "\n✕ 已擋下：惡意套件查詢找到已知的惡意套件，所以不提供安裝\n"
+          f"✕ 危險：{name}@{version} (npm) 被列為惡意套件（MAL-2025-20690）\n" in p.asked[0][0]
+          and "\n✕ 危險：lodash@4.17.20 (npm) 有 " in p.asked[0][0], p.asked[0][0])
     # Install is not offered, so no model review is asked for (docs/adr/0002).
     check("H13 a blocked install needs no model review", c["review"]["needed"] is False, c["review"])
     for answer, start in [("取消", "not installed: the user cancelled."),

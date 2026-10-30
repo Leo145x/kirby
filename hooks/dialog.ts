@@ -5,8 +5,8 @@
 // tool's `review` input) also reaches the first dialog, as readReview checks it. Pure: no `$`, so the
 // tests can run it directly; the rules match codex/dialog.py.
 
-import { readLang } from './words'
-import type { Lang } from './words'
+import { fact, readLang } from './words'
+import type { Fact, Keyed, Lang } from './words'
 
 export type Kind = 'skill' | 'plugin' | 'mcp'
 export type Scope = 'local' | 'project' | 'user'
@@ -126,6 +126,25 @@ export function readReview(raw: unknown, sha: unknown, review: Review): { lines:
     return { lines: [`model review: unchecked (it read ${sha.slice(0, 7)}, not ${String(review.sha).slice(0, 7)}, the one checked here)`] }
   }
   return { lines: lines.length ? lines : [`model review: nothing found (${LABEL})`] }
+}
+
+// The facts with n model review findings counted on the warn line, as the dialog shows them: it counts the review's
+// findings and shows none of the reviewer's text (docs/adr/0006). Without a warn line, it makes one after the
+// danger lines, or before the check's first line. The facts given are left as they are.
+export function countReview(facts: readonly Fact[], n: number): Fact[] {
+  if (n === 0) return [...facts]
+  const review = fact('warn_review', { count: n })
+  const at = facts.findIndex(f => typeof f !== 'string' && f.key === 'warn')
+  if (at >= 0) {
+    const w = facts[at] as Keyed
+    const names = w.args.names as readonly (string | Keyed)[]
+    return facts.map((f, i) => (i === at ? fact('warn', { count: Number(w.args.count) + n, names: [...names, review] }) : f))
+  }
+  const keyed = (f: Fact, test: (key: string) => boolean) => typeof f !== 'string' && test(f.key)
+  const danger = facts.map(f => keyed(f, k => k.startsWith('danger_') || k === 'check_blocked')).lastIndexOf(true)
+  const first = facts.findIndex(f => keyed(f, k => /^(check|scan|lookup)_/.test(k)))
+  const i = danger >= 0 ? danger + 1 : first >= 0 ? first : facts.length
+  return [...facts.slice(0, i), fact('warn', { count: n, names: [review] }), ...facts.slice(i)]
 }
 
 // The review's dialog lines for the model, in every result after the dialog opens; '' without any.

@@ -75,12 +75,13 @@ test('a marketplace list that fails is one unchecked line, and the check goes ah
   ])
 })
 
-// A skill's first dialog shows kirby's lines in the language the model picked (dialog.lang), and the pre-install
-// check's own lines as they are; what the tools answer the model stays English. The same cases are in
+// A skill's first dialog shows kirby's lines in the language the model picked (dialog.lang), the pre-install
+// check's lines (install_skill.py's facts) too; what the tools answer the model stays English. The same cases are in
 // tests/test_codex.py's Language.
 const SKILL_CHECK = {
   name: 's', commit: 'aaaaaaa', sha: 'a'.repeat(40), files: 2, scripts: ['run.sh', 'setup.py', 'x.sh'], exists: true,
-  lines: ['check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)'],
+  facts: [{ key: 'check_nothing', args: { files: { key: 'check_files', args: { count: 2 } } } }],
+  lines: ['✓ check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)'],
   note: 'pattern scan: the dialog showed the user no pattern-scan findings', blocked: false, review: { needed: false, files: [] },
 }
 const WORDING = {
@@ -121,7 +122,7 @@ test("with zh-TW kirby's lines are in 繁體中文", async ($, on) => {
     '技能：s · commit aaaaaaa · 2 個檔案',
     '3 個腳本，例如 run.sh、setup.py',
     '已存在：.claude/skills/s/（安裝在 local 或 project 會失敗）',
-    ...SKILL_CHECK.lines,
+    '✓ 檢查：沒有發現（2 個檔案、沒有 npm 或 Python 相依套件檔、漏洞與惡意套件查詢）',
   ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`])
   expect(result).toBe(`not installed: the user cancelled.\n${SKILL_CHECK.note}`)
 })
@@ -133,7 +134,7 @@ test("with zh-CN kirby's lines are in 简体中文", async ($, on) => {
     '技能：s · commit aaaaaaa · 2 个文件',
     '3 个脚本，例如 run.sh、setup.py',
     '已存在：.claude/skills/s/（安装在 local 或 project 会替换它）',
-    ...SKILL_CHECK.lines,
+    '✓ 检查：没有发现（2 个文件、没有 npm 或 Python 依赖文件、漏洞与恶意包查询）',
   ].join('\n') + '\n\n')).toBe(true)
 })
 

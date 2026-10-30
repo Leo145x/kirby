@@ -29,6 +29,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
+# Its callers put this folder on the import path; words.py is kirby's own wording of the dialog's facts.
+from words import fact
+
 try:
     import tomllib
 except ImportError:  # before Python 3.11: uv.lock and pyproject.toml cannot be read
@@ -321,30 +324,54 @@ def groups(ids, records):
 
 
 def listed(ids, limit=2):
-    more = f", … (+{len(ids) - limit})" if len(ids) > limit else ""
-    return ", ".join(ids[:limit]) + more
+    return ", ".join(items(ids, limit))
+
+
+def items(values, limit=2):
+    """The first values and, if there are more, how many: a list a fact takes, joined in the dialog's language."""
+    return [*values[:limit], *([f"… (+{len(values) - limit})"] if len(values) > limit else [])]
 
 
 def plural(n, one, many):
     return f"{n} {one if n == 1 else many}"
 
 
+def vulns_fact(n):
+    return fact("lookup_vulns_one") if n == 1 else fact("lookup_vulns", count=n)
+
+
+class Part(str):
+    """A part of what the lookups cover, in English for the model (the str itself) and as a fact for the dialog. A
+    part that is a plain str (a dependency file's path) is shown as it is."""
+
+    def __new__(cls, text, said):
+        part = super().__new__(cls, text)
+        part.fact = said
+        return part
+
+
+def part_fact(part):
+    return part.fact if isinstance(part, Part) else shown(part)
+
+
 # ---- the check -----------------------------------------------------------------------------------------
 
 def check(repo, sha, root, files, net=None):
-    """The lookups for a skill: {"lines": the dialog's facts, "note": the same for the model, "blocked":
-    whether the malware lookup found something, so Install is not offered, "found": whether either lookup
-    found anything (each such finding is danger or warn), "nothing_found": when both
-    lookups found nothing and nothing went unchecked, the dependencies they covered (for the one line
-    install_skill.check_lines makes), else None}."""
+    """The lookups for a skill: {"dialog": their part of the dialog's facts, which summary() puts in order, "note":
+    the findings for the model, "blocked": whether the malware lookup found something, so Install is not offered,
+    "found": whether either lookup found anything (each such finding is danger or warn), "nothing_found": when both
+    lookups found nothing and nothing went unchecked, the dependencies they covered as facts (for the one line
+    install_skill.check_facts makes), else None}."""
     net = net or Net()
     found = sources(files)
     deps = [read(root, rel, net) for rel in found[:MAX_SOURCES]]
     # The files past the limit are not read, which the dialog says rather than leaving them out.
     rest = [shown(rel) for rel in found[MAX_SOURCES:]]
-    unread = [(f"{plural(len(rest), 'more dependency file', 'more dependency files')} ({listed(rest)})",
+    unread = [(Part(f"{plural(len(rest), 'more dependency file', 'more dependency files')} ({listed(rest)})",
+                    fact("lookup_part_more_files", files=items(rest))),
                f"kirby reads at most {MAX_SOURCES}")] if rest else []
-    return looked_up(repo, {"commit": sha}, "this commit", f"{repo} at commit {sha}", deps, net, unread=unread)
+    return looked_up(repo, {"commit": sha}, Part("this commit", fact("lookup_part_commit")), f"{repo} at commit {sha}",
+                     deps, net, unread=unread)
 
 
 def check_package(repo, ecosystem, name, version, direct, net=None, why=None, elsewhere=False):
@@ -356,10 +383,12 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None, el
     (why says why it is not known), only the package itself is looked up, by name, for malware."""
     net = net or Net()
     what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
-    subject = f"the package {what} ({ecosystem})"
+    subject = Part(f"the package {what} ({ecosystem})", fact("lookup_part_package", package=what, ecosystem=ecosystem))
+    subject.package = (what, ecosystem)
+    dependencies = Part(f"the dependencies of {what}", fact("lookup_part_dependencies", package=what))
     query = {"package": {"name": name, "ecosystem": ecosystem}, **({"version": version} if version else {})}
     if version is None:
-        return looked_up(repo, query, subject, subject, [], net, unknown=(f"the dependencies of {what}", why))
+        return looked_up(repo, query, subject, subject, [], net, unknown=(dependencies, why))
     own = name if ecosystem == "npm" else py_name(name)
     if elsewhere:
         src = {"ecosystem": ecosystem, "packages": set(), "names": set(), "resolved": False, "why": ELSEWHERE}
@@ -373,7 +402,7 @@ def check_package(repo, ecosystem, name, version, direct, net=None, why=None, el
                 rel, text = "requirements.txt", f"{name}=={version}\n"
             (Path(tmp) / rel).write_text(text)
             src = read(Path(tmp), rel, net)
-    src.update(file=what, part=f"the dependencies of {what}")
+    src.update(file=what, part=dependencies)
     src["packages"] = {(n, v) for n, v in src["packages"] if n != own}
     if not src["resolved"]:
         src["names"] = {n for n in (direct if ecosystem == "npm" else map(py_name, direct)) if n != own}
@@ -385,7 +414,8 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
     describes them. about names the subject for the model; unknown is (part, why) for dependencies that
     could not be listed at all; unread is (part, why) for each part of the dependencies that was not read."""
     findings, unchecked = [], []
-    parts = {ADVISORY: [subject, "this repo's advisories"], MALWARE: [subject]}
+    advisories = Part("this repo's advisories", fact("lookup_part_repo_advisories"))
+    parts = {ADVISORY: [subject, advisories], MALWARE: [subject]}
     if unknown:
         part, why = unknown
         unchecked.append((ADVISORY, subject, why))
@@ -413,7 +443,7 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
     except Failed as e:
         results = None
         for lookup in (ADVISORY, MALWARE):
-            unchecked += [(lookup, part, str(e)) for part in parts[lookup] if part != "this repo's advisories"
+            unchecked += [(lookup, part, str(e)) for part in parts[lookup] if part != advisories
                           and (lookup, part) not in {(u[0], u[1]) for u in unchecked}]
 
     commit_aliases = set()
@@ -425,7 +455,8 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
         records, missed = full_records(sorted(wanted)[:MAX_RECORDS], net)
         missed += max(0, len(wanted) - MAX_RECORDS)
         if missed:
-            unchecked.append((ADVISORY, f"the rating of {plural(missed, 'advisory', 'advisories')}",
+            unchecked.append((ADVISORY, Part(f"the rating of {plural(missed, 'advisory', 'advisories')}",
+                                             fact("lookup_part_ratings", count=missed)),
                               "OSV.dev did not return the record"))
         findings += commit_findings(commit_ids, records, subject)
         commit_aliases = {a for g in groups([v for v in commit_ids if not v.startswith("MAL-")], records) for a in g["aliases"]}
@@ -438,25 +469,25 @@ def looked_up(repo, query, subject, about, deps, net, unknown=None, unread=()):
         package = (query["package"]["ecosystem"], query["package"]["name"]) if "package" in query else None
         findings += repo_findings(net.advisories(repo), commit_aliases, subject, package)
     except Failed as e:
-        unchecked.append((ADVISORY, "this repo's advisories", str(e)))
+        unchecked.append((ADVISORY, advisories, str(e)))
 
     # Malware first, then the subject's own advisories, then the worst-rated dependencies.
     findings.sort(key=lambda f: (f["severity"] != "danger", f["lookup"] != MALWARE, f.get("rank", 0)))
     blocked = any(f["lookup"] == MALWARE for f in findings)
     none = "not known" if unknown else "no npm or Python dependency files"
     # Every lookup finding is danger or warn, so any of them is one the model review runs for (docs/adr/0002).
-    return {"lines": dialog_lines(deps, findings, unchecked, parts, blocked, none),
+    return {"dialog": dialog(deps, findings, unchecked, parts),
             "note": note(about, deps, findings, unchecked, blocked, none), "blocked": blocked, "found": bool(findings),
             "nothing_found": None if findings or unchecked else covered(deps, versioned)}
 
 
 def covered(deps, versioned):
-    """The dependencies looked up, in a few words: "3 npm dependencies", "1 npm and 2 PyPI dependencies"."""
-    if not deps:
-        return "no npm or Python dependency files"
+    """The dependencies looked up, as facts: "3 npm dependencies", "1 npm dependency", "2 PyPI dependencies"; none
+    for no dependency files."""
     ecosystems = list(dict.fromkeys(d["ecosystem"] for d in deps))
     counts = [sum(1 for e, _, _ in versioned if e == eco) for eco in ecosystems]
-    return " and ".join(f"{n} {eco}" for n, eco in zip(counts, ecosystems)) + (" dependency" if sum(counts) == 1 else " dependencies")
+    return [fact("check_deps_one", ecosystem=eco) if n == 1 else fact("check_deps", count=n, ecosystem=eco)
+            for n, eco in zip(counts, ecosystems)]
 
 
 def full_records(ids, net):
@@ -476,17 +507,17 @@ def package_findings(ecosystem, name, version, ids, records):
     out = []
     bad = [v for v in ids if v.startswith("MAL-")]
     if bad:
-        line = (f"danger: {what} ({ecosystem}) is a known-malicious package ({listed(bad)})" if version else
-                f"danger: {what} ({ecosystem}) is listed as a malicious package ({listed(bad)}); matched by name, "
-                "the version was not resolved")
-        out.append({"severity": "danger", "lookup": MALWARE, "line": line, "what": f"{what} ({ecosystem})",
+        said = fact("danger_malware" if version else "danger_malware_by_name", package=what, ecosystem=ecosystem, ids=items(bad))
+        out.append({"severity": "danger", "lookup": MALWARE, "fact": said, "what": f"{what} ({ecosystem})",
                     "notes": [f"danger malware {what} ({ecosystem}) {v}: in OpenSSF Malicious Packages" for v in bad]})
     vulns = groups([v for v in ids if not v.startswith("MAL-")], records)
     if vulns:
         severity = "danger" if vulns[0]["rating"] in DANGER_RATINGS else "warn"
-        out.append({"severity": severity, "lookup": ADVISORY, "rank": rank(vulns[0]["rating"]),
-                    "line": f"{severity}: {what} ({ecosystem}): {plural(len(vulns), 'vulnerability', 'vulnerabilities')}, "
-                            f"worst {vulns[0]['rating'] or 'not rated'} ({listed([g['ids'][0] for g in vulns])})",
+        # A danger finding is a line of its own with its ids; a warn one is named on the warn line.
+        said = (fact("danger_vulns", package=what, ecosystem=ecosystem, vulns=vulns_fact(len(vulns)),
+                     rating=vulns[0]["rating"] or "not rated", ids=items([g["ids"][0] for g in vulns]))
+                if severity == "danger" else fact("warn_package_vulns", package=what, ecosystem=ecosystem, vulns=vulns_fact(len(vulns))))
+        out.append({"severity": severity, "lookup": ADVISORY, "rank": rank(vulns[0]["rating"]), "fact": said,
                     "notes": [f"{'danger' if g['rating'] in DANGER_RATINGS else 'warn'} advisory {what} ({ecosystem}) "
                               f"{described(g)}" for g in vulns]})
     return out
@@ -506,16 +537,19 @@ def commit_findings(ids, records, subject="this commit"):
     """The records for the subject itself (the pinned commit, or an MCP server's package at its version): any
     is danger, as it affects what installs."""
     out = []
+    # The subject is an MCP server's package (its name and ecosystem) or the commit.
+    package = getattr(subject, "package", None)
+    named = dict(zip(("package", "ecosystem"), package)) if package else {}
     bad = [v for v in ids if v.startswith("MAL-")]
     if bad:
         out.append({"severity": "danger", "lookup": MALWARE, "what": subject,
-                    "line": f"danger: {subject} is listed as malicious ({listed(bad)})",
+                    "fact": fact("danger_malware" if package else "danger_commit_malware", **named, ids=items(bad)),
                     "notes": [f"danger malware {subject} {v}: in OpenSSF Malicious Packages" for v in bad]})
     vulns = groups([v for v in ids if not v.startswith("MAL-")], records)
     if vulns:
         out.append({"severity": "danger", "lookup": ADVISORY, "rank": -1,
-                    "line": f"danger: {subject} is affected by {plural(len(vulns), 'published vulnerability', 'published vulnerabilities')} "
-                            f"({listed([g['ids'][0] for g in vulns])})",
+                    "fact": fact("danger_package_affected" if package else "danger_commit_vulns", **named,
+                                 vulns=vulns_fact(len(vulns)), ids=items([g["ids"][0] for g in vulns])),
                     "notes": [f"danger advisory {subject} {described(g)}" for g in vulns]})
     return out
 
@@ -540,10 +574,7 @@ def repo_findings(advisories, commit_aliases, subject="this commit", package=Non
     if not open_:
         return []
     named = [f"{shown(a['ghsa_id'], 40)} {shown(str(a.get('severity') or 'not rated'), 20)}" for a in open_]
-    affect = "it affects" if len(open_) == 1 else "they affect"
-    return [{"severity": "warn", "lookup": ADVISORY,
-             "line": f"warn: this repo published {plural(len(open_), 'advisory', 'advisories')} ({listed(named)}); "
-                     f"could not tell whether {affect} {subject}",
+    return [{"severity": "warn", "lookup": ADVISORY, "fact": fact("warn_repo_advisories", count=len(open_)),
              "notes": [f"warn repo-advisory {n}: could not tell whether it affects {subject}" for n in named]}]
 
 
@@ -568,25 +599,68 @@ def unchecked_lines(unchecked, prefix):
             for why, per in by_reason.items()]
 
 
-def dialog_lines(deps, findings, unchecked, parts, blocked, none):
-    lines = [deps_text(deps, none)]
-    if blocked:
-        lines.append("blocked: the malware lookup found a known-malicious package, so Install is not offered")
-    lines += [f["line"] for f in findings[:SHOWN]]
-    rest = findings[SHOWN:]
-    if rest:
-        counts = {s: sum(1 for f in rest if f["severity"] == s) for s in ("danger", "warn")}
-        lines.append("also: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n) + " (listed for the model)")
-    lines += unchecked_lines(unchecked, "unchecked: ")
+DEPS = {"unreadable": "lookup_deps_file_unreadable", "resolved": "lookup_deps_file_resolved", "names": "lookup_deps_file_names",
+        "": "lookup_deps_file"}
+
+
+def deps_fact(deps):
+    """The dependency files read, for the dialog; None without any (the dialog leaves that out)."""
+    if not deps:
+        return None
+    files = [fact(DEPS["unreadable" if d.get("unreadable") else "resolved" if d["resolved"] else "names" if d["names"] else ""],
+                  file=shown(d["file"]), count=len(d["packages"]) or len(d["names"]), ecosystem=d["ecosystem"]) for d in deps]
+    return fact("lookup_deps", files=items(files, SHOWN_SOURCES))
+
+
+def unchecked_facts(unchecked):
+    """The unchecked lines for the dialog, one for each reason, as unchecked_lines gives them to the model."""
+    by_reason = {}
+    for lookup, part, why in unchecked:
+        by_reason.setdefault(why, {}).setdefault(lookup, []).append(part)
+    out = []
+    for why, per in by_reason.items():
+        advisory, malware = ([part_fact(p) for p in per.get(lookup, [])] for lookup in (ADVISORY, MALWARE))
+        if advisory and malware:
+            out.append(fact("lookup_unchecked_both", parts=advisory, why=why) if per[ADVISORY] == per[MALWARE] else
+                       fact("lookup_unchecked_split", advisory=advisory, malware=malware, why=why))
+        else:
+            out.append(fact("lookup_unchecked_advisory" if advisory else "lookup_unchecked_malware", parts=advisory or malware, why=why))
+    return out
+
+
+def dialog(deps, findings, unchecked, parts):
+    """The lookups' part of the dialog's facts, by severity (summary() puts them in order): each danger finding, up to
+    SHOWN, and how many more; the names of the warn ones; what went unchecked; the dependency files read; and what
+    found nothing, one line for both lookups when they agree."""
+    danger = [f["fact"] for f in findings if f["severity"] == "danger"]
+    more = [fact("danger_more", count=len(danger) - SHOWN)] if len(danger) > SHOWN else []
+    state = {}
     for lookup in (ADVISORY, MALWARE):
-        if any(f["lookup"] == lookup for f in findings):
-            continue
         missing = {u[1] for u in unchecked if u[0] == lookup}
-        if not missing:
-            lines.append(f"{lookup}: nothing found")
-        elif set(parts[lookup]) - missing:
-            lines.append(f"{lookup}: nothing found in the rest")
-    return lines
+        state[lookup] = ("found" if any(f["lookup"] == lookup for f in findings) else "nothing" if not missing
+                         else "rest" if set(parts[lookup]) - missing else "none")
+    if state[ADVISORY] == state[MALWARE] and state[ADVISORY] in ("nothing", "rest"):
+        nothing = [fact("lookup_nothing" if state[ADVISORY] == "nothing" else "lookup_nothing_rest")]
+    else:
+        nothing = [fact(f"lookup_{key}_nothing" + ("" if state[lookup] == "nothing" else "_rest"))
+                   for lookup, key in ((ADVISORY, "advisory"), (MALWARE, "malware")) if state[lookup] in ("nothing", "rest")]
+    return {"danger": danger[:SHOWN] + more, "warn": [f["fact"] for f in findings if f["severity"] == "warn"],
+            "unchecked": unchecked_facts(unchecked), "deps": deps_fact(deps), "nothing": nothing}
+
+
+WARN_SHOWN = 10
+
+
+def summary(looked, warn=(), scan=()):
+    """The dialog's facts for the pre-install check, by severity (issue #24): the block, each danger finding, one warn
+    line naming the warn findings (warn: the pattern scan's names, before the lookups'), then scan (the pattern scan's
+    own lines), what went unchecked, the dependency files read and what found nothing. Info findings are left out."""
+    d = looked["dialog"]
+    names = [*warn, *d["warn"]]
+    facts = [*([fact("check_blocked")] if looked["blocked"] else []), *d["danger"]]
+    if names:
+        facts.append(fact("warn", count=len(names), names=items(names, WARN_SHOWN)))
+    return [*facts, *scan, *d["unchecked"], *([d["deps"]] if d["deps"] else []), *d["nothing"]]
 
 
 def note(about, deps, findings, unchecked, blocked, none):
@@ -596,7 +670,8 @@ def note(about, deps, findings, unchecked, blocked, none):
     if not notes and not unchecked:
         return (f"lookups: the dialog showed the user no findings from the advisory and malware lookups for {about}"
                 f"\n{deps_text(deps, none)}")
-    lines = [f"lookups: the dialog showed the user these advisory and malware lookup findings for {about}:"]
+    lines = [f"lookups: the advisory and malware lookup findings for {about} (the dialog showed the user each danger one "
+             "with its ids, and the warn ones by name only):"]
     lines += [f"  {n}" for n in notes[:NOTED]]
     if len(notes) > NOTED:
         lines.append(f"  … (+{len(notes) - NOTED} more)")

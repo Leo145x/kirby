@@ -159,12 +159,12 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (!r.ok) throw new Refusal(r.out)
     const c = JSON.parse(r.out) as {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
-      lines: string[]; note: string; blocked: boolean; review: ReviewOf
+      facts: Fact[]; note: string; blocked: boolean; review: ReviewOf
     }
     const facts: Fact[] = [fact('skill', { name: c.name, commit: c.commit, files: c.files })]
     if (c.scripts.length) facts.push(fact('scripts', { count: c.scripts.length, names: c.scripts.slice(0, 2) }))
     if (c.exists) facts.push(fact(input.force === true ? 'exists_replaces' : 'exists_fails', { path: `.claude/skills/${c.name}/` }))
-    facts.push(...c.lines)
+    facts.push(...c.facts)
     return { facts, cache: null, scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true }
   }
   if (kind === 'plugin') {

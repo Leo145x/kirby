@@ -374,7 +374,7 @@ def preview(kind, a, project):
         if project and c["exists"]:
             exists = "exists_replaces" if a.get("force") is True else "exists_fails"
             lines.append(fact(exists, path=f".agents/skills/{c['name']}/"))
-        lines += c["lines"]
+        lines += c["facts"]
         # The commit shown is the one installed.
         return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
                 "scan": c["note"], "commit": c["sha"], "blocked": c["blocked"] is True,
