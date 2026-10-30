@@ -7,6 +7,8 @@
 
 import { SHA_RE } from './check'
 import type { Scope } from './dialog'
+import { fact } from './words'
+import type { Fact } from './words'
 
 export type Run = (argv: readonly string[]) => Promise<{ ok: boolean; out: string }>
 // A marketplace Claude Code already has, as `claude plugin marketplace list --json` gives it.
@@ -52,32 +54,29 @@ export async function headOf(run: Run, added: Added): Promise<string | null> {
 }
 
 // For a marketplace already added: the commit to check (null: the repo's default branch as it stands) and
-// the dialog's line about it. latest is the repo's commit now, or why it could not be read.
+// the dialog's line about it (words.ts). latest is the repo's commit now, or why it could not be read.
 export function alreadyAdded(added: Added, head: string | null, latest: { sha: string } | { why: string }):
-  { commit: string | null; line: string } {
-  const at = head ? `at commit ${short(head)}` : 'at a commit kirby could not read'
+  { commit: string | null; fact: Fact } {
+  const name = added.name
   if ('why' in latest) {
-    return {
-      commit: head,
-      line: `unchecked: whether the marketplace ${added.name}, ${at}, is behind its repo (${latest.why}); if it is, installing ` +
-        'refreshes it, and the plugin is removed again if it then comes from another commit',
-    }
+    const f = head ? fact('marketplace_behind_unknown', { name, commit: short(head), why: latest.why })
+      : fact('marketplace_behind_unknown_unread', { name, why: latest.why })
+    return { commit: head, fact: f }
   }
-  if (head === latest.sha) return { commit: head, line: `marketplace: already added as ${added.name}, ${at}; installs from it as it is` }
+  if (head === latest.sha) return { commit: head, fact: fact('marketplace_added', { name, commit: short(head) }) }
   // With no commit read, kirby cannot tell the clone is behind, only what the install brings.
   return {
     commit: latest.sha,
-    line: `marketplace: already added as ${added.name}, ${at}${head ? ', behind its repo' : ''}; installing refreshes it to ` +
-      `${short(latest.sha)}, the commit checked`,
+    fact: head ? fact('marketplace_refreshes', { name, commit: short(head), latest: short(latest.sha) })
+      : fact('marketplace_refreshes_unread', { name, latest: short(latest.sha) }),
   }
 }
 
 // The dialog's line when kirby cannot tell whether the marketplace is already added (docs/adr/0005): the check
 // goes ahead on the repo as it stands, and installPlugin keeps the plugin only if it can read the commit it came
 // from. codex/server.py says the same.
-export function notListed(why: string): string {
-  return `unchecked: whether this marketplace is already added (${why}); the check is of its repo as it stands, and the ` +
-    'plugin is removed again if kirby cannot tell it installs from that commit'
+export function notListed(why: string): Fact {
+  return fact('marketplace_not_listed', { why })
 }
 
 type Plan = { repo: string; plugin: string; scope: Scope; sha: string; marketplace: string; added: Added | null }

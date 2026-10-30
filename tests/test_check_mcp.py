@@ -20,6 +20,7 @@ spec.loader.exec_module(check_mcp)
 
 import test_lookups  # noqa: E402
 from test_lookups import lock  # noqa: E402
+from words import say  # noqa: E402
 
 SHA = "d" * 40
 NPM, PYPI = "https://registry.npmjs.org", "https://pypi.org/pypi"
@@ -175,6 +176,24 @@ class AnNpmServer(unittest.TestCase):
             "check: nothing found (1 file, 0 npm dependencies, advisory and malware lookups)",
         ])
 
+    def test_the_facts_are_kirbys_wording_of_the_lines_with_names_versions_and_ranges_as_they_are(self):
+        net = Net(repo={"package.json": json.dumps({"name": "srv"})},
+                  web={f"{NPM}/srv": self.PACKUMENT, **npm_web("srv", "1.10.0", tgz({"i.js": ""}))},
+                  resolve={"npm": lock(("srv", "1.10.0"))})
+        c = check(["srv", "--", "npx", "-y", "srv@^1.2"], net)
+        self.assertEqual([say(f, "en") for f in c["facts"]], c["lines"])
+        self.assertEqual([say(f, "zh-TW") for f in c["facts"][:2]], [
+            "套件：srv@1.10.0（npm），由這個 repo 的 package.json 指名；沒有驗證它來自這個 repo",
+            "已鎖定：只有 srv，鎖定在符合 ^1.2 的最高版本 1.10.0；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同",
+        ])
+        net = Net(repo={"package.json": json.dumps({"name": "srv"})}, web={f"{NPM}/srv": self.PACKUMENT})
+        c = check(["srv", "--", "npx", "-y", "srv@^9"], net)
+        self.assertEqual([say(f, "en") for f in c["facts"]], c["lines"])
+        self.assertEqual([say(f, "zh-CN") for f in c["facts"][:2]], [
+            "包：srv（npm），由这个 repo 的 package.json 指定；没有验证它来自这个 repo",
+            "未锁定：kirby 无法确定命令会安装 srv 的哪个版本（no version of srv matches ^9）；会按原样安装",
+        ])
+
     def test_a_range_no_version_matches_or_kirby_cannot_read_is_not_pinned(self):
         for word, why in [("srv@^9", "no version of srv matches ^9"),
                           ("srv@>=1 <2 || ~~3", "the command asks for srv@>=1 <2 || ~~3, a range kirby does not resolve")]:
@@ -286,6 +305,8 @@ class Unchecked(unittest.TestCase):
         c = check(args, Net(repo=repo if repo is not None else {"package.json": json.dumps({"name": "srv"})}))
         self.assertEqual(c["lines"], [f"unchecked: pattern scan, advisory lookup and malware lookup ({why})"
                                       + ("; not pinned" if pinned else "")])
+        # A line kirby has no wording for yet is its own fact, the same in every language.
+        self.assertEqual(c["facts"], c["lines"])
         self.assertEqual(c["mcp_args"], args)
         self.assertFalse(c["blocked"])
         self.assertIsNone(c["package"])

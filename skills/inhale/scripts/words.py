@@ -49,6 +49,135 @@ WORDS = {
         "zh-TW": "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）",
         "zh-CN": "安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）",
     },
+    "plugin": {
+        "en": "plugin: {name} · marketplace {marketplace} · commit {commit}",
+        "zh-TW": "外掛：{name} · marketplace {marketplace} · commit {commit}",
+        "zh-CN": "插件：{name} · marketplace {marketplace} · commit {commit}",
+    },
+    "plugin_files": {
+        "en": "plugin: {name} · marketplace {marketplace} · commit {commit} · {files} files",
+        "zh-TW": "外掛：{name} · marketplace {marketplace} · commit {commit} · {files} 個檔案",
+        "zh-CN": "插件：{name} · marketplace {marketplace} · commit {commit} · {files} 个文件",
+    },
+    "plugin_description": {"en": "description: {text}", "zh-TW": "說明：{text}", "zh-CN": "说明：{text}"},
+    "plugin_source_root": {"en": "source: the root of this repo", "zh-TW": "來源：這個 repo 的根目錄", "zh-CN": "来源：这个 repo 的根目录"},
+    "plugin_source_folder": {"en": "source: {path}/ in this repo", "zh-TW": "來源：這個 repo 的 {path}/", "zh-CN": "来源：这个 repo 的 {path}/"},
+    "plugin_source_pinned": {
+        "en": "source: {source} at commit {commit}, pinned by the marketplace entry",
+        "zh-TW": "來源：{source}，commit {commit}，由 marketplace 項目鎖定",
+        "zh-CN": "来源：{source}，commit {commit}，由 marketplace 条目锁定",
+    },
+    "plugin_source_unpinned": {
+        "en": "source: {source} at commit {commit} ({ref}); not pinned: the marketplace entry gives no sha, so what installs may differ from what was checked",
+        "zh-TW": "來源：{source}，commit {commit}（{ref}）；未鎖定：marketplace 項目沒有給 sha，安裝的內容可能和檢查過的不同",
+        "zh-CN": "来源：{source}，commit {commit}（{ref}）；未锁定：marketplace 条目没有给出 sha，安装的内容可能与检查过的不同",
+    },
+    "plugin_source_unpinned_default": {
+        "en": "source: {source} at commit {commit} (default branch); not pinned: the marketplace entry gives no sha, so what installs may differ from what was checked",
+        "zh-TW": "來源：{source}，commit {commit}（預設分支）；未鎖定：marketplace 項目沒有給 sha，安裝的內容可能和檢查過的不同",
+        "zh-CN": "来源：{source}，commit {commit}（默认分支）；未锁定：marketplace 条目没有给出 sha，安装的内容可能与检查过的不同",
+    },
+    "plugin_source_unfetched": {
+        "en": "source: {source}, which kirby could not fetch",
+        "zh-TW": "來源：{source}，kirby 無法取得",
+        "zh-CN": "来源：{source}，kirby 无法获取",
+    },
+    "plugin_dependencies": {
+        "en": "installed along with it, not checked: {plugins}",
+        "zh-TW": "會一起安裝、未檢查：{plugins}",
+        "zh-CN": "会一起安装、未检查：{plugins}",
+    },
+    "marketplace_added": {
+        "en": "marketplace: already added as {name}, at commit {commit}; installs from it as it is",
+        "zh-TW": "marketplace：已加入，名稱 {name}，在 commit {commit}；直接從它安裝",
+        "zh-CN": "marketplace：已添加，名称 {name}，在 commit {commit}；直接从它安装",
+    },
+    "marketplace_refreshes": {
+        "en": "marketplace: already added as {name}, at commit {commit}, behind its repo; installing refreshes it to {latest}, the commit checked",
+        "zh-TW": "marketplace：已加入，名稱 {name}，在 commit {commit}，落後於它的 repo；安裝時會更新到檢查過的 commit {latest}",
+        "zh-CN": "marketplace：已添加，名称 {name}，在 commit {commit}，落后于它的 repo；安装时会更新到检查过的 commit {latest}",
+    },
+    "marketplace_refreshes_unread": {
+        "en": "marketplace: already added as {name}, at a commit kirby could not read; installing refreshes it to {latest}, the commit checked",
+        "zh-TW": "marketplace：已加入，名稱 {name}，kirby 讀不到它在哪個 commit；安裝時會更新到檢查過的 commit {latest}",
+        "zh-CN": "marketplace：已添加，名称 {name}，kirby 读不到它在哪个 commit；安装时会更新到检查过的 commit {latest}",
+    },
+    "marketplace_behind_unknown": {
+        "en": "unchecked: whether the marketplace {name}, at commit {commit}, is behind its repo ({why}); if it is, installing refreshes it, and the plugin is removed again if it then comes from another commit",
+        "zh-TW": "未檢查：marketplace {name}（在 commit {commit}）是否落後於它的 repo（{why}）；若是，安裝時會更新它，外掛若因此來自另一個 commit 會再移除",
+        "zh-CN": "未检查：marketplace {name}（在 commit {commit}）是否落后于它的 repo（{why}）；如果是，安装时会更新它，插件如果因此来自另一个 commit 会再移除",
+    },
+    "marketplace_behind_unknown_unread": {
+        "en": "unchecked: whether the marketplace {name}, at a commit kirby could not read, is behind its repo ({why}); if it is, installing refreshes it, and the plugin is removed again if it then comes from another commit",
+        "zh-TW": "未檢查：marketplace {name}（kirby 讀不到它在哪個 commit）是否落後於它的 repo（{why}）；若是，安裝時會更新它，外掛若因此來自另一個 commit 會再移除",
+        "zh-CN": "未检查：marketplace {name}（kirby 读不到它在哪个 commit）是否落后于它的 repo（{why}）；如果是，安装时会更新它，插件如果因此来自另一个 commit 会再移除",
+    },
+    "marketplace_not_listed": {
+        "en": "unchecked: whether this marketplace is already added ({why}); the check is of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit",
+        "zh-TW": "未檢查：這個 marketplace 是否已加入（{why}）；檢查的是它的 repo 目前的狀態，若 kirby 無法確認外掛是從那個 commit 安裝的，會再移除",
+        "zh-CN": "未检查：这个 marketplace 是否已添加（{why}）；检查的是它的 repo 当前的状态，如果 kirby 无法确认插件是从那个 commit 安装的，会再移除",
+    },
+    "marketplace_head_unread": {
+        "en": "unchecked: which commit the marketplace {name}, already added, is at ({why}); the check is of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit",
+        "zh-TW": "未檢查：已加入的 marketplace {name} 在哪個 commit（{why}）；檢查的是它的 repo 目前的狀態，若 kirby 無法確認外掛是從那個 commit 安裝的，會再移除",
+        "zh-CN": "未检查：已添加的 marketplace {name} 在哪个 commit（{why}）；检查的是它的 repo 当前的状态，如果 kirby 无法确认插件是从那个 commit 安装的，会再移除",
+    },
+    "marketplace_claude_format": {
+        "en": "marketplace: {file} (Claude Code format)",
+        "zh-TW": "marketplace：{file}（Claude Code 格式）",
+        "zh-CN": "marketplace：{file}（Claude Code 格式）",
+    },
+    "mcp_server": {"en": "MCP server: {command}", "zh-TW": "MCP server：{command}", "zh-CN": "MCP server：{command}"},
+    "mcp_package": {
+        "en": "package: {package} ({ecosystem}), named by this repo's {file}; not verified to come from this repo",
+        "zh-TW": "套件：{package}（{ecosystem}），由這個 repo 的 {file} 指名；沒有驗證它來自這個 repo",
+        "zh-CN": "包：{package}（{ecosystem}），由这个 repo 的 {file} 指定；没有验证它来自这个 repo",
+    },
+    "mcp_pinned": {
+        "en": "pinned: only {name}, to {version}; its dependencies are not pinned, so they may differ from those checked when the server starts",
+        "zh-TW": "已鎖定：只有 {name}，鎖定在 {version}；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同",
+        "zh-CN": "已锁定：只有 {name}，锁定在 {version}；它的依赖没有锁定，server 启动时可能与检查过的不同",
+    },
+    "mcp_pinned_range": {
+        "en": "pinned: only {name}, to {version}, the highest version matching {range}; its dependencies are not pinned, so they may differ from those checked when the server starts",
+        "zh-TW": "已鎖定：只有 {name}，鎖定在符合 {range} 的最高版本 {version}；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同",
+        "zh-CN": "已锁定：只有 {name}，锁定在符合 {range} 的最高版本 {version}；它的依赖没有锁定，server 启动时可能与检查过的不同",
+    },
+    "mcp_not_pinned": {
+        "en": "not pinned: kirby could not tell which version of {name} the command installs ({why}); it installs as given",
+        "zh-TW": "未鎖定：kirby 無法確定指令會安裝 {name} 的哪個版本（{why}）；會照原樣安裝",
+        "zh-CN": "未锁定：kirby 无法确定命令会安装 {name} 的哪个版本（{why}）；会按原样安装",
+    },
+    "scope_cache": {
+        "en": "prompt cache: this plugin brings an MCP server; if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.",
+        "zh-TW": "prompt cache：這個外掛帶有 MCP server；如果這個工作階段關閉了 tool search，用 /reload-plugins 載入它會重建一次 cache。",
+        "zh-CN": "prompt cache：这个插件带有 MCP server；如果这个会话关闭了 tool search，用 /reload-plugins 加载它会重建一次 cache。",
+    },
+    "scope_cache_off": {
+        "en": "prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.",
+        "zh-TW": "prompt cache：這個外掛帶有 MCP server；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。",
+        "zh-CN": "prompt cache：这个插件带有 MCP server；已设置 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 加载它会重建一次 cache。",
+    },
+    "scope_cache_maybe": {
+        "en": "prompt cache: this plugin may bring an MCP server (its source was not checked); if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.",
+        "zh-TW": "prompt cache：這個外掛可能帶有 MCP server（它的來源沒有檢查）；如果這個工作階段關閉了 tool search，用 /reload-plugins 載入它會重建一次 cache。",
+        "zh-CN": "prompt cache：这个插件可能带有 MCP server（它的来源没有检查）；如果这个会话关闭了 tool search，用 /reload-plugins 加载它会重建一次 cache。",
+    },
+    "scope_cache_maybe_off": {
+        "en": "prompt cache: this plugin may bring an MCP server (its source was not checked); ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.",
+        "zh-TW": "prompt cache：這個外掛可能帶有 MCP server（它的來源沒有檢查）；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。",
+        "zh-CN": "prompt cache：这个插件可能带有 MCP server（它的来源没有检查）；已设置 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 加载它会重建一次 cache。",
+    },
+    "scope_install_at_user": {
+        "en": "install at user (~/.codex/config.toml, every project)",
+        "zh-TW": "安裝在 user（~/.codex/config.toml，所有專案）",
+        "zh-CN": "安装在 user（~/.codex/config.toml，所有项目）",
+    },
+    "scope_install_at_user_skill": {
+        "en": "install at user (~/.agents/skills/)",
+        "zh-TW": "安裝在 user（~/.agents/skills/）",
+        "zh-CN": "安装在 user（~/.agents/skills/）",
+    },
 }
 
 

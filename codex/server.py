@@ -5,9 +5,10 @@ Codex starts it from the plugin root, outside the sandbox, so the searches reach
 an approval prompt each time. `install` asks the user through MCP elicitation, first the next
 step and then the scope, and installs only after both. Where `user` is the only scope (plugins and
 MCP servers), the first dialog says where it installs and the scope dialog's install option says it
-again in the server's words. The dialogs show the facts the server found, worded by kirby in the
-language the model picked (skills/inhale/scripts/words.py, docs/adr/0006), and the model's wording in
-the user's language (see dialog.py); what the tools answer is for the model, in English.
+again in the server's words. The dialogs show the facts the server found (that option among them),
+worded by kirby in the language the model picked (skills/inhale/scripts/words.py, docs/adr/0006), and
+the model's wording in the user's language (see dialog.py); what the tools answer is for the model,
+in English.
 
 `check` runs install's pre-install check without a dialog, so that when it found a danger or warn
 finding a subagent can review the files it covered through `file` (docs/adr/0002); install then takes
@@ -151,8 +152,9 @@ TOOLS = [
 # says it again in the server's own words: a mislabelled first dialog cannot install without the user seeing it.
 USER_ONLY = fact("installs_at_user")
 SKILL_USER_ONLY = fact("installs_at_user_skill")
-USER_OPTION = "install at user (~/.codex/config.toml, every project)"
-SKILL_USER_OPTION = "install at user (~/.agents/skills/)"
+# Worded in the dialog's language; the answer maps back to user only by the exact label shown.
+USER_OPTION = fact("scope_install_at_user")
+SKILL_USER_OPTION = fact("scope_install_at_user_skill")
 
 # install_skill.py prints its own next: line.
 AFTER = {
@@ -348,12 +350,8 @@ def marketplace_head(added):
 
 # When kirby cannot tell which commit Codex installs from, the check goes ahead on the repo as it stands, and the
 # install keeps the plugin only if it can read that commit afterwards (docs/adr/0005); hooks/plugin.ts says the same.
-AS_IT_STANDS = ("the check is of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs "
-                "from that commit")
-
-
 def not_listed(why):
-    return f"unchecked: whether this marketplace is already added ({why}); {AS_IT_STANDS}"
+    return fact("marketplace_not_listed", why=str(why))
 
 
 def preview(kind, a, project):
@@ -397,17 +395,18 @@ def preview(kind, a, project):
             try:
                 head = marketplace_head(added)
             except Refusal as e:
-                about.append(f"unchecked: which commit the marketplace {added['name']}, already added, is at ({e}); {AS_IT_STANDS}")
+                about.append(fact("marketplace_head_unread", name=added["name"], why=str(e)))
         ok, out = script("check_plugin.py", "--agent", "codex", *(["--commit", head] if head else []), "--", repo, name)
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
         if head:
-            about.append(f"marketplace: already added as {added['name']}, at commit {c['commit']}; installs from it as it is")
-        scan = [c["note"], *about]
+            about.append(fact("marketplace_added", name=added["name"], commit=c["commit"]))
+        # The model reads the marketplace lines in English.
+        scan = [c["note"], *(say(f, "en") for f in about)]
         if c["marketplace_file"].startswith(".claude-plugin/"):
-            about.append(f"marketplace: {c['marketplace_file']} (Claude Code format)")
-        return {"lines": [c["lines"][0], *about, *c["lines"][1:]], "where": [USER_ONLY], "scopes": ("user",),
+            about.append(fact("marketplace_claude_format", file=c["marketplace_file"]))
+        return {"lines": [c["facts"][0], *about, *c["facts"][1:]], "where": [USER_ONLY], "scopes": ("user",),
                 "scan": "\n".join(scan), "commit": c["sha"], "blocked": c["blocked"] is True, "review": c["review"],
                 "marketplace": added["name"] if added else c["marketplace"], "added": added}
     args = a.get("mcp_args")
@@ -419,7 +418,7 @@ def preview(kind, a, project):
     if not ok:
         raise Refusal(out)
     c = json.loads(out)
-    return {"lines": [f"MCP server: codex mcp add {' '.join(c['mcp_args'])}", *c["lines"]], "where": [USER_ONLY],
+    return {"lines": [fact("mcp_server", command=f"codex mcp add {' '.join(c['mcp_args'])}"), *c["facts"]], "where": [USER_ONLY],
             "scopes": ("user",), "scan": c["note"], "mcp_args": c["mcp_args"], "blocked": c["blocked"] is True,
             "review": c["review"]}
 
@@ -514,7 +513,7 @@ def install(peer, a, meta):
 
     # The scope dialog's options are the server's own, whatever the model wrote above.
     if plan["scopes"] == ("user",):
-        labels = {"user": SKILL_USER_OPTION if kind == "skill" else USER_OPTION}
+        labels = {"user": say(SKILL_USER_OPTION if kind == "skill" else USER_OPTION, d["lang"])}
     else:
         labels = {s: s for s in plan["scopes"]}
     answer = peer.ask(d["scope"], [CANCEL, *labels.values()])

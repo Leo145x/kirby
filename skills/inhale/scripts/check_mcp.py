@@ -20,8 +20,9 @@ the command to that version (`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`). Only that pa
 dependencies are resolved at check time and may differ when the server starts (#13).
 
 A container image, a remote server (a URL), or a command that runs none of the packages the repo names is
-reported as unchecked, and the command stays as it is. Prints JSON: the dialog's facts (`lines`), the same
-for the model (`note`), `blocked`, the command to install (`mcp_args`), the `package` checked, and `review`:
+reported as unchecked, and the command stays as it is. Prints JSON: the dialog's facts (`facts`, each a line
+or a key and its values for words.py, which each side words in the dialog's language), the same in English
+(`lines`) and for the model (`note`), `blocked`, the command to install (`mcp_args`), the `package` checked, and `review`:
 whether the model review runs and which files of the package it reads, with the archive's sha256 (docs/adr/0002).
 
 --read prints one file of such a package for the review (the file tool): the same archive, downloaded again,
@@ -51,6 +52,7 @@ import lookups  # noqa: E402
 from install_skill import (NO_REVIEW, UNCHECKED, VALID_REPO, VALID_SHA, check_lines, inside, listing, review, scan,  # noqa: E402
                            scan_note)
 from lookups import NPM_NAME, Failed, first_line, package_key, py_name, shown  # noqa: E402
+from words import fact, say  # noqa: E402
 
 try:
     import tomllib
@@ -577,7 +579,8 @@ def check(repo, args, net=None):
     out = {"repo": repo, "mcp_args": list(args), "package": None, "blocked": False}
 
     def unchecked(why, pin=True):
-        out.update(lines=[f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")],
+        line = f"{UNCHECKED} ({why})" + ("; not pinned" if pin else "")
+        out.update(facts=[line], lines=[line],
                    note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on this MCP "
                         f"server{', and that its command is not pinned' if pin else ''}: {why}",
                    review=dict(NO_REVIEW))
@@ -614,15 +617,16 @@ def check(repo, args, net=None):
     version = rel["version"] if rel else None
     out["package"] = {"ecosystem": eco, "name": name, "version": version, "declared_in": pkg["file"]}
     what = f"{shown(name, 80)}@{shown(version, 40)}" if version else shown(name, 80)
-    lines = [f"package: {what} ({eco}), named by this repo's {shown(pkg['file'])}; not verified to come from this repo"]
+    # The dialog's facts, each a line or a fact for words.say; lines is the same in English.
+    facts = [fact("mcp_package", package=what, ecosystem=eco, file=shown(pkg["file"]))]
     if rel:
         out["mcp_args"][index] = prefix + pinned(eco, word, version)
-        ranged = f", the highest version matching {shown(spec, 80)}" if how == "range" else ""
-        lines.append(f"pinned: only {shown(name, 80)}, to {shown(version, 40)}{ranged}; its dependencies are not pinned, "
-                     "so they may differ from those checked when the server starts")
+        if how == "range":
+            facts.append(fact("mcp_pinned_range", name=shown(name, 80), version=shown(version, 40), range=shown(spec, 80)))
+        else:
+            facts.append(fact("mcp_pinned", name=shown(name, 80), version=shown(version, 40)))
     else:
-        lines.append(f"not pinned: kirby could not tell which version of {shown(name, 80)} the command installs ({why}); "
-                     "it installs as given")
+        facts.append(fact("mcp_not_pinned", name=shown(name, 80), why=why))
 
     looked = lookups.check_package(repo, eco, name, version, rel["direct"] if rel else [], net, why,
                                    elsewhere=bool(rel and rel["elsewhere"]))
@@ -640,18 +644,18 @@ def check(repo, args, net=None):
                 why = str(e)
     if scanned:
         hits, unread, files, digest = scanned
-        lines += check_lines(hits, unread, len(files) - len(unread), looked, covered=f"those in {shown(rel['file'], 80)}")
+        facts += check_lines(hits, unread, len(files) - len(unread), looked, covered=f"those in {shown(rel['file'], 80)}")
         scan_text = scan_note(repo, ".", None, hits, place=place)
         # The review reads the same archive, which the file tool finds by the package and checks by its sha256.
         out["review"] = review({"package": {"ecosystem": eco, "name": name, "version": version}, "sha": digest},
                                files, hits, looked)
     else:
-        lines += [f"unchecked: pattern scan ({why})", *looked["lines"]]
+        facts += [f"unchecked: pattern scan ({why})", *looked["lines"]]
         scan_text = f"pattern scan: the dialog showed the user that the pattern scan did not run on {place}: {why}"
         out["review"] = {"needed": looked["found"] and not looked["blocked"], "files": []}
     pin = ("kirby pinned the command to that version; its dependencies are not pinned." if rel else
            f"kirby could not pin it ({why}), so the command installs as given.")
-    out.update(lines=lines, blocked=looked["blocked"], note="\n".join([
+    out.update(facts=facts, lines=[say(f, "en") for f in facts], blocked=looked["blocked"], note="\n".join([
         scan_text, looked["note"],
         f"package: the command runs {what} ({eco}), which this repo's {shown(pkg['file'])} names at commit {sha}; "
         f"nobody verified that the repo publishes it. {pin}"]))

@@ -21,7 +21,7 @@ Helpers in this folder:
 | --- | --- |
 | `transcript.py` | Prints a session's user prompts, model text and tool calls with their results as JSON lines, from Claude Code's or Codex's own transcript. `--tool install --last 1`, `--say --last 1` narrow it. |
 | `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules and the 3 combinations (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it; `rewind DIR` force-pushes it back one commit and prunes the old HEAD, so that commit can no longer be fetched; `malware DIR` adds a commit whose `package-lock.json` lists `flatmap-stream@0.1.1` (known-malicious, `MAL-2025-20690`) and `lodash@4.17.20` (high advisories). |
-| `codex_server.py` | Drives the Codex MCP server's `install()`, `check()` and `file()` with scripted dialog answers and review results and checks each result exactly (H1–H15), for what the Codex UI cannot reach. |
+| `codex_server.py` | Drives the Codex MCP server's `install()`, `check()` and `file()` with scripted dialog answers and review results and checks each result exactly (H1–H16), for what the Codex UI cannot reach. |
 | `scripts_check.py` | Checks the output format of `stars.py`, `public.py` and `detect.py` against live GitHub (S1–S6). |
 
 ## Adding an agent CLI
@@ -135,6 +135,18 @@ and lookups line by line, note it); `PLUGIN_NOTE` is a `pattern scan:` block and
 and `true` for `context7`; `blocked` is `false` for both. The marketplace moves often, so record the
 values again if a case runs much later.
 
+Each run also gives `facts`, the dialog's lines before kirby words them (`lines` is their English). Dialog 1 shows them in
+the language `dialog.lang` picks; `ZH(<run>)` below is how it shows them with `zh-TW`, one per line, from piping a run into
+
+```
+python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); from words import say; print("\n".join(say(f, "zh-TW") for f in json.load(sys.stdin)["facts"]))' $KIRBY/skills/inhale/scripts
+```
+
+Record `PLUGIN_ZH`, `PLUGIN_MCP_ZH` and `CODEX_PLUGIN_ZH` this way. `PLUGIN_ZH` starts
+`外掛：agent-sdk-dev · marketplace claude-plugins-official · commit <PLUGIN_SHA7> · <n> 個檔案`, `說明：<PLUGIN_DESC>`,
+`來源：這個 repo 的 plugins/agent-sdk-dev/`, then the same check lines as `PLUGIN_LINES`, as they are (kirby does not word
+the pre-install check's own lines yet).
+
 For the MCP server, also run:
 
 ```
@@ -152,7 +164,10 @@ writing (2.1.0) the scan flagged `send-secrets` and `download-decode`, and the l
 is a `pattern scan:` block for `the npm package @modelcontextprotocol/server-everything@<MCP_VERSION> (server-everything-<MCP_VERSION>.tgz)`,
 a `lookups:` block, and a last line starting `package: the command runs @modelcontextprotocol/server-everything@<MCP_VERSION> (npm)`.
 `blocked` is `false`. `review.needed` is `true` (the warn combinations); record `MCP_REVIEW_SHA` (`review.sha`, 64 hex, the sha256
-of the archive checked). A new release changes all of these; record them again if a case runs much later. The two plugins'
+of the archive checked). Record `MCP_ZH` (`ZH(<this run>)`, above): it starts
+`套件：@modelcontextprotocol/server-everything@<MCP_VERSION>（npm），由這個 repo 的 src/everything/package.json 指名；沒有驗證它來自這個 repo`
+and `已鎖定：只有 @modelcontextprotocol/server-everything，鎖定在 <MCP_VERSION>；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同`,
+then the same check lines as `MCP_LINES`, as they are. A new release changes all of these; record them again if a case runs much later. The two plugins'
 `review.needed` are `false` while their check lines are one `check: nothing found (…)` line.
 
 `HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`, as `stars.py`, `detect.py` and an English
@@ -302,7 +317,11 @@ and repeated in the result's `review:` block; a review of another commit, one th
 with Install offered; a reason over 120 characters refused before any dialog; H15 `dialog.lang`: with `zh-TW` the repo line
 (`… 更新`), the skill line, the scripts line and the `exists:` line in 繁體中文 and the check's lines as they are, with `zh-CN` (no
 project) the skill line and the `installs at:` line in 简体中文, with `en` or `ja` English, the `check` tool's `findings` in English,
-the result in English, and an `about` over 120 characters falling back to English (facts too) with the `note:` saying why.
+the result in English, and an `about` over 120 characters falling back to English (facts too) with the `note:` saying why;
+H16 `dialog.lang` `zh-TW` for a plugin and an MCP server: the plugin line, the marketplace lines (`已加入`, `Claude Code 格式`),
+the description and source lines, the `MCP server：` command line and the package and pinned lines in 繁體中文, with commands, names,
+versions and paths as they are, and the scope dialog's install option `安裝在 user（~/.codex/config.toml，所有專案）`, which installs
+at user, while the result's marketplace line stays English.
 It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run,
 and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
@@ -589,8 +608,9 @@ Claude Code 2.1.312's `plugin install` can replace the git clone with a snapshot
 
 **B17 Plugin without an MCP server, marketplace not added yet.** Reset `$E2E/claude/p`. Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
 - Transcript: an `mcp__kirby__check` call with `kind` `plugin` whose result has `"review": "not needed"`; no `Agent` call.
-- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, then `PLUGIN_LINES`, one per line. No
-  `marketplace: already added` line. Dialog 2: no `prompt cache:` line.
+- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, then `PLUGIN_ZH`, one per line. No
+  `marketplace：已加入` line. Dialog 2: no `prompt cache` line.
+- Transcript: the `mcp__kirby__check` result's `findings` are `PLUGIN_LINES`, in English.
 - Answer Install, `local`. Result, in order:
   - `installed (scope local): claude plugin marketplace add anthropics/claude-plugins-official`
   - `claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
@@ -603,17 +623,18 @@ Claude Code 2.1.312's `plugin install` can replace the git clone with a snapshot
   `claude plugin list` no longer shows it. Keep the marketplace for B24.
 
 **B18 Plugin with an MCP server.** Prompt as B17 with `context7`. Answer Install.
-- Dialog 1 facts: the header, the `marketplace: already added` line of B24 if the marketplace is still added (B25's cleanup removes it), then `PLUGIN_MCP_LINES`.
-- Dialog 2 ends with a blank line and `prompt cache: this plugin brings an MCP server; if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.`
-  (If the pane's environment has `ENABLE_TOOL_SEARCH=false`: `prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.`)
+- Dialog 1 facts: the header, the first line of `PLUGIN_MCP_ZH`, the `marketplace：已加入` line of B24 if the marketplace is still added (B25's cleanup removes it), then the rest of `PLUGIN_MCP_ZH`.
+- Dialog 2 ends with a blank line and `prompt cache：這個外掛帶有 MCP server；如果這個工作階段關閉了 tool search，用 /reload-plugins 載入它會重建一次 cache。`
+  (If the pane's environment has `ENABLE_TOOL_SEARCH=false`: `prompt cache：這個外掛帶有 MCP server；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。`)
 - Answer `cancel`: `not installed: the user cancelled at the scope step.` + `PLUGIN_MCP_NOTE`.
 
 **B24 The marketplace is already added.** Right after B17 (the marketplace is still there, at `PLUGIN_SHA`). Prompt as B17.
-- Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
-  `marketplace: already added as claude-plugins-official, at commit <PLUGIN_SHA7>; installs from it as it is`,
-  then the rest of `PLUGIN_LINES`.
+- Dialog 1 facts: the header, the first line of `PLUGIN_ZH`, then
+  `marketplace：已加入，名稱 claude-plugins-official，在 commit <PLUGIN_SHA7>；直接從它安裝`,
+  then the rest of `PLUGIN_ZH`.
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`
-  (no `marketplace add`), then the output, the `next:` line, `PLUGIN_NOTE` and the `marketplace: already added` line again.
+  (no `marketplace add`), then the output, the `next:` line, `PLUGIN_NOTE` and, in English,
+  `marketplace: already added as claude-plugins-official, at commit <PLUGIN_SHA7>; installs from it as it is`.
   `HEAD(<LOC>)` is still `PLUGIN_SHA` (`<LOC>` may now be a snapshot; see above).
 - Cleanup at once: uninstall it as in B17.
 - **The clone moves during the dialog.** Prompt as B17 again; answer Install. While dialog 2 is open, move it: in a git
@@ -633,14 +654,16 @@ Claude Code 2.1.312's `plugin install` can replace the git clone with a snapshot
 `git -C <LOC> fetch -q --depth 1 origin <OLD>`, `git -C <LOC> reset -q --hard <OLD>`,
 `git -C <LOC> update-ref refs/remotes/origin/main <OLD>`; in a snapshot, write `<OLD>` into `<LOC>/.gcs-sha` with a file tool.
 Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved).
-- Dialog 1 facts: the header, the first line of `PLUGIN_LINES`, then
-  `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`,
-  then the rest of `PLUGIN_LINES` (the check is of `PLUGIN_SHA`, not `OLD`). kirby says `behind its repo` only when it read
+- Dialog 1 facts: the header, the first line of `PLUGIN_ZH`, then
+  `marketplace：已加入，名稱 claude-plugins-official，在 commit <OLD7>，落後於它的 repo；安裝時會更新到檢查過的 commit <PLUGIN_SHA7>`,
+  then the rest of `PLUGIN_ZH` (the check is of `PLUGIN_SHA`, not `OLD`). kirby says `落後於它的 repo` (behind its repo) only when it read
   the clone's commit: if it cannot, the line is instead
-  `marketplace: already added as claude-plugins-official, at a commit kirby could not read; installing refreshes it to <PLUGIN_SHA7>, the commit checked`
+  `marketplace：已加入，名稱 claude-plugins-official，kirby 讀不到它在哪個 commit；安裝時會更新到檢查過的 commit <PLUGIN_SHA7>`
   (covered by `tests/plugin.test.ts`; this case does not need to break the clone to see it).
 - Answer Install, `local`. Result first line exactly `installed (scope local): claude plugin install agent-sdk-dev@claude-plugins-official --scope local`,
-  then the output, the `next:` line, `PLUGIN_NOTE` and the `behind its repo` line again. `HEAD(<LOC>)` is now `PLUGIN_SHA`.
+  then the output, the `next:` line, `PLUGIN_NOTE` and, in English,
+  `marketplace: already added as claude-plugins-official, at commit <OLD7>, behind its repo; installing refreshes it to <PLUGIN_SHA7>, the commit checked`.
+  `HEAD(<LOC>)` is now `PLUGIN_SHA`.
 - Cleanup: uninstall it as in B17, then `claude plugin marketplace remove claude-plugins-official`; `claude plugin marketplace list --json` no longer lists it.
 
 **B19 MCP server.** Prompt `用 kirby 安裝 modelcontextprotocol/servers 的 Everything MCP server，名稱用 kirby-e2e`.
@@ -650,7 +673,7 @@ Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved
   an `Agent` call as in B26 (the prompt carries that `read` and the package's `files`, none of `MCP_LINES`); the subagent's
   `mcp__kirby__file` calls each pass that `package` and `ref` with a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`.
-- Dialog 1 facts: `HEADER_ZH(modelcontextprotocol/servers)`, `MCP server: claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_LINES`, then the `REVIEW_LINE`s. The model's `about`, within its 120 characters, says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
+- Dialog 1 facts: `HEADER_ZH(modelcontextprotocol/servers)`, `MCP server：claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_ZH`, then the `REVIEW_LINE`s. The model's `about`, within its 120 characters, says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
 - Answer Install, `local`. Result first line exactly
   `installed (scope local): claude mcp add --scope local <MCP_PINNED>`,
   then the command's output, `next: The server connects in the next session; tell the user to restart Claude Code to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
@@ -706,7 +729,7 @@ Constants only Codex uses:
 | Name | Value |
 | --- | --- |
 | `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)`; with `dialog.lang` `zh-TW` (the prompts below) `安裝位置：user（~/.codex/config.toml，所有專案）` |
-| `USER_OPTION` | `install at user (~/.codex/config.toml, every project)` |
+| `USER_OPTION` | `install at user (~/.codex/config.toml, every project)`; with `dialog.lang` `zh-TW` (the prompts below) `安裝在 user（~/.codex/config.toml，所有專案）` |
 
 ### Driving
 
@@ -735,7 +758,7 @@ Differences from Claude Code to expect: searches and reads are MCP calls (`mcp__
 `…public`, `…detect`, `…readme`, `…file`), not shell; skills go to `.agents/skills/`; plugins and MCP
 servers install at `user` only, so their dialog 1 ends its facts with `USER_ONLY` and dialog 2's options
 are `cancel`, `USER_OPTION`; dialog 1 for a plugin from a Claude Code marketplace adds
-`marketplace: .claude-plugin/marketplace.json (Claude Code format)`; the install command is run with
+`marketplace：.claude-plugin/marketplace.json（Claude Code 格式）`; the install command is run with
 the server's own Python (`<PY>`, e.g. `/usr/bin/python3`) from the plugin cache (`<CACHE>` =
 `$E2E/home/codex/plugins/cache/kirby/kirby/0.1.0`); and free text is not an
 answer Codex's dialogs offer, so there is no `answered "…"` result.
@@ -777,9 +800,10 @@ Each followed by `SCAN_NOTE`; nothing written.
 **C8 Plugin (opt-in).** Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
 - The server asks the real `codex plugin marketplace list` (Setup, Writes outside `$E2E`). If the real
   setup already has `PLUGIN_MK` from `PLUGIN_REPO`, the dialog adds
-  `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is`
-  and the check is at that commit: note it, and expect no `marketplace add` below, and that line again at the end of the result.
-- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_LINES`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, the rest of `CODEX_PLUGIN_LINES`, `USER_ONLY`. The model's `about`, within its 120 characters, says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
+  `marketplace：已加入，名稱 claude-plugins-official，在 commit <its HEAD7>；直接從它安裝`
+  and the check is at that commit: note it, and expect no `marketplace add` below, and at the end of the result that line in English,
+  `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is`.
+- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_ZH`, `marketplace：.claude-plugin/marketplace.json（Claude Code 格式）`, the rest of `CODEX_PLUGIN_ZH`, `USER_ONLY`. The model's `about`, within its 120 characters, says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `CODEX_PLUGIN_NOTE`; `~/.codex/config.toml` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result starts
   `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `CODEX_PLUGIN_NOTE`.
@@ -796,7 +820,7 @@ Each followed by `SCAN_NOTE`; nothing written.
   `$E2E/home/codex/sessions/` and read it with `transcript.py codex <P> --file <it>`; note where they were) are `mcp__kirby__file` only, each with that `package` and `ref` and a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`. If Codex starts no subagent, the install call must carry `{"could_not_run": "…"}` (dialog 1 then shows
   `model review: unchecked (…)`) or no `review` (`UNREVIEWED`); note which, and whether Codex said why.
-- Dialog 1 facts: header, `MCP server: codex mcp add <MCP_PINNED>`, then `MCP_LINES`, then the `REVIEW_LINE`s, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
+- Dialog 1 facts: header, `MCP server：codex mcp add <MCP_PINNED>`, then `MCP_ZH`, then the `REVIEW_LINE`s, then `USER_ONLY`. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `MCP_NOTE` + `REVIEW_BLOCK`; the real `codex mcp list` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add <MCP_PINNED>`, then output, `next: The user starts a new Codex session to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
   `codex mcp get kirby-e2e` without `iso.sh` shows it, with the pinned package. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.

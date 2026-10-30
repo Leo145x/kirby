@@ -134,23 +134,18 @@ async function repoHeader($: $, repo: string): Promise<Fact> {
   return fact(archived ? 'repo_archived' : 'repo', { repo, stars, pushed: (pushed ?? '?').slice(0, 10) })
 }
 
-function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
-  return (
-    (sure ? 'prompt cache: this plugin brings an MCP server; ' : 'prompt cache: this plugin may bring an MCP server (its source was not checked); ') +
-    (toolSearchOff
-      ? 'ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once.'
-      : 'if tool search is off in this session, loading it with /reload-plugins rebuilds the cache once.')
-  )
+function pluginCacheNote(sure: boolean, toolSearchOff: boolean): Fact {
+  return fact(sure ? (toolSearchOff ? 'scope_cache_off' : 'scope_cache') : (toolSearchOff ? 'scope_cache_maybe_off' : 'scope_cache_maybe'))
 }
 
-// The facts about what the install would do (each a line or a fact for words.say), the prompt-cache note for the scope dialog, the
-// pre-install check as the model reads it in every result (so it can explain a finding), and whether
+// The facts about what the install would do (each a line or a fact for words.say), the prompt-cache note for the scope
+// dialog (a fact too, or null), the pre-install check as the model reads it in every result (so it can explain a finding), and whether
 // the malware lookup blocked it; for a skill or a plugin the commit shown, which is the one installed;
 // for a plugin also its marketplace's name and, if the user already added it, where it is; for an MCP
 // server the command to run, with the package checked pinned to the version checked; and what the model
 // review reads and whether it is needed, the check's own.
 type Plan = {
-  facts: Fact[]; cache: string; scan: string; review: ReviewOf; commit?: string; blocked?: boolean; marketplace?: string
+  facts: Fact[]; cache: Fact | null; scan: string; review: ReviewOf; commit?: string; blocked?: boolean; marketplace?: string
   added?: Added | null; mcpArgs?: string[]
 }
 
@@ -170,7 +165,7 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     if (c.scripts.length) facts.push(fact('scripts', { count: c.scripts.length, names: c.scripts.slice(0, 2) }))
     if (c.exists) facts.push(fact(input.force === true ? 'exists_replaces' : 'exists_fails', { path: `.claude/skills/${c.name}/` }))
     facts.push(...c.lines)
-    return { facts, cache: '', scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true }
+    return { facts, cache: null, scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true }
   }
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
@@ -178,7 +173,7 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const runner: Run = argv => run($, argv)
     // For a marketplace already added, the check is of what the install will bring: Claude Code's install
     // refreshes one that is behind its repo (plugin.ts).
-    let about: string[] = []
+    let about: Fact[] = []
     const added = await findAdded(runner, repo).catch((e: Error) => {
       about = [notListed(e.message)]
       return null
@@ -190,20 +185,22 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
       const latest = r.ok && SHA_RE.test(r.out.trim()) ? { sha: r.out.trim() } : { why: `gh api: ${r.out.split('\n')[0] || 'no answer'}` }
       const a = alreadyAdded(added, head, latest)
       commit = a.commit
-      about = [a.line]
+      about = [a.fact]
     }
     const r = await run($, ['python3', '-I', `${scripts}/check_plugin.py`, '--agent', 'claude', ...(commit ? ['--commit', commit] : []), '--', repo, name])
     if (!r.ok) throw new Refusal(r.out)
+    // facts: the dialog's lines, for words.say; lines is the same in English.
     const c = JSON.parse(r.out) as {
-      marketplace: string; commit: string; sha: string; lines: string[]; note: string; blocked: boolean; mcp_servers: boolean | null
+      marketplace: string; commit: string; sha: string; facts: Fact[]; note: string; blocked: boolean; mcp_servers: boolean | null
       review: ReviewOf
     }
     // Tool search is off in more cases than this variable (an old model, a gateway, a HIPAA session), so
     // the note is conditional unless the variable settles it.
     const toolSearchOff = (await $.env.get('ENABLE_TOOL_SEARCH')) === 'false'
-    const cache = c.mcp_servers === false ? '' : pluginCacheNote(c.mcp_servers === true, toolSearchOff)
+    const cache = c.mcp_servers === false ? null : pluginCacheNote(c.mcp_servers === true, toolSearchOff)
     return {
-      facts: [c.lines[0], ...about, ...c.lines.slice(1)], cache, scan: [c.note, ...about].join('\n'), review: c.review,
+      // The model reads the marketplace lines in English.
+      facts: [c.facts[0], ...about, ...c.facts.slice(1)], cache, scan: [c.note, ...about.map(f => say(f, 'en'))].join('\n'), review: c.review,
       commit: c.sha, blocked: c.blocked === true, marketplace: added?.name ?? c.marketplace, added,
     }
   }
@@ -215,9 +212,9 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   // The check gives back the command with the package it checked pinned to the version checked.
   const r = await run($, ['python3', '-I', `${scripts}/check_mcp.py`, '--', repo, JSON.stringify(args)])
   if (!r.ok) throw new Refusal(r.out)
-  const c = JSON.parse(r.out) as { mcp_args: string[]; lines: string[]; note: string; blocked: boolean; review: ReviewOf }
+  const c = JSON.parse(r.out) as { mcp_args: string[]; facts: Fact[]; note: string; blocked: boolean; review: ReviewOf }
   return {
-    facts: [`MCP server: claude mcp add --scope <scope> ${c.mcp_args.join(' ')}`, ...c.lines], cache: '', scan: c.note,
+    facts: [fact('mcp_server', { command: `claude mcp add --scope <scope> ${c.mcp_args.join(' ')}` }), ...c.facts], cache: null, scan: c.note,
     review: c.review, blocked: c.blocked === true, mcpArgs: c.mcp_args,
   }
 }
@@ -307,7 +304,7 @@ async function install($: $, input: Input): Promise<string> {
     return `not installed: the user ${next === null ? 'dismissed the dialog' : next === cancel ? 'cancelled' : `answered ${JSON.stringify(next)}`}.${tail}`
   }
 
-  const picked = await ask($, `${d.scope}${plan.cache ? `\n\n${plan.cache}` : ''}`, [CANCEL, ...SCOPES])
+  const picked = await ask($, `${d.scope}${plan.cache ? `\n\n${say(plan.cache, d.lang)}` : ''}`, [CANCEL, ...SCOPES])
   $.ui.log(`install ${repo} (${kind}): scope ${JSON.stringify(picked)}`, { to: 'debug' })
   const scope = SCOPES.find(s => s === picked)
   if (!scope) return `not installed: the user ${picked === null ? 'dismissed the scope dialog' : 'cancelled at the scope step'}.${tail}`

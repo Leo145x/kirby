@@ -13,6 +13,7 @@ check_plugin = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_plugin)
 
 from test_lookups import Net  # noqa: E402
+from words import say  # noqa: E402
 
 MK_SHA, SRC_SHA, OLD_SHA = "a" * 40, "b" * 40, "c" * 40
 MK = "https://github.com/o/mk.git"
@@ -123,6 +124,23 @@ class InTheMarketplace(unittest.TestCase):
                       "not checked: audit-logger, x, vault@shared", c["note"])
         self.assertNotIn("installed along with it", "\n".join(check({MK: {None: (MK_SHA, self.FILES)}})[0]["lines"]))
 
+    def test_the_facts_are_kirbys_wording_of_the_lines(self):
+        files = {**self.FILES, **marketplace({"name": "p", "description": "Does p things", "source": "./plugins/p",
+                                              "dependencies": ["audit-logger", "x"]})}
+        c, _ = check({MK: {None: (MK_SHA, files)}})
+        self.assertEqual([say(f, "en") for f in c["facts"]], c["lines"])
+        self.assertEqual([say(f, "zh-TW") for f in c["facts"][:5]], [
+            "外掛：p · marketplace mk · commit aaaaaaa · 2 個檔案",
+            "說明：Does p things",
+            "來源：這個 repo 的 plugins/p/",
+            "會一起安裝、未檢查：audit-logger、x",
+            "1 個腳本，例如 scripts/run.sh",
+        ])
+        self.assertEqual(say(c["facts"][0], "zh-CN"), "插件：p · marketplace mk · commit aaaaaaa · 2 个文件")
+        root = check({MK: {None: (MK_SHA, {**self.FILES, **marketplace({"name": "p", "source": "./"}),
+                                           ".claude-plugin/plugin.json": "{}"})}})[0]
+        self.assertEqual((root["lines"][1], say(root["facts"][1], "zh-CN")), ("source: the root of this repo", "来源：这个 repo 的根目录"))
+
     def test_refusals(self):
         for files, plugin, want in [
             (self.FILES, "nope", "o/mk has no marketplace plugin named nope"),
@@ -169,6 +187,24 @@ class InAnotherRepo(unittest.TestCase):
                                             "marketplace entry gives no sha, so what installs may differ from what was checked")
             self.assertTrue(c["note"].endswith("\nsource: not pinned; the marketplace entry gives no sha, so x/src may be at "
                                                "a later commit than the one checked when the plugin installs"), c["note"])
+
+    def test_the_source_lines_are_kirbys_wording_with_repos_commits_and_refs_as_they_are(self):
+        pinned = self.entry(source="git-subdir", url=self.SRC, path="tools/p", sha=SRC_SHA)
+        c, _ = check({MK: {None: (MK_SHA, pinned)}, self.SRC: {SRC_SHA: (SRC_SHA, self.FILES)}})
+        self.assertEqual([say(f, "en") for f in c["facts"]], c["lines"])
+        self.assertEqual(say(c["facts"][1], "zh-TW"), "來源：x/src:tools/p，commit bbbbbbb，由 marketplace 項目鎖定")
+        for source, ref, line in [
+            ({"source": "github", "repo": "x/src"}, None,
+             "来源：x/src，commit bbbbbbb（默认分支）；未锁定：marketplace 条目没有给出 sha，安装的内容可能与检查过的不同"),
+            ({"source": "url", "url": self.SRC, "ref": "main"}, "main",
+             "来源：x/src，commit bbbbbbb（main）；未锁定：marketplace 条目没有给出 sha，安装的内容可能与检查过的不同"),
+        ]:
+            c, _ = check({MK: {None: (MK_SHA, self.entry(**source))}, self.SRC: {ref: (SRC_SHA, self.FILES)}})
+            self.assertEqual(say(c["facts"][1], "zh-CN"), line)
+        c, _ = check({MK: {None: (MK_SHA, self.entry(source="github", repo="x/src", sha=SRC_SHA))}})
+        self.assertEqual([say(f, "en") for f in c["facts"]], c["lines"])
+        self.assertEqual([say(f, "zh-TW") for f in c["facts"][:2]],
+                         ["外掛：p · marketplace mk · commit aaaaaaa", "來源：x/src，kirby 無法取得"])
 
     def test_a_source_repo_that_cannot_be_fetched_is_unchecked_not_a_refusal(self):
         c, git = check({MK: {None: (MK_SHA, self.entry(source="github", repo="x/src", sha=SRC_SHA))}})

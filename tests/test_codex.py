@@ -15,6 +15,8 @@ from words import WORDS, fact, read_lang, say  # noqa: E402  (server puts the sc
 # Where user is the only scope, as the dialog says it with no lang.
 USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
 SKILL_USER_ONLY = "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"
+# The scope dialog's install option there, as it reads with no lang.
+USER_OPTION = "install at user (~/.codex/config.toml, every project)"
 
 GOOD = {
     "about": "把 archify 裝成 skill。",
@@ -85,6 +87,16 @@ class Words(unittest.TestCase):
         (fact("exists_replaces", path=".agents/skills/s/"), "已存在：.agents/skills/s/（安裝在 local 或 project 會取代它）"),
         (fact("installs_at_user"), "安裝位置：user（~/.codex/config.toml，所有專案）"),
         (fact("installs_at_user_skill"), "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）"),
+        (fact("plugin", name="p", marketplace="mk", commit="aaaaaaa"), "外掛：p · marketplace mk · commit aaaaaaa"),
+        (fact("plugin_dependencies", plugins=["audit-logger", "vault@shared"]), "會一起安裝、未檢查：audit-logger、vault@shared"),
+        (fact("plugin_source_unpinned_default", source="x/src", commit="bbbbbbb"),
+         "來源：x/src，commit bbbbbbb（預設分支）；未鎖定：marketplace 項目沒有給 sha，安裝的內容可能和檢查過的不同"),
+        (fact("marketplace_claude_format", file=".claude-plugin/marketplace.json"), "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）"),
+        (fact("mcp_server", command="codex mcp add probe -- npx -y probe@1.0.0"), "MCP server：codex mcp add probe -- npx -y probe@1.0.0"),
+        (fact("mcp_not_pinned", name="srv", why="no version of srv matches ^9"),
+         "未鎖定：kirby 無法確定指令會安裝 srv 的哪個版本（no version of srv matches ^9）；會照原樣安裝"),
+        (fact("scope_cache_off"), "prompt cache：這個外掛帶有 MCP server；已設定 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 載入它會重建一次 cache。"),
+        (fact("scope_install_at_user_skill"), "安裝在 user（~/.agents/skills/）"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
     ]
     ZH_CN = [
@@ -96,6 +108,16 @@ class Words(unittest.TestCase):
         (fact("exists_replaces", path=".agents/skills/s/"), "已存在：.agents/skills/s/（安装在 local 或 project 会替换它）"),
         (fact("installs_at_user"), "安装位置：user（~/.codex/config.toml，所有项目）"),
         (fact("installs_at_user_skill"), "安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）"),
+        (fact("plugin", name="p", marketplace="mk", commit="aaaaaaa"), "插件：p · marketplace mk · commit aaaaaaa"),
+        (fact("plugin_dependencies", plugins=["audit-logger", "vault@shared"]), "会一起安装、未检查：audit-logger、vault@shared"),
+        (fact("plugin_source_unpinned_default", source="x/src", commit="bbbbbbb"),
+         "来源：x/src，commit bbbbbbb（默认分支）；未锁定：marketplace 条目没有给出 sha，安装的内容可能与检查过的不同"),
+        (fact("marketplace_claude_format", file=".claude-plugin/marketplace.json"), "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）"),
+        (fact("mcp_server", command="codex mcp add probe -- npx -y probe@1.0.0"), "MCP server：codex mcp add probe -- npx -y probe@1.0.0"),
+        (fact("mcp_not_pinned", name="srv", why="no version of srv matches ^9"),
+         "未锁定：kirby 无法确定命令会安装 srv 的哪个版本（no version of srv matches ^9）；会按原样安装"),
+        (fact("scope_cache_off"), "prompt cache：这个插件带有 MCP server；已设置 ENABLE_TOOL_SEARCH=false，所以用 /reload-plugins 加载它会重建一次 cache。"),
+        (fact("scope_install_at_user_skill"), "安装在 user（~/.agents/skills/）"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
     ]
     EN = [
@@ -107,6 +129,18 @@ class Words(unittest.TestCase):
         (fact("exists_replaces", path=".agents/skills/s/"), "exists: .agents/skills/s/ (installing at local or project replaces it)"),
         (fact("installs_at_user"), "installs at: user (~/.codex/config.toml, every project)"),
         (fact("installs_at_user_skill"), "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"),
+        (fact("plugin", name="p", marketplace="mk", commit="aaaaaaa"), "plugin: p · marketplace mk · commit aaaaaaa"),
+        (fact("plugin_dependencies", plugins=["audit-logger", "vault@shared"]), "installed along with it, not checked: audit-logger, vault@shared"),
+        (fact("plugin_source_unpinned_default", source="x/src", commit="bbbbbbb"),
+         "source: x/src at commit bbbbbbb (default branch); not pinned: the marketplace entry gives no sha, so what installs may "
+         "differ from what was checked"),
+        (fact("marketplace_claude_format", file=".claude-plugin/marketplace.json"), "marketplace: .claude-plugin/marketplace.json (Claude Code format)"),
+        (fact("mcp_server", command="codex mcp add probe -- npx -y probe@1.0.0"), "MCP server: codex mcp add probe -- npx -y probe@1.0.0"),
+        (fact("mcp_not_pinned", name="srv", why="no version of srv matches ^9"),
+         "not pinned: kirby could not tell which version of srv the command installs (no version of srv matches ^9); it installs as given"),
+        (fact("scope_cache_off"),
+         "prompt cache: this plugin brings an MCP server; ENABLE_TOOL_SEARCH=false is set, so loading it with /reload-plugins rebuilds the cache once."),
+        (fact("scope_install_at_user_skill"), "install at user (~/.agents/skills/)"),
         ("check: nothing found (2 files)", "check: nothing found (2 files)"),
     ]
 
@@ -283,7 +317,10 @@ class OneScope(unittest.TestCase):
             return self.answers.pop(0)
 
     ARGS = ["probe", "--", "npx", "-y", "probe"]
-    CHECK = {"mcp_args": ["probe", "--", "npx", "-y", "probe@1.0.0"], "blocked": False,
+    FACTS = [fact("mcp_package", package="probe@1.0.0", ecosystem="npm", file="package.json"),
+             fact("mcp_pinned", name="probe", version="1.0.0"),
+             "check: nothing found (3 files, 2 npm dependencies, advisory and malware lookups)"]
+    CHECK = {"mcp_args": ["probe", "--", "npx", "-y", "probe@1.0.0"], "blocked": False, "facts": FACTS,
              "lines": ["package: probe@1.0.0 (npm), named by this repo's package.json; not verified to come from this repo",
                        "pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those "
                        "checked when the server starts",
@@ -313,14 +350,39 @@ class OneScope(unittest.TestCase):
         return peer, [a for a in ran if a[0] == "codex"], r
 
     def test_the_dialog_shows_the_check_and_the_pinned_command_installs(self):
-        peer, ran, r = self.install("安裝", server.USER_OPTION)
+        peer, ran, r = self.install("安裝", USER_OPTION)
         self.assertEqual(self.scripts, [("check_mcp.py", "--", "o/r", json.dumps(self.ARGS))])
         self.assertIn("\n".join(["MCP server: codex mcp add probe -- npx -y probe@1.0.0", *self.CHECK["lines"], USER_ONLY]),
                       peer.asked[0][0])
-        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, server.USER_OPTION]))
+        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, USER_OPTION]))
         self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe@1.0.0"]])
         self.assertTrue(r.startswith("installed (scope user): codex mcp add probe -- npx -y probe@1.0.0\nadded\n"))
         self.assertTrue(r.endswith(f"\n{self.CHECK['note']}"), r)
+
+    def test_with_zh_tw_the_lines_and_the_install_option_are_in_traditional_chinese(self):
+        option = "安裝在 user（~/.codex/config.toml，所有專案）"
+        peer, ran, r = self.install("安裝", option, dialog={**GOOD, "lang": "zh-TW"})
+        self.assertEqual(peer.asked[0][0], "\n".join([
+            "o/r ★1 · 2026-01-01 更新",
+            "MCP server：codex mcp add probe -- npx -y probe@1.0.0",
+            "套件：probe@1.0.0（npm），由這個 repo 的 package.json 指名；沒有驗證它來自這個 repo",
+            "已鎖定：只有 probe，鎖定在 1.0.0；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同",
+            self.CHECK["lines"][2],
+            "安裝位置：user（~/.codex/config.toml，所有專案）",
+        ]) + f"\n\n{GOOD['about']}\n\n{GOOD['next']}")
+        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, option]))
+        self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe@1.0.0"]])
+        self.assertTrue(r.startswith("installed (scope user): "), r)
+
+    def test_the_check_tools_findings_stay_english(self):
+        run, script = server.run, server.script
+        server.script = lambda name, *args, cwd=None: (True, json.dumps(self.CHECK))
+        try:
+            _, out = server.check({"repo": "o/r", "kind": "mcp", "mcp_args": self.ARGS}, None)
+        finally:
+            server.run, server.script = run, script
+        self.assertEqual(json.loads(out)["findings"],
+                         ["MCP server: codex mcp add probe -- npx -y probe@1.0.0", *self.CHECK["lines"], USER_ONLY])
 
     def test_cancel_at_the_scope_dialog_runs_nothing(self):
         peer, ran, r = self.install("安裝", CANCEL)
@@ -391,14 +453,14 @@ class Language(unittest.TestCase):
         "review": {**NEEDED, "needed": False},
     }
 
-    def call(self, lang, *, project=None, force=False, tool="install"):
+    def call(self, lang, *, project=None, force=False, tool="install", answers=("取消",)):
         run, script = server.run, server.script
         server.run = lambda argv, cwd=None: (True, '[52770, "2026-09-14T08:00:00Z", false]')
         server.script = lambda name, *args, cwd=None: (True, json.dumps(self.CHECK))
         meta = {"x-codex-turn-metadata": {"workspaces": {project: {}}}} if project else None
         a = {"repo": "o/r", "kind": "skill", "folder": "s", "force": force, "dialog": {**GOOD, "lang": lang}}
         try:
-            peer = OneScope.Peer("取消")
+            peer = OneScope.Peer(*answers)
             r = server.check(a, meta) if tool == "check" else server.install(peer, a, meta)
         finally:
             server.run, server.script = run, script
@@ -414,6 +476,11 @@ class Language(unittest.TestCase):
             "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）",
         ]) + f"\n\n{GOOD['about']}\n\n{GOOD['next']}")
         self.assertEqual(r, f"not installed: the user cancelled.\n{self.CHECK['note']}")
+
+    def test_with_zh_tw_the_skills_install_at_user_option_is_in_traditional_chinese(self):
+        peer, r = self.call("zh-TW", answers=("安裝", "cancel"))
+        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, "安裝在 user（~/.agents/skills/）"]))
+        self.assertTrue(r.startswith("not installed: the user cancelled at the scope step."), r)
 
     def test_with_zh_cn_kirbys_lines_are_in_simplified_chinese(self):
         with tempfile.TemporaryDirectory() as project:
@@ -563,15 +630,17 @@ class Plugin(unittest.TestCase):
     it is at and not added again; after the install, a plugin from another commit is removed again."""
 
     SHA, OLD = "a" * 40, "c" * 40
+    FACTS = [fact("plugin_files", name="p", marketplace="mk", commit="aaaaaaa", files=2),
+             fact("plugin_source_folder", path="plugins/p"),
+             "pattern scan: 2 files, the ones installed; a pattern match, not a safety review"]
     CHECK = {"marketplace": "mk", "marketplace_file": ".claude-plugin/marketplace.json", "sha": SHA, "commit": "aaaaaaa",
-             "blocked": False, "lines": ["plugin: p · marketplace mk · commit aaaaaaa · 2 files", "source: plugins/p/ in this repo",
-                                         "pattern scan: 2 files, the ones installed; a pattern match, not a safety review"],
+             "blocked": False, "facts": FACTS, "lines": [say(f, "en") for f in FACTS],
              "note": "pattern scan: the dialog showed the user no pattern-scan findings in o/mk at commit " + SHA,
              "review": {"needed": False, "repo": "o/mk", "sha": SHA, "files": ["plugins/p/a.md", "plugins/p/b.md"]}}
 
-    def install(self, *answers, listed=([],), heads=(), check=None):
+    def install(self, *answers, listed=([],), heads=(), check=None, lang=None):
         """listed: the marketplaces Codex lists, call by call (the last stays); heads: what git rev-parse HEAD
-        gives in their root, call by call."""
+        gives in their root, call by call; lang: dialog.lang."""
         ran, scripts, heads, listed = [], [], list(heads), list(listed)
         run, script = server.run, server.script
 
@@ -594,7 +663,8 @@ class Plugin(unittest.TestCase):
         server.run, server.script = fake_run, fake_script
         try:
             peer = OneScope.Peer(*answers)
-            r = server.install(peer, {"repo": "o/mk", "kind": "plugin", "plugin": "p", "dialog": GOOD}, None)
+            dialog = {**GOOD, "lang": lang} if lang else GOOD
+            r = server.install(peer, {"repo": "o/mk", "kind": "plugin", "plugin": "p", "dialog": dialog}, None)
         finally:
             server.run, server.script = run, script
         return peer, [a for a in ran if a[0] == "codex" and a[3] != "list"], scripts, r
@@ -603,7 +673,7 @@ class Plugin(unittest.TestCase):
         return {"name": "mk", "root": "/home/u/.codex/.tmp/marketplaces/mk", "marketplaceSource": {"sourceType": "git", "source": source}}
 
     def test_the_dialog_shows_the_check_and_a_new_marketplace_is_added_without_a_ref_then_checked(self):
-        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[], [self.added()]], heads=[self.SHA])
+        peer, ran, scripts, r = self.install("安裝", USER_OPTION, listed=[[], [self.added()]], heads=[self.SHA])
         self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
         self.assertIn("\n".join([self.CHECK["lines"][0], "marketplace: .claude-plugin/marketplace.json (Claude Code format)",
                                  *self.CHECK["lines"][1:], USER_ONLY]), peer.asked[0][0])
@@ -613,7 +683,7 @@ class Plugin(unittest.TestCase):
         self.assertTrue(r.endswith("\nnext: The user starts a new Codex session to use it.\n" + self.CHECK["note"]), r)
 
     def test_a_plugin_from_another_commit_is_removed_again(self):
-        _, ran, _, r = self.install("安裝", server.USER_OPTION, listed=[[], [self.added()]], heads=[self.OLD])
+        _, ran, _, r = self.install("安裝", USER_OPTION, listed=[[], [self.added()]], heads=[self.OLD])
         self.assertEqual(ran[-1], ["codex", "plugin", "remove", "p@mk"])
         self.assertTrue(r.startswith("install failed (scope user): codex plugin marketplace add o/mk\ncodex plugin add p@mk\n"
                                      "codex plugin remove p@mk\n"), r)
@@ -623,7 +693,7 @@ class Plugin(unittest.TestCase):
     def test_a_marketplace_already_added_is_checked_at_its_commit_and_not_added_again(self):
         old = {**self.CHECK, "sha": self.OLD, "commit": "ccccccc"}
         line = "marketplace: already added as mk, at commit ccccccc; installs from it as it is"
-        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[self.added()]], heads=[self.OLD, self.OLD], check=old)
+        peer, ran, scripts, r = self.install("安裝", USER_OPTION, listed=[[self.added()]], heads=[self.OLD, self.OLD], check=old)
         self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--commit", self.OLD, "--", "o/mk", "p")])
         self.assertIn(f"{old['lines'][0]}\n{line}\n", peer.asked[0][0])
         self.assertEqual(ran, [["codex", "plugin", "add", "p@mk"]])
@@ -631,7 +701,7 @@ class Plugin(unittest.TestCase):
         self.assertTrue(r.endswith(f"{old['note']}\n{line}"), r)
 
     def test_a_marketplace_from_another_source_is_not_taken_for_this_one(self):
-        _, ran, scripts, _ = self.install("安裝", server.USER_OPTION, listed=[[self.added("https://github.com/o/other.git")]])
+        _, ran, scripts, _ = self.install("安裝", USER_OPTION, listed=[[self.added("https://github.com/o/other.git")]])
         self.assertEqual(scripts[0][-2:], ("o/mk", "p"))
         self.assertNotIn("--commit", scripts[0])
         self.assertEqual(ran[0][:4], ["codex", "plugin", "marketplace", "add"])
@@ -639,7 +709,7 @@ class Plugin(unittest.TestCase):
     def test_a_marketplace_list_that_fails_is_one_unchecked_line_and_the_check_goes_ahead(self):
         line = ("unchecked: whether this marketplace is already added (codex plugin marketplace list failed: boom); the check is "
                 "of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit")
-        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[None])
+        peer, ran, scripts, r = self.install("安裝", USER_OPTION, listed=[None])
         self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
         self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
         # Still unable to tell which commit it came from after the install, kirby removes it again.
@@ -651,7 +721,7 @@ class Plugin(unittest.TestCase):
         line = ("unchecked: which commit the marketplace mk, already added, is at (could not read it in "
                 "/home/u/.codex/.tmp/marketplaces/mk: fatal: not a git repository); the check is of its repo as it stands, and "
                 "the plugin is removed again if kirby cannot tell it installs from that commit")
-        peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[self.added()]], heads=[None, self.SHA])
+        peer, ran, scripts, r = self.install("安裝", USER_OPTION, listed=[[self.added()]], heads=[None, self.SHA])
         self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
         self.assertIn(f"{self.CHECK['lines'][0]}\n{line}\n", peer.asked[0][0])
         # Readable after the install and the commit checked: the plugin stays.
@@ -661,6 +731,49 @@ class Plugin(unittest.TestCase):
     def test_a_blocked_plugin_offers_no_install(self):
         peer, ran, _, r = self.install("取消", check={**self.CHECK, "blocked": True})
         self.assertEqual((peer.asked[0][1], ran), (GOOD["options"][:3], []))
+
+    def test_with_zh_tw_the_marketplace_lines_and_the_install_option_are_in_traditional_chinese(self):
+        old = {**self.CHECK, "sha": self.OLD, "commit": "ccccccc"}
+        option = "安裝在 user（~/.codex/config.toml，所有專案）"
+        peer, ran, _, r = self.install("安裝", option, listed=[[self.added()]], heads=[self.OLD, self.OLD], check=old,
+                                       lang="zh-TW")
+        self.assertIn("\n外掛：p · marketplace mk · commit aaaaaaa · 2 個檔案\n"
+                      "marketplace：已加入，名稱 mk，在 commit ccccccc；直接從它安裝\n"
+                      "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）\n"
+                      "來源：這個 repo 的 plugins/p/\n"
+                      f"{self.CHECK['lines'][2]}\n"
+                      "安裝位置：user（~/.codex/config.toml，所有專案）\n\n", peer.asked[0][0])
+        self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, option]))
+        # The answer is the translated label, and it still installs at user.
+        self.assertEqual(ran, [["codex", "plugin", "add", "p@mk"]])
+        self.assertTrue(r.startswith("installed (scope user): codex plugin add p@mk\n"), r)
+        # The model reads the marketplace line in English.
+        self.assertTrue(r.endswith(f"{old['note']}\nmarketplace: already added as mk, at commit ccccccc; installs from it as it is"), r)
+
+    def test_with_zh_cn_an_unread_marketplace_commit_is_in_simplified_chinese(self):
+        peer, _, _, _ = self.install("取消", listed=[[self.added()]], heads=[None], lang="zh-CN")
+        self.assertIn("\n未检查：已添加的 marketplace mk 在哪个 commit（could not read it in /home/u/.codex/.tmp/marketplaces/mk: "
+                      "fatal: not a git repository）；检查的是它的 repo 当前的状态，如果 kirby 无法确认插件是从那个 commit 安装的，"
+                      "会再移除\n", peer.asked[0][0])
+
+    def test_the_check_tools_plugin_findings_stay_english(self):
+        run, script = server.run, server.script
+        server.run = lambda argv, cwd=None: (False, "boom")
+        server.script = lambda name, *args, cwd=None: (True, json.dumps(self.CHECK))
+        try:
+            _, out = server.check({"repo": "o/mk", "kind": "plugin", "plugin": "p"}, None)
+        finally:
+            server.run, server.script = run, script
+        self.assertEqual(json.loads(out)["findings"], [
+            self.CHECK["lines"][0],
+            "unchecked: whether this marketplace is already added (codex plugin marketplace list failed: boom); the check is "
+            "of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit",
+            "marketplace: .claude-plugin/marketplace.json (Claude Code format)", *self.CHECK["lines"][1:], USER_ONLY])
+
+    def test_the_english_install_option_is_not_taken_for_the_translated_one(self):
+        _, ran, _, r = self.install("安裝", USER_OPTION, lang="zh-TW")
+        self.assertEqual(ran, [])
+        self.assertTrue(r.startswith("not installed: the user cancelled at the scope step."), r)
 
 
 if __name__ == "__main__":
