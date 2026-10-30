@@ -128,10 +128,10 @@ kirby 能自己多做一些事來省掉一個步驟時，就會去做：repo 之
 - **Claude Code 的審查 agent。** `kirby:reviewer` 只能用 `check` 和 `file`，所以即使被審查的檔案裡有針對它的指令，它也沒有 Bash 或寫入的 tool 可以濫用。它的指示是它自己的；模型只告訴它檔案在哪裡、是哪些。kirby 的 hook 讓 `check` 和 `file` 不經權限詢問就執行，其他 tool 一律不放行：這兩個 tool 只讀 GitHub 和套件內容，不會寫入你的電腦。你的設定或組織設定裡的 deny 規則仍然會擋下它們。在 Codex 裡，這些 tool 宣告自己只讀取，所以 Codex 直接執行、不先詢問。
 - **審查的對象。** 就是要安裝的東西：skill 的檔案、plugin 的來源（在另一個 repo 也一樣），MCP server 則是檢查時解開的已發布套件。讀套件時，`file` 會重新下載同一個封存檔，比對 registry 的雜湊和檢查給的 sha256，再解開到暫存資料夾；裡面的東西都不會安裝或執行。
 - **結果。** 最多 5 項發現，每項是檢查列出的某個檔案、行號，以及一句不超過 120 個字元、不引用檔案內容的理由；或是附上理由的 `could_not_run`。安裝 tool 會檢查這個結構、去掉隱藏字元和控制字元；不符合的結果在任何對話框出現前就會被拒絕，讓模型重新送出。
-- **在對話框裡。** 每項發現是一行 `warn`，排在檢查的各行之後，標上 `(model review, as reported by the model)`；沒有發現時則用一行說明。審查的發現只會增加：不會移除或降低其他發現，也不會擋下安裝。
-- **沒有審查。** 需不需要審查由安裝 tool 依自己的檢查決定。需要卻沒有傳入、審查無法執行，或審查讀的不是檢查的那個 commit 或套件時，對話框用一行 `model review: unchecked (…)` 說明，「安裝」仍然保留。
+- **在對話框裡。** 審查只用 kirby 自己的文字、以對話框的語言顯示：它的發現數加在警告那行（`⚠ 警告 3 項：隱藏 Unicode、模型審查 2 項`；原本沒有警告那行就加上一行），沒有發現時則用一行說明。發現的理由、檔案和行號交給模型，你問時由它說明；審查者寫的文字都不會出現在對話框（[ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)）。審查的發現只會增加：不會移除或降低其他發現，也不會擋下安裝。
+- **沒有審查。** 需不需要審查由安裝 tool 依自己的檢查決定。需要卻沒有傳入、審查無法執行，或審查讀的不是檢查的那個 commit 或套件時，對話框用一行 `? model review: did not run`（繁體中文是 `？ 模型審查：未執行`）說明，「安裝」仍然保留。這行會附上 kirby 自己的原因（沒有傳入審查結果、沒有檔案可讀，或讀的是另一個 commit）；審查者說明自己為何無法執行的原因只交給模型。
 
-結果是由模型轉交的，kirby 無法證明審查途中沒被改過、也確實做了，所以這些發現都標為模型回報。
+結果是由模型轉交的，kirby 無法證明審查途中沒被改過、也確實做了，所以模型收到的發現都標為模型回報，它也照審查回報的內容轉述。
 
 ### 哪些有鎖定
 
@@ -170,7 +170,7 @@ plugin 不論裝在哪個 scope，它的 marketplace 都會記錄在 user settin
 
 ### 對話框語言
 
-對話框的文字由模型依 skill 規定的格式，用你使用的語言寫：兩個問題、四個選項，以及 `about` 裡一句說明這個工具做什麼的話（最多 120 個字元），不重複檢查結果。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、安裝位置、安裝前檢查的結果），以及範圍問題下方的 prompt cache 提醒，由 kirby 產生，從不由模型寫。模型只用 `dialog.lang` 選它們的語言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三種語言，kirby 對每一行事實都備有這三種語言的寫法；沒有 `lang` 或是其他值，就用英文。指令、路徑、名稱、版本和 id 維持原樣，方便複製和查詢。tool 回給模型的內容（包括 `check` tool 的 `findings`）維持英文。為什麼不讓模型翻譯事實，見 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻譯的是 repo 那行、skill 那行（名稱、commit、檔案數）、腳本、`exists:` 和 `installs at:`；plugin 那行（名稱、marketplace、commit、檔案數）、它的說明、來源和腳本、會一起安裝的 plugin，以及關於它的 marketplace 的各行（已加入、落後於它的 repo、kirby 無法確定）；MCP server 的指令那行、`package:`、`pinned:` 和 `not pinned:`；安裝前檢查的各行（擋下、危險、警告、掃描和查詢的結果、`dependencies:`、未檢查和沒有發現）；以及 prompt cache 提醒。`unchecked` 那行說明的原因，以及漏洞的評級（`critical`、`high`），仍是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`；在 Codex 裡只能裝在 `user` 時，安裝的那個選項也用 `dialog.lang` 選的語言。沒有提供文字、格式不完整或超過長度限制時，對話框和其中的事實都顯示英文。
+對話框的文字由模型依 skill 規定的格式，用你使用的語言寫：兩個問題、四個選項，以及 `about` 裡一句說明這個工具做什麼的話（最多 120 個字元），不重複檢查結果。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、安裝位置、安裝前檢查的結果），以及範圍問題下方的 prompt cache 提醒，由 kirby 產生，從不由模型寫。模型只用 `dialog.lang` 選它們的語言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三種語言，kirby 對每一行事實都備有這三種語言的寫法；沒有 `lang` 或是其他值，就用英文。指令、路徑、名稱、版本和 id 維持原樣，方便複製和查詢。tool 回給模型的內容（包括 `check` tool 的 `findings`）維持英文。為什麼不讓模型翻譯事實，見 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻譯的是 repo 那行、skill 那行（名稱、commit、檔案數）、腳本、`exists:` 和 `installs at:`；plugin 那行（名稱、marketplace、commit、檔案數）、它的說明、來源和腳本、會一起安裝的 plugin，以及關於它的 marketplace 的各行（已加入、落後於它的 repo、kirby 無法確定）；MCP server 的指令那行、`package:`、`pinned:` 和 `not pinned:`；安裝前檢查的各行（擋下、危險、警告、掃描和查詢的結果、`dependencies:`、未檢查和沒有發現）；模型審查加在警告那行的數量和它自己那行（沒有發現，或未執行及 kirby 的原因）；以及 prompt cache 提醒。`unchecked` 那行說明的原因，以及漏洞的評級（`critical`、`high`），仍是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`；在 Codex 裡只能裝在 `user` 時，安裝的那個選項也用 `dialog.lang` 選的語言。沒有提供文字、格式不完整或超過長度限制時，對話框和其中的事實都顯示英文。
 
 ### 安裝和 prompt cache
 

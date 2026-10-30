@@ -12,7 +12,7 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import { checkResult, fileRequest, fileText, READ_ONLY_TOOLS, REPO_RE, REVIEWER, SHA_RE } from './check'
 import type { ReviewOf } from './check'
-import { CANCEL, nextOptions, readDialog, readReview, reviewNote, SCOPES } from './dialog'
+import { CANCEL, nextOptions, readDialog, readReview, reviewFacts, reviewNote, SCOPES } from './dialog'
 import type { Kind, Scope } from './dialog'
 import { alreadyAdded, findAdded, headOf, installPlugin, notListed } from './plugin'
 import type { Added, Run } from './plugin'
@@ -282,9 +282,9 @@ async function install($: $, input: Input): Promise<string> {
     throw err
   }
   // Whether a review was needed is the check's own finding, not the model's (docs/adr/0002).
-  const reviewed = readReview(input.review, input.sha, plan.review)
-  if (reviewed.problem) return `not installed: ${reviewed.problem}; call this tool again with review as the inhale skill describes.${note}`
-  const reviewText = reviewNote(reviewed.lines)
+  const { reviewed, problem: badReview } = readReview(input.review, input.sha, plan.review)
+  if (!reviewed) return `not installed: ${badReview}; call this tool again with review as the inhale skill describes.${note}`
+  const reviewText = reviewNote(reviewed)
 
   // Every answer from here on also tells the model what the pre-install check showed the user.
   const tail = `\n${plan.scan}${reviewText ? `\n${reviewText}` : ''}${note}`
@@ -292,7 +292,8 @@ async function install($: $, input: Input): Promise<string> {
   // Cancel comes first so a stray Enter already queued when the dialog opens cancels.
   const about = d.about ? `\n\n${d.about}` : ''
   const blocked = plan.blocked === true
-  const facts = [header, ...plan.facts, ...reviewed.lines].map(f => say(f, d.lang)).join('\n')
+  // The review shows only in kirby's words: its findings counted on the warn line (docs/adr/0006).
+  const facts = [header, ...reviewFacts(plan.facts, reviewed)].map(f => say(f, d.lang)).join('\n')
   const next = await ask($, `${facts}${about}\n\n${d.next}`, nextOptions(d, blocked))
   $.ui.log(`install ${repo} (${kind}): next step ${JSON.stringify(next)}${problem ? ` (English: ${problem})` : ''}`, { to: 'debug' })
   if (next === readme) {

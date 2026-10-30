@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from dialog import CANCEL, SCOPES, next_options, read_dialog, read_review, review_note
+from dialog import CANCEL, SCOPES, next_options, read_dialog, read_review, review_facts, review_note
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -495,11 +495,13 @@ def install(peer, a, meta):
         return f"not installed: {bad_review}; call this tool again with review as the inhale skill describes.{note}"
 
     # Every answer from here on also tells the model what the pre-install check showed the user.
-    tail = f"\n{plan['scan']}" + (f"\n{review_note(reviewed)}" if reviewed else "") + note
+    review_text = review_note(reviewed)
+    tail = f"\n{plan['scan']}" + (f"\n{review_text}" if review_text else "") + note
 
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
-    facts = [say(f, d["lang"]) for f in [header, *plan["lines"], *reviewed, *plan["where"]]]
+    # The review shows only in kirby's words: its findings counted on the warn line (docs/adr/0006).
+    facts = [say(f, d["lang"]) for f in [header, *review_facts(plan["lines"], reviewed), *plan["where"]]]
     nxt = peer.ask("\n".join(facts) + f"{about}\n\n{d['next']}", next_options(d, plan.get("blocked", False)))
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:
