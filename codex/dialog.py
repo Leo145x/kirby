@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "inha
 from words import read_lang  # noqa: E402
 
 SCOPES = ("local", "project", "user")
-# The scope dialog's options, the same in every language.
+# The scope dialog's cancel option, the same in every language (the server words its install option, server.py).
 CANCEL = "cancel"
 
 # In characters (code points), as hooks/dialog.ts counts them too.

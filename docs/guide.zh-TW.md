@@ -160,7 +160,7 @@ plugin 不論裝在哪個 scope，它的 marketplace 都會記錄在 user settin
 
 ### 對話框語言
 
-對話框的文字由模型依 skill 規定的格式，用你使用的語言寫：兩個問題、四個選項，以及 `about` 裡一句說明這個工具做什麼的話（最多 120 個字元），不重複檢查結果。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、安裝位置、安裝前檢查的結果），以及範圍問題下方的 prompt cache 提醒，由 kirby 產生，從不由模型寫。模型只用 `dialog.lang` 選它們的語言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三種語言，kirby 對每一行事實都備有這三種語言的寫法；沒有 `lang` 或是其他值，就用英文。指令、路徑、名稱、版本和 id 維持原樣，方便複製和查詢。tool 回給模型的內容（包括 `check` tool 的 `findings`）維持英文。為什麼不讓模型翻譯事實，見 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻譯的是 repo 那行、skill 那行（名稱、commit、檔案數）、腳本、`exists:` 和 `installs at:`；安裝前檢查本身的各行和 prompt cache 提醒仍是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`。沒有提供文字、格式不完整或超過長度限制時，對話框和其中的事實都顯示英文。
+對話框的文字由模型依 skill 規定的格式，用你使用的語言寫：兩個問題、四個選項，以及 `about` 裡一句說明這個工具做什麼的話（最多 120 個字元），不重複檢查結果。上方的事實（repo、star 數、commit、檔案、腳本、已存在的資料夾、安裝位置、安裝前檢查的結果），以及範圍問題下方的 prompt cache 提醒，由 kirby 產生，從不由模型寫。模型只用 `dialog.lang` 選它們的語言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三種語言，kirby 對每一行事實都備有這三種語言的寫法；沒有 `lang` 或是其他值，就用英文。指令、路徑、名稱、版本和 id 維持原樣，方便複製和查詢。tool 回給模型的內容（包括 `check` tool 的 `findings`）維持英文。為什麼不讓模型翻譯事實，見 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻譯的是 repo 那行、skill 那行（名稱、commit、檔案數）、腳本、`exists:` 和 `installs at:`；plugin 那行（名稱、marketplace、commit、檔案數）、它的說明、來源和腳本、會一起安裝的 plugin，以及關於它的 marketplace 的各行（已加入、落後於它的 repo、kirby 無法確定）；MCP server 的指令那行、`package:`、`pinned:` 和 `not pinned:`；以及 prompt cache 提醒。安裝前檢查本身的各行仍是英文。範圍對話框的選項固定是 `cancel`、`local`、`project`、`user`；在 Codex 裡只能裝在 `user` 時，安裝的那個選項也用 `dialog.lang` 選的語言。沒有提供文字、格式不完整或超過長度限制時，對話框和其中的事實都顯示英文。
 
 ### 安裝和 prompt cache
 
@@ -189,7 +189,7 @@ plugin 的提醒由 tool 放在 scope 那一層對話框。MCP 的提醒交給�
 | `project` | 專案的 `.agents/skills/`，會進 git | — | — |
 | `user` | `~/.agents/skills/` | `codex plugin add`（`~/.codex/config.toml`） | `codex mcp add`（`~/.codex/config.toml`） |
 
-`codex plugin add` 和 `codex mcp add` 沒有 scope 參數，所以 plugin 和 MCP 只能裝在 user。如果 Codex 沒有提供 session 所在的專案，skill 也只能選 `user`。這些情況下，第一層對話框會多一行說明裝到哪裡（`installs at: user …`）；scope 對話框的選項是 `cancel` 和 `install at user (…)`，等於用 tool 自己寫的文字再確認一次。
+`codex plugin add` 和 `codex mcp add` 沒有 scope 參數，所以 plugin 和 MCP 只能裝在 user。如果 Codex 沒有提供 session 所在的專案，skill 也只能選 `user`。這些情況下，第一層對話框會多一行說明裝到哪裡（`installs at: user …`）；scope 對話框的選項是 `cancel` 和 `install at user (…)`，等於用 tool 自己寫的文字再確認一次（語言由 `dialog.lang` 選）。
 
 裝完後，開新的 Codex session 才能使用。
 
@@ -207,9 +207,9 @@ Codex 也讀得懂 Claude Code 格式的 marketplace。plugin 來自這種 marke
 | `public.py` | 依 agent 工具類的 topic 搜尋公開的 GitHub repo |
 | `detect.py` | 判斷 repo 是 marketplace、plugin、skill 還是 MCP server，以及安裝需要的資訊 |
 | `install_skill.py` | 把 skill 資料夾複製到指定 scope 的 skills 目錄，來源 commit 記在 `.kirby.json`。加上 `--check` 只列出會安裝的內容、掃描和查詢結果，不會寫入（加上 `--json` 時，對話框的那幾行是 `lines`，告訴模型的內容是 `note`，`review` 說明要不要做模型審查、讀哪些檔案）；`--commit` 安裝對話框顯示的那個 commit，即使 repo 之後又有新的 commit。由 mod 和 Codex 的 MCP server 呼叫 |
-| `check_plugin.py` | marketplace plugin 的安裝前檢查：抓取 marketplace（已經加入的用 `--commit` 指定它所在的 commit），依 plugin 的來源找到它的檔案，再執行掃描和查詢。輸出 JSON，也含上述的 `review`；不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
-| `check_mcp.py` | MCP server 的安裝前檢查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 寫的、指令實際執行的套件，下載並解開那個版本（不安裝），再執行掃描和查詢。輸出 JSON，其中 `mcp_args` 是鎖定在那個版本的指令，`review` 同上（它的 `sha` 是封存檔的 sha256）。`check_mcp.py --read '<JSON>'` 為 `file` tool 印出這種套件裡的單一檔案。不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
+| `check_plugin.py` | marketplace plugin 的安裝前檢查：抓取 marketplace（已經加入的用 `--commit` 指定它所在的 commit），依 plugin 的來源找到它的檔案，再執行掃描和查詢。輸出 JSON，也含上述的 `review`，對話框的各行則是 `facts`（給 `words.py`），旁邊是它們的英文 `lines`；不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
+| `check_mcp.py` | MCP server 的安裝前檢查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 寫的、指令實際執行的套件，下載並解開那個版本（不安裝），再執行掃描和查詢。輸出 JSON，其中 `mcp_args` 是鎖定在那個版本的指令，`facts` 和 `lines` 和 `check_plugin.py` 的一樣，`review` 同上（它的 `sha` 是封存檔的 sha256）。`check_mcp.py --read '<JSON>'` 為 `file` tool 印出這種套件裡的單一檔案。不會安裝任何東西。由 mod 和 Codex 的 MCP server 呼叫 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 執行的漏洞查詢和惡意套件查詢：讀取相依套件檔案、不安裝就算出版本，再向 OSV.dev 和 GitHub 查詢。不會單獨執行 |
-| `words.py` | kirby 對對話框各行事實的寫法，有英文、繁體中文和简体中文，和 mod 的 `hooks/words.ts` 相同。由 Codex MCP server 使用。不會單獨執行 |
+| `words.py` | kirby 對對話框各行事實的寫法，有英文、繁體中文和简体中文，和 mod 的 `hooks/words.ts` 相同。由 Codex MCP server、`check_plugin.py` 和 `check_mcp.py` 使用。不會單獨執行 |
 
 `detect.py --agent codex` 會先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 會裝到 `.agents/skills/`。

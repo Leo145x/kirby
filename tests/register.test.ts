@@ -57,8 +57,10 @@ async function checkPlugin($: Parameters<Parameters<typeof test>[1]>[0], on: Par
   return { ran, out: JSON.parse(String((r as { result?: unknown }).result)) as { findings: string[] } }
 }
 
+const PLUGIN_FACTS = [{ key: 'plugin_files', args: { name: 'p', marketplace: 'mk', commit: 'aaaaaaa', files: 1 } }, 'check: nothing found']
 const PLUGIN_CHECK = JSON.stringify({
-  marketplace: 'mk', commit: 'aaaaaaa', sha: 'a'.repeat(40), lines: ['plugin: p · marketplace mk · commit aaaaaaa · 1 files', 'check: nothing found'],
+  marketplace: 'mk', commit: 'aaaaaaa', sha: 'a'.repeat(40), facts: PLUGIN_FACTS,
+  lines: ['plugin: p · marketplace mk · commit aaaaaaa · 1 files', 'check: nothing found'],
   note: 'pattern scan: none', blocked: false, mcp_servers: false, review: { needed: false, files: [] },
 })
 
@@ -171,6 +173,88 @@ test('the install tool takes dialog.lang', async ($, on) => {
   const install = tools.find(t => t.name === 'install')
   expect(Object.keys(install?.inputSchema.properties.dialog?.properties ?? {}).sort()).toEqual(['about', 'lang', 'next', 'options', 'scope'])
   expect((install as { description?: string } | undefined)?.description).toContain('dialog.lang (en, zh-TW or zh-CN)')
+})
+
+// A plugin's or an MCP server's install or check tool, with the processes it runs answered by run (argv joined
+// by spaces → stdout; undefined fails) and the dialogs answered in turn from answers; asked collects their questions.
+async function tool($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1],
+  input: Record<string, unknown>, run: (cmd: string) => string | undefined, answers: string[] = [], name = 'mcp__kirby__install') {
+  const asked: string[] = []
+  on('ui.log', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('process.run', (_, e) => {
+    const cmd = e.argv.join(' ')
+    const stdout = cmd.startsWith('gh api repos/o/r --jq') ? '[52770,"2026-09-14T08:00:00Z",false]' : run(cmd)
+    return { value: { exitCode: stdout === undefined ? 1 : 0, stdout: stdout ?? '', stderr: stdout === undefined ? 'boom' : '',
+      isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    const q = (e as { questions: { question: string }[] }).questions[0]?.question ?? ''
+    asked.push(q)
+    return { result: { questions: (e as { questions: unknown[] }).questions, answers: { [q]: answers.shift() ?? '取消' } } } as never
+  })
+  const r = await $.tool.call({ tool: name, repo: 'o/r', ...input } as never)
+  return { asked, result: String((r as { result?: unknown }).result) }
+}
+
+const NOT_LISTED = 'unchecked: whether this marketplace is already added (claude plugin marketplace list failed: boom); the check is ' +
+  'of its repo as it stands, and the plugin is removed again if kirby cannot tell it installs from that commit'
+
+test("with zh-TW a plugin's lines and the prompt-cache note are in 繁體中文; the model reads them in English", async ($, on) => {
+  const check = JSON.stringify({ ...JSON.parse(PLUGIN_CHECK), mcp_servers: true })
+  const { asked, result } = await tool($, on, { kind: 'plugin', plugin: 'p', dialog: { ...WORDING, lang: 'zh-TW' } },
+    cmd => (cmd.includes('check_plugin.py') ? check : undefined), ['安裝', 'cancel'])
+  expect(asked).toEqual([
+    [
+      'o/r ★52770 · 2026-09-14 更新',
+      '外掛：p · marketplace mk · commit aaaaaaa · 1 個檔案',
+      '未檢查：這個 marketplace 是否已加入（claude plugin marketplace list failed: boom）；檢查的是它的 repo 目前的狀態，若 kirby ' +
+        '無法確認外掛是從那個 commit 安裝的，會再移除',
+      'check: nothing found',
+    ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`,
+    `${WORDING.scope}\n\nprompt cache：這個外掛帶有 MCP server；如果這個工作階段關閉了 tool search，用 /reload-plugins 載入它會重建一次 cache。`,
+  ])
+  expect(result).toBe(`not installed: the user cancelled at the scope step.\npattern scan: none\n${NOT_LISTED}`)
+})
+
+test("with zh-CN the prompt-cache note of a plugin whose source was not checked is in 简体中文", async ($, on) => {
+  const check = JSON.stringify({ ...JSON.parse(PLUGIN_CHECK), mcp_servers: null })
+  const { asked } = await tool($, on, { kind: 'plugin', plugin: 'p', dialog: { ...WORDING, lang: 'zh-CN' } },
+    cmd => (cmd.includes('check_plugin.py') ? check : undefined), ['安裝', 'cancel'])
+  expect(asked[1]).toBe(`${WORDING.scope}\n\nprompt cache：这个插件可能带有 MCP server（它的来源没有检查）；如果这个会话关闭了 tool search，` +
+    '用 /reload-plugins 加载它会重建一次 cache。')
+})
+
+const MCP_FACTS = [
+  { key: 'mcp_package', args: { package: 'probe@1.0.0', ecosystem: 'npm', file: 'package.json' } },
+  { key: 'mcp_pinned', args: { name: 'probe', version: '1.0.0' } },
+  'check: nothing found',
+]
+const MCP_CHECK = JSON.stringify({
+  mcp_args: ['probe', '--', 'npx', '-y', 'probe@1.0.0'], facts: MCP_FACTS, lines: [
+    "package: probe@1.0.0 (npm), named by this repo's package.json; not verified to come from this repo",
+    'pinned: only probe, to 1.0.0; its dependencies are not pinned, so they may differ from those checked when the server starts',
+    'check: nothing found',
+  ], note: 'pattern scan: none', blocked: false, review: { needed: false, files: [] },
+})
+const MCP = { kind: 'mcp', mcp_args: ['probe', '--', 'npx', '-y', 'probe'] }
+
+test("with zh-TW an MCP server's lines are in 繁體中文, with the command, package and version as they are", async ($, on) => {
+  const { asked } = await tool($, on, { ...MCP, dialog: { ...WORDING, lang: 'zh-TW' } }, cmd => (cmd.includes('check_mcp.py') ? MCP_CHECK : undefined))
+  expect(asked[0]).toBe([
+    'o/r ★52770 · 2026-09-14 更新',
+    'MCP server：claude mcp add --scope <scope> probe -- npx -y probe@1.0.0',
+    '套件：probe@1.0.0（npm），由這個 repo 的 package.json 指名；沒有驗證它來自這個 repo',
+    '已鎖定：只有 probe，鎖定在 1.0.0；它的相依套件沒有鎖定，server 啟動時可能和檢查過的不同',
+    'check: nothing found',
+  ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`)
+})
+
+test("the check tool's plugin and MCP server findings stay English", async ($, on) => {
+  const { result } = await tool($, on, MCP, cmd => (cmd.includes('check_mcp.py') ? MCP_CHECK : undefined), [], 'mcp__kirby__check')
+  expect((JSON.parse(result) as { findings: string[] }).findings).toEqual([
+    'MCP server: claude mcp add --scope <scope> probe -- npx -y probe@1.0.0', ...(JSON.parse(MCP_CHECK) as { lines: string[] }).lines,
+  ])
 })
 
 test("a deny rule of the user's or the organization's still stops check and file", async ($, on) => {

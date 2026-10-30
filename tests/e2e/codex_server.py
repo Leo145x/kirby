@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive codex/server.py's install(), check() and file() with a fake peer in place of Codex's dialogs (H1–H15).
+"""Drive codex/server.py's install(), check() and file() with a fake peer in place of Codex's dialogs (H1–H16).
 
     python3 -I tests/e2e/codex_server.py FIXTURE_DIR PROJECT_DIR
 
@@ -27,9 +27,11 @@ from words import say  # noqa: E402  (server puts the scripts on the path)
 
 REPO, FOLDER = fixture.REPO, fixture.FOLDER
 ENGLISH = ["Cancel", "Read README first", "Pick another", "Install"]
-# The model's wording without a lang, so the facts are in English (H15 picks a language).
+# The model's wording without a lang, so the facts are in English (H15 and H16 pick a language).
 ZH = {"about": "測試用。", "next": "下一步？", "options": ["取消", "先讀 README", "換一個", "安裝"], "scope": "裝在哪個範圍？"}
 USER_ONLY, SKILL_USER_ONLY = say(server.USER_ONLY, "en"), say(server.SKILL_USER_ONLY, "en")
+# The scope dialog's install option where user is the only scope, as it reads with no lang.
+USER_OPTION, SKILL_USER_OPTION = say(server.USER_OPTION, "en"), say(server.SKILL_USER_OPTION, "en")
 NO_DIALOG = "\nnote: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes."
 # A check that found a danger or warn finding asks for a model review; an install without one says so.
 UNREVIEWED = "model review: unchecked (no review result was passed)"
@@ -162,11 +164,11 @@ def main():
 
     # H5: no project from Codex -> only user: the first dialog says so and why, the scope dialog's one
     # install option says where, and picking it installs there.
-    p = Peer("安裝", server.SKILL_USER_OPTION)
+    p = Peer("安裝", SKILL_USER_OPTION)
     with Held() as held:
         r = server.install(p, {**skill, "dialog": ZH}, None)
     check("H5 no project -> only user", SKILL_USER_ONLY in p.asked[0][0]
-          and p.asked[1] == ("裝在哪個範圍？", ["cancel", server.SKILL_USER_OPTION])
+          and p.asked[1] == ("裝在哪個範圍？", ["cancel", SKILL_USER_OPTION])
           and r.startswith("installed (scope user): ") and len(held.argv) == 1
           and held.argv[0][-6:] == ["--scope", "user", "--agent", "codex", "--commit", c["sha"]], f"{p.asked}\n      {r}")
 
@@ -268,7 +270,7 @@ def main():
     ok, out = server.check({k: plugin[k] for k in ("repo", "kind", "plugin")}, meta)
     check("H9 check: nothing found -> no review", ok and pc["review"]["needed"] is False
           and json.loads(out)["review"] == "not needed" and "files" not in json.loads(out), out[:300])
-    p = Peer("安裝", server.USER_OPTION)
+    p = Peer("安裝", USER_OPTION)
     with Held(then=listed) as held:
         r = server.install(p, plugin, meta)
     q = p.asked[0][0]
@@ -278,7 +280,7 @@ def main():
           and pc["lines"][1:3] == ["description: Development kit for working with the Claude Agent SDK",
                                    "source: plugins/agent-sdk-dev/ in this repo"], q)
     check("H9 plugin: scope dialog, then the marketplace added without a ref, the install, and its commit checked",
-          pc["sha"] == head and p.asked[1] == ("裝在哪個範圍？", ["cancel", server.USER_OPTION]) and held.argv == [
+          pc["sha"] == head and p.asked[1] == ("裝在哪個範圍？", ["cancel", USER_OPTION]) and held.argv == [
               ["codex", "plugin", "marketplace", "add", mk_repo], ["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
           and r.startswith(f"installed (scope user): codex plugin marketplace add {mk_repo}\n")
           and r.endswith("\nnext: The user starts a new Codex session to use it.\n" + pc["note"]), r)
@@ -291,14 +293,30 @@ def main():
     # H9 a marketplace already added: checked at the commit its clone is at, not added again; moved on
     # while the scope dialog is open, the plugin is installed and then removed again.
     line = f"marketplace: already added as {mk_name}, at commit {head[:7]}; installs from it as it is"
-    p = Peer("安裝", server.USER_OPTION)
+    p = Peer("安裝", USER_OPTION)
     with Held(listed) as held:
         r = server.install(p, plugin, meta)
     check("H9 added marketplace: its commit, no add, the install", f"{line}\n" in p.asked[0][0]
           and held.argv == [["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
           and r.startswith(f"installed (scope user): codex plugin add agent-sdk-dev@{mk_name}\n") and r.endswith(f"\n{line}"), r)
+    # H16: dialog.lang for a plugin: its lines, the marketplace's and the install option in 繁體中文; picking the
+    # translated option installs at user, and the model reads the marketplace line in English.
+    option = "安裝在 user（~/.codex/config.toml，所有專案）"
+    p = Peer("安裝", option)
+    with Held(listed) as held:
+        r = server.install(p, {**plugin, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    check("H16 zh-TW plugin: its lines, the marketplace's and the install option in 繁體中文, which installs",
+          "\n".join([f"外掛：agent-sdk-dev · marketplace {mk_name} · commit {head[:7]} · {pc['files']} 個檔案",
+                     f"marketplace：已加入，名稱 {mk_name}，在 commit {head[:7]}；直接從它安裝",
+                     "marketplace：.claude-plugin/marketplace.json（Claude Code 格式）",
+                     "說明：Development kit for working with the Claude Agent SDK",
+                     "來源：這個 repo 的 plugins/agent-sdk-dev/"]) in p.asked[0][0]
+          and "\n安裝位置：user（~/.codex/config.toml，所有專案）\n\n" in p.asked[0][0]
+          and p.asked[1] == ("裝在哪個範圍？", ["cancel", option])
+          and held.argv == [["codex", "plugin", "add", f"agent-sdk-dev@{mk_name}"]]
+          and r.startswith("installed (scope user): ") and r.endswith(f"\n{line}"), f"{p.asked}\n      {r}")
     p = Peer("安裝", lambda _options: (subprocess.run(["git", "-C", str(clone), "-c", "user.name=e2e", "-c", "user.email=e2e@invalid",
-                                                     "commit", "-q", "--allow-empty", "-m", "moved"], check=True), server.USER_OPTION)[1])
+                                                     "commit", "-q", "--allow-empty", "-m", "moved"], check=True), USER_OPTION)[1])
     with Held(listed) as held:
         r = server.install(p, plugin, meta)
     now = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -331,16 +349,27 @@ def main():
                                "verified to come from this repo"
           and c["lines"][1].startswith("pinned: only @modelcontextprotocol/server-everything, to ")
           and c["lines"][2].startswith(("pattern scan: ", "check: ")), out[:600])
-    p = Peer("安裝", server.USER_OPTION)
+    p = Peer("安裝", USER_OPTION)
     with Held() as held:
         r = server.install(p, {**mcp, "mcp_args": args}, meta)
     unreviewed = [UNREVIEWED] if c["review"]["needed"] else []
     check("H10 mcp facts, scope dialog, then install the pinned command",
           "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], *unreviewed, USER_ONLY]) in p.asked[0][0]
-          and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
+          and p.asked[1][1] == ["cancel", USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
           and r == f"installed (scope user): codex mcp add {' '.join(pinned)}\n(held)\n"
                    f"next: The user starts a new Codex session to use it.\n{c['note']}"
                    + (REVIEW_NOTE + UNREVIEWED if unreviewed else ""), r)
+    # H16: dialog.lang for an MCP server: the command, package and pinned lines and the install option in 繁體中文,
+    # with the command, package name and version as they are.
+    p = Peer("安裝", "cancel")
+    with Held() as held:
+        server.install(p, {**mcp, "mcp_args": args, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    q = p.asked[0][0]
+    check("H16 zh-TW MCP server: its lines and the install option in 繁體中文",
+          f"\nMCP server：codex mcp add {' '.join(pinned)}\n套件：{pinned[4]}（npm），由這個 repo 的 src/everything/package.json "
+          "指名；沒有驗證它來自這個 repo\n已鎖定：只有 @modelcontextprotocol/server-everything，鎖定在 " in q
+          and "\n安裝位置：user（~/.codex/config.toml，所有專案）\n\n" in q
+          and p.asked[1][1] == ["cancel", "安裝在 user（~/.codex/config.toml，所有專案）"] and not held.argv, f"{p.asked}")
     # The review of an MCP server reads the package the check unpacked, through the file tool.
     ok, out = server.check({**{k: mcp[k] for k in ("repo", "kind")}, "mcp_args": args}, meta)
     got = json.loads(out) if ok else {}

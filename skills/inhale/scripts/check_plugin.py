@@ -8,7 +8,9 @@ sha of a marketplace the agent already added, so the check describes what it hol
 plugin's entry in its marketplace file and follows the entry's source: a folder of the marketplace
 repo, or another GitHub repo, at the entry's sha when it gives one and as it stands otherwise. It runs
 the pattern scan (install_skill.py's) and the advisory and malware lookups (lookups.py) on the
-plugin's files, and prints JSON: the dialog's facts (`lines`), the same for the model (`note`),
+plugin's files, and prints JSON: the dialog's facts (`facts`, each a line or a key and its values for
+words.py, which each side words in the dialog's language), the same in English (`lines`) and for the
+model (`note`),
 `blocked`, the marketplace's name and commit, the source, and `review`: whether the model review runs
 and which files it reads, in which repo at which commit (docs/adr/0002). Nothing is installed.
 
@@ -28,6 +30,7 @@ from detect import GITHUB_URL, MARKETPLACES  # noqa: E402
 from install_skill import (NO_REVIEW, SCRIPT, UNCHECKED, VALID_REPO, VALID_SHA, GitFailed, check_lines, checkout,  # noqa: E402
                            inside, listing, review, scan, scan_note)
 from lookups import shown  # noqa: E402
+from words import fact, say  # noqa: E402
 
 # The files a plugin declares itself in.
 PLUGIN_MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
@@ -137,15 +140,15 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
         src = source_of(entry, doc)
         out = {"repo": repo, "plugin": name, "marketplace": doc["name"], "marketplace_file": mk_file,
                "commit": sha[:7], "sha": sha, "source": src}
-        title = f"plugin: {shown(name, 60)} · marketplace {shown(doc['name'], 60)} · commit {sha[:7]}"
-        described = ([f"description: {shown(entry['description'], 160)}"]
+        title = {"name": shown(name, 60), "marketplace": shown(doc["name"], 60), "commit": sha[:7]}
+        described = ([fact("plugin_description", text=shown(entry["description"], 160))]
                      if isinstance(entry.get("description"), str) and entry["description"] else [])
 
         def unchecked(source, why):
-            out.update(files=0, scripts=[], mcp_servers=None, blocked=False, lines=[title, *described, source, f"{UNCHECKED} ({why})"],
+            out.update(files=0, scripts=[], mcp_servers=None, blocked=False,
                        note=f"pattern scan: the dialog showed the user that the pattern scan and the lookups did not run on "
                             f"plugin {shown(name, 60)}: {why}", review=dict(NO_REVIEW))
-            return out
+            return worded(out, [fact("plugin", **title), *described, source, f"{UNCHECKED} ({why})"])
 
         # Three kinds of source: one kirby does not fetch, a folder of the marketplace repo, another GitHub repo.
         if src["in"] is None:
@@ -157,21 +160,21 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
             try:
                 src_sha = git(f"https://github.com/{src_repo}.git", src["sha"] or src["ref"], base)
             except GitFailed as e:
-                return unchecked(f"source: {named(src)}, which kirby could not fetch", shown(str(e), 300))
+                return unchecked(fact("plugin_source_unfetched", source=named(src)), shown(str(e), 300))
         root = base / src["path"]
         if not root.is_dir():
             raise Refusal(f"{repo}'s plugin {name} has no folder {src['path']} at commit {src_sha[:7]}")
         files = listing(root)
-        lines = [f"{title} · {len(files)} files", *described, source_line(src, src_sha)]
+        facts = [fact("plugin_files", **title, files=len(files)), *described, source_line(src, src_sha)]
         deps = depends_on(entry, root, files)
         if deps:
-            lines.append(f"installed along with it, not checked: {', '.join(deps)}")
+            facts.append(fact("plugin_dependencies", plugins=deps))
         scripts = [shown(f) for f in files if f.endswith(SCRIPT)]
         if scripts:
-            lines.append(f"scripts: {len(scripts)}, e.g. {', '.join(scripts[:2])}")
+            facts.append(fact("scripts", count=len(scripts), names=scripts[:2]))
         hits, unread = scan(root, files)
         looked = lookups.check(src_repo, src_sha, root, files, net)
-        lines += check_lines(hits, unread, len(files) - len(unread), looked)
+        facts += check_lines(hits, unread, len(files) - len(unread), looked)
         note = f"{scan_note(src_repo, src['path'], src_sha, hits)}\n{looked['note']}"
         if src["in"] == "repo" and not src["sha"]:
             note += (f"\nsource: not pinned; the marketplace entry gives no sha, so {src_repo} may be at a later "
@@ -179,10 +182,17 @@ def check(repo, name, agent="claude", commit=None, git=checkout, net=None):
         if deps:
             note += f"\nplugins: the dialog showed the user that installing also installs these plugins, which were not checked: {', '.join(deps)}"
         out.update(files=len(files), scripts=scripts, mcp_servers=brings_mcp(entry, root, files),
-                   blocked=looked["blocked"], lines=lines, note=note, source={**src, "commit": src_sha},
+                   blocked=looked["blocked"], note=note, source={**src, "commit": src_sha},
                    review=review({"repo": src_repo, "sha": src_sha}, files, hits, looked,
                                  prefix="" if src["path"] == "." else f"{src['path']}/"))
-        return out
+        return worded(out, facts)
+
+
+def worded(out, facts):
+    """out with the dialog's facts (each a line or a fact for words.say, which each side words in the dialog's
+    language) and the same in English as lines."""
+    out.update(facts=facts, lines=[say(f, "en") for f in facts])
+    return out
 
 
 def named(src):
@@ -191,13 +201,14 @@ def named(src):
 
 
 def source_line(src, commit):
-    """The dialog's source: line for a source that was fetched, at commit."""
+    """The dialog's source: line for a source that was fetched, at commit, as a fact for words.say."""
     if src["in"] == "marketplace":
-        return "source: the root of this repo" if src["path"] == "." else f"source: {shown(src['path'])}/ in this repo"
+        return fact("plugin_source_root") if src["path"] == "." else fact("plugin_source_folder", path=shown(src["path"]))
     if src["sha"]:
-        return f"source: {named(src)} at commit {commit[:7]}, pinned by the marketplace entry"
-    return (f"source: {named(src)} at commit {commit[:7]} ({shown(src['ref'], 40) if src['ref'] else 'default branch'}); "
-            "not pinned: the marketplace entry gives no sha, so what installs may differ from what was checked")
+        return fact("plugin_source_pinned", source=named(src), commit=commit[:7])
+    if src["ref"]:
+        return fact("plugin_source_unpinned", source=named(src), commit=commit[:7], ref=shown(src["ref"], 40))
+    return fact("plugin_source_unpinned_default", source=named(src), commit=commit[:7])
 
 
 def main():

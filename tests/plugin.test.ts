@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addedMarketplace, alreadyAdded, headOf, installPlugin } from '../hooks/plugin'
+import { addedMarketplace, alreadyAdded, headOf, installPlugin, notListed } from '../hooks/plugin'
 import type { Run } from '../hooks/plugin'
+import { say } from '../hooks/words'
+import type { Lang } from '../hooks/words'
 
 const SHA = 'a'.repeat(40)
 const NEW = 'b'.repeat(40)
@@ -42,23 +44,45 @@ test('the marketplace already added from a repo is found by its source, whatever
   expect(addedMarketplace('not json', 'o/mk')).toBe(null)
 })
 
+// The commit to check, and the dialog's line about it in the language given.
+const added = (head: string | null, latest: { sha: string } | { why: string }, lang: Lang = 'en') => {
+  const a = alreadyAdded(ADDED, head, latest)
+  return { commit: a.commit, line: say(a.fact, lang) }
+}
+
 test('a marketplace already added is checked at what the install will bring, and the dialog says so', async () => {
-  expect(alreadyAdded(ADDED, SHA, { sha: SHA })).toEqual({
+  expect(added(SHA, { sha: SHA })).toEqual({
     commit: SHA, line: 'marketplace: already added as mk, at commit aaaaaaa; installs from it as it is',
   })
   // Claude Code's install refreshes a marketplace that is behind its repo, so the repo's commit is the one checked.
-  expect(alreadyAdded(ADDED, SHA, { sha: NEW })).toEqual({
+  expect(added(SHA, { sha: NEW })).toEqual({
     commit: NEW, line: 'marketplace: already added as mk, at commit aaaaaaa, behind its repo; installing refreshes it to bbbbbbb, the commit checked',
   })
-  expect(alreadyAdded(ADDED, SHA, { why: 'gh api: HTTP 502' })).toEqual({
+  expect(added(SHA, { why: 'gh api: HTTP 502' })).toEqual({
     commit: SHA, line: 'unchecked: whether the marketplace mk, at commit aaaaaaa, is behind its repo (gh api: HTTP 502); if it is, ' +
       'installing refreshes it, and the plugin is removed again if it then comes from another commit',
   })
-  expect(alreadyAdded(ADDED, null, { why: 'gh api: HTTP 502' }).commit).toBe(null)
+  expect(added(null, { why: 'gh api: HTTP 502' })).toEqual({
+    commit: null, line: 'unchecked: whether the marketplace mk, at a commit kirby could not read, is behind its repo (gh api: HTTP 502); ' +
+      'if it is, installing refreshes it, and the plugin is removed again if it then comes from another commit',
+  })
   // The clone's commit could not be read, so kirby does not know it is behind and must not say so.
-  expect(alreadyAdded(ADDED, null, { sha: NEW })).toEqual({
+  expect(added(null, { sha: NEW })).toEqual({
     commit: NEW, line: 'marketplace: already added as mk, at a commit kirby could not read; installing refreshes it to bbbbbbb, the commit checked',
   })
+})
+
+test("the marketplace lines are in the dialog's language, with names, commits and reasons as they are", async () => {
+  expect(added(SHA, { sha: SHA }, 'zh-TW').line).toBe('marketplace：已加入，名稱 mk，在 commit aaaaaaa；直接從它安裝')
+  expect(added(SHA, { sha: NEW }, 'zh-TW').line)
+    .toBe('marketplace：已加入，名稱 mk，在 commit aaaaaaa，落後於它的 repo；安裝時會更新到檢查過的 commit bbbbbbb')
+  expect(added(null, { sha: NEW }, 'zh-CN').line).toBe('marketplace：已添加，名称 mk，kirby 读不到它在哪个 commit；安装时会更新到检查过的 commit bbbbbbb')
+  expect(added(SHA, { why: 'gh api: HTTP 502' }, 'zh-TW').line).toBe(
+    '未檢查：marketplace mk（在 commit aaaaaaa）是否落後於它的 repo（gh api: HTTP 502）；若是，安裝時會更新它，外掛若因此來自另一個 commit 會再移除')
+  expect(say(notListed('boom'), 'en')).toBe('unchecked: whether this marketplace is already added (boom); the check is of its repo as it ' +
+    'stands, and the plugin is removed again if kirby cannot tell it installs from that commit')
+  expect(say(notListed('boom'), 'zh-CN'))
+    .toBe('未检查：这个 marketplace 是否已添加（boom）；检查的是它的 repo 当前的状态，如果 kirby 无法确认插件是从那个 commit 安装的，会再移除')
 })
 
 test('a new marketplace is added, the plugin installed, and the clone checked against the commit shown', async () => {
