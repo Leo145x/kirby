@@ -21,7 +21,7 @@ Helpers in this folder:
 | --- | --- |
 | `transcript.py` | Prints a session's user prompts, model text and tool calls with their results as JSON lines, from Claude Code's or Codex's own transcript. `--tool install --last 1`, `--say --last 1` narrow it. |
 | `fixture.py` | `init DIR` builds a local stand-in for `cloudflare/security-audit-skill`: the repo at a fixed commit plus files that hit all 12 scan rules and the 3 combinations (one with a zero-width space in its name), and `DIR/env.sh`, which points git at it; `advance DIR` adds a commit to it; `rewind DIR` force-pushes it back one commit and prunes the old HEAD, so that commit can no longer be fetched; `malware DIR` adds a commit whose `package-lock.json` lists `flatmap-stream@0.1.1` (known-malicious, `MAL-2025-20690`) and `lodash@4.17.20` (high advisories). |
-| `codex_server.py` | Drives the Codex MCP server's `install()`, `check()` and `file()` with scripted dialog answers and review results and checks each result exactly (H1–H14), for what the Codex UI cannot reach. |
+| `codex_server.py` | Drives the Codex MCP server's `install()`, `check()` and `file()` with scripted dialog answers and review results and checks each result exactly (H1–H15), for what the Codex UI cannot reach. |
 | `scripts_check.py` | Checks the output format of `stars.py`, `public.py` and `detect.py` against live GitHub (S1–S6). |
 
 ## Adding an agent CLI
@@ -155,7 +155,13 @@ a `lookups:` block, and a last line starting `package: the command runs @modelco
 of the archive checked). A new release changes all of these; record them again if a case runs much later. The two plugins'
 `review.needed` are `false` while their check lines are one `check: nothing found (…)` line.
 
-`HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`.
+`HEADER(repo)` below means `^<repo> ★\d+ · pushed \d{4}-\d{2}-\d{2}( · ARCHIVED)?$`, as `stars.py`, `detect.py` and an English
+dialog give it. `HEADER_ZH(repo)` means `^<repo> ★\d+ · \d{4}-\d{2}-\d{2} 更新( · 已封存)?$`, as dialog 1 gives it with `dialog.lang` `zh-TW`.
+
+The prompts below are in 繁體中文, so the install call's `dialog` has `"lang": "zh-TW"` and kirby words its own lines in dialog 1
+in 繁體中文 (`hooks/words.ts`, `skills/inhale/scripts/words.py`); the pre-install check's lines (`CHECK_LINES` and the like) stay
+as they are. A call without `lang` there is a FAIL. Each case's `about` is one sentence of at most 120 characters on what the tool
+does, and does not repeat the findings.
 
 ## Isolation
 
@@ -293,7 +299,10 @@ dialog 1 with only cancel, README and pick another, and each result ending with 
 (`review` `needed`, `read` the fixture's repo at the commit checked, its files, the dialog's facts), then install with a review result:
 a finding shown after the check lines, its hidden characters and line break stripped, labelled `(model review, as reported by the model)`,
 and repeated in the result's `review:` block; a review of another commit, one that could not run, and one that found nothing, each one line
-with Install offered; a reason over 120 characters refused before any dialog.
+with Install offered; a reason over 120 characters refused before any dialog; H15 `dialog.lang`: with `zh-TW` the repo line
+(`… 更新`), the skill line, the scripts line and the `exists:` line in 繁體中文 and the check's lines as they are, with `zh-CN` (no
+project) the skill line and the `installs at:` line in 简体中文, with `en` or `ja` English, the `check` tool's `findings` in English,
+the result in English, and an `about` over 120 characters falling back to English (facts too) with the `note:` saying why.
 It installs nothing outside `$E2E/codex/h`: commands that would install at user scope are recorded, not run,
 and `codex plugin marketplace list` is answered by the script (H9 makes its clone in `$E2E/codex/codex-marketplace-clone` and removes it).
 
@@ -383,7 +392,7 @@ dependencies: no npm or Python dependency files
 
 ### Cases
 
-Project `$E2E/claude/p` unless a case says otherwise. Start one session for B1–B15, restart it for
+Project `$E2E/claude/p` unless a case says otherwise. Start one session for B1–B15 and B27, restart it for
 B16 and B23 (fixture), for B26 (a second fixture), and once more after B26. Run every `claude` command below with `iso.sh` (Isolation).
 
 Check each install result with `(. $E2E/iso.sh && python3 -I $KIRBY/tests/e2e/transcript.py claude <P> --tool install --last 1)`
@@ -409,9 +418,9 @@ and what the model wrote with `--say --last 1`.
 Dialog 1 for `SKILL_REPO` (facts, verbatim):
 
 ```
-HEADER(cloudflare/security-audit-skill)
-skill: security-audit · commit <SHA7> · <N> files
-scripts: <len(SCRIPTS)>, e.g. <SCRIPTS[0]>, <SCRIPTS[1]>
+HEADER_ZH(cloudflare/security-audit-skill)
+技能：security-audit · commit <SHA7> · <N> 個檔案
+<len(SCRIPTS)> 個腳本，例如 <SCRIPTS[0]>、<SCRIPTS[1]>
 <CHECK_LINES, one per line>
 ```
 
@@ -443,12 +452,12 @@ Answer Install, then `local`.
 - Reply: says what was added and where, the `next:` line, and that removing it means deleting the folder.
 
 **B4 Existing folder.** Same session and project; same prompt. Answer Install, `local`.
-- Dialog 1 gains, after the scripts line: `exists: .claude/skills/security-audit/ (installing at local or project fails)`.
+- Dialog 1 gains, after the scripts line: `已存在：.claude/skills/security-audit/（安裝在 local 或 project 會失敗）`.
 - Result starts `install failed (scope local): ` and holds `.claude/skills/security-audit already exists; pass --force to replace it`, then `SCAN_NOTE`.
 - Reply shows the failure; no second install call with `force` unless the user asks.
 
 **B5 Force.** Reply `取代現有的資料夾`. Answer Install, `local`.
-- The install call has `"force": true`; dialog 1 shows `(installing at local or project replaces it)`.
+- The install call has `"force": true`; dialog 1 shows `已存在：.claude/skills/security-audit/（安裝在 local 或 project 會取代它）`.
 - Result starts `installed (scope local): ` and its command ends `--commit <SHA> --force`.
 - `.kirby.json` was rewritten (newer mtime than in B3).
 
@@ -483,14 +492,21 @@ Reset the project before each; prompt as B3.
 **B14 Scope step.** Answer Install, then option 1 (`cancel`): `not installed: the user cancelled at the scope step.` + `SCAN_NOTE`. Again with `esc` on dialog 2: `not installed: the user dismissed the scope dialog.` + `SCAN_NOTE`. Nothing written either time.
 
 **B15 English fallback.** Prompt `直接呼叫 mcp__kirby__install 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數，也不要先載入 skill。` Answer Cancel.
-- Dialog 1 ends `What next?`, options `Cancel`, `Read README first`, `Pick another`, `Install`.
+- Dialog 1's facts are in English: `HEADER(cloudflare/security-audit-skill)`, `skill: security-audit · commit <SHA7> · <N> files`,
+  `scripts: <len(SCRIPTS)>, e.g. <SCRIPTS[0]>, <SCRIPTS[1]>`, then `CHECK_LINES`. It ends `What next?`, options `Cancel`, `Read README first`, `Pick another`, `Install`.
 - Result `not installed: the user cancelled.`, `SCAN_NOTE`, then `ENGLISH_NOTE`. If the model loads the skill and passes `dialog` anyway, mark N/A.
+
+**B27 简体中文.** Prompt `用 kirby 安装 cloudflare/security-audit-skill 的 security-audit skill（folder 是 skills/security-audit）`. Answer option 1.
+- The install call's `dialog` has `"lang": "zh-CN"` and its wording is in 简体中文.
+- Dialog 1's facts: `HEADER_ZH(cloudflare/security-audit-skill)`, `技能：security-audit · commit <SHA7> · <N> 个文件`,
+  `<len(SCRIPTS)> 个脚本，例如 <SCRIPTS[0]>、<SCRIPTS[1]>`, then `CHECK_LINES`.
+- Result `not installed: the user cancelled.` + `SCAN_NOTE`, in English; no `note:` line.
 
 ### Fixture: flagged files and a repo that moves on
 
 **B16 Flagged scan, then the repo moves on.** New project `$E2E/claude/fx`; start Claude Code with the
 fixture (subshell, Driving). Prompt as B3. Record `FX_SHA` again (`git -C $E2E/fx/upstream.git rev-parse HEAD`).
-- Dialog 1: the header is still GitHub's; `skill: security-audit · commit <FX_SHA7> · <N+3> files`;
+- Dialog 1: the header is still GitHub's; `技能：security-audit · commit <FX_SHA7> · <N+3> 個檔案`;
   the scripts line counts the fixture's `e2e-setup.sh` and `we?ird.py` too; the check lines are
   FLAGGED, then the lookups' lines of `CHECK_LINES`, then one or more `REVIEW_LINE`s (the fixture's warn findings ask for a
   model review; B26 checks it); no zero-width character anywhere in the dialog.
@@ -573,7 +589,7 @@ Claude Code 2.1.312's `plugin install` can replace the git clone with a snapshot
 
 **B17 Plugin without an MCP server, marketplace not added yet.** Reset `$E2E/claude/p`. Prompt `用 kirby 安裝 anthropics/claude-plugins-official 裡的 agent-sdk-dev plugin`.
 - Transcript: an `mcp__kirby__check` call with `kind` `plugin` whose result has `"review": "not needed"`; no `Agent` call.
-- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, then `PLUGIN_LINES`, one per line. No
+- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, then `PLUGIN_LINES`, one per line. No
   `marketplace: already added` line. Dialog 2: no `prompt cache:` line.
 - Answer Install, `local`. Result, in order:
   - `installed (scope local): claude plugin marketplace add anthropics/claude-plugins-official`
@@ -634,7 +650,7 @@ Prompt as B17 (`PLUGIN_SHA7` is the repo's HEAD now; record it again if it moved
   an `Agent` call as in B26 (the prompt carries that `read` and the package's `files`, none of `MCP_LINES`); the subagent's
   `mcp__kirby__file` calls each pass that `package` and `ref` with a `path` from `files`; the install call has `"sha": "<MCP_REVIEW_SHA>"`
   and the subagent's reply as `review`.
-- Dialog 1 facts: `HEADER(modelcontextprotocol/servers)`, `MCP server: claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_LINES`, then the `REVIEW_LINE`s. The model's `about` says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
+- Dialog 1 facts: `HEADER_ZH(modelcontextprotocol/servers)`, `MCP server: claude mcp add --scope <scope> <MCP_PINNED>`, then `MCP_LINES`, then the `REVIEW_LINE`s. The model's `about`, within its 120 characters, says it takes effect after a restart and does not affect this session's prompt cache, and does not call the repo safe or checked.
 - Answer Install, `local`. Result first line exactly
   `installed (scope local): claude mcp add --scope local <MCP_PINNED>`,
   then the command's output, `next: The server connects in the next session; tell the user to restart Claude Code to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
@@ -689,7 +705,7 @@ Constants only Codex uses:
 
 | Name | Value |
 | --- | --- |
-| `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)` |
+| `USER_ONLY` | `installs at: user (~/.codex/config.toml, every project)`; with `dialog.lang` `zh-TW` (the prompts below) `安裝位置：user（~/.codex/config.toml，所有專案）` |
 | `USER_OPTION` | `install at user (~/.codex/config.toml, every project)` |
 
 ### Driving
@@ -721,8 +737,7 @@ servers install at `user` only, so their dialog 1 ends its facts with `USER_ONLY
 are `cancel`, `USER_OPTION`; dialog 1 for a plugin from a Claude Code marketplace adds
 `marketplace: .claude-plugin/marketplace.json (Claude Code format)`; the install command is run with
 the server's own Python (`<PY>`, e.g. `/usr/bin/python3`) from the plugin cache (`<CACHE>` =
-`$E2E/home/codex/plugins/cache/kirby/kirby/0.1.0`); a refusal before any dialog (`not installed: <reason>`)
-carries no `note:` line, as Codex reads `dialog` only after the preview; and free text is not an
+`$E2E/home/codex/plugins/cache/kirby/kirby/0.1.0`); and free text is not an
 answer Codex's dialogs offer, so there is no `answered "…"` result.
 
 **C1 Stars.** Prompt `用 kirby 從我的 star 找能做安全審查的 skill`. As B1, with an `mcp__kirby__stars` call and no shell `gh` or `python3` call.
@@ -741,7 +756,7 @@ answer Codex's dialogs offer, so there is no `answered "…"` result.
   - `SCAN_NOTE`; no `note:` line
 - Files: `.agents/skills/security-audit/.kirby.json` has `"commit": "<SHA>"`; `.gitignore` has `/.agents/skills/security-audit/`.
 
-**C4 Existing folder.** Same prompt again. Dialog 1 adds `exists: .agents/skills/security-audit/ (installing at local or project fails)`; answer Install, `local`: `install failed (scope local): …` with `.agents/skills/security-audit already exists; pass --force to replace it`, then `SCAN_NOTE`.
+**C4 Existing folder.** Same prompt again. Dialog 1 adds `已存在：.agents/skills/security-audit/（安裝在 local 或 project 會失敗）`; answer Install, `local`: `install failed (scope local): …` with `.agents/skills/security-audit already exists; pass --force to replace it`, then `SCAN_NOTE`.
 
 **C5 Read the README first.** Reset; prompt as C3; answer option 2.
 - Result exactly `not installed: the user wants to read the README first. Summarise it for them (the readme tool) and end your turn. Call this tool again only after they reply that they still want it.` + `SCAN_NOTE`.
@@ -764,7 +779,7 @@ Each followed by `SCAN_NOTE`; nothing written.
   setup already has `PLUGIN_MK` from `PLUGIN_REPO`, the dialog adds
   `marketplace: already added as claude-plugins-official, at commit <its HEAD7>; installs from it as it is`
   and the check is at that commit: note it, and expect no `marketplace add` below, and that line again at the end of the result.
-- Dialog 1 facts: `HEADER(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_LINES`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, the rest of `CODEX_PLUGIN_LINES`, `USER_ONLY`. The model's `about` says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
+- Dialog 1 facts: `HEADER_ZH(anthropics/claude-plugins-official)`, the first line of `CODEX_PLUGIN_LINES`, `marketplace: .claude-plugin/marketplace.json (Claude Code format)`, the rest of `CODEX_PLUGIN_LINES`, `USER_ONLY`. The model's `about`, within its 120 characters, says parts made only for Claude Code (such as hooks) may not work in Codex. Dialog 2 options `cancel`, `USER_OPTION`.
 - Not opted in: answer Install, `cancel`. Result `not installed: the user cancelled at the scope step.` + `CODEX_PLUGIN_NOTE`; `~/.codex/config.toml` unchanged.
 - Opted in: answer Install, `USER_OPTION`. Result starts
   `installed (scope user): codex plugin marketplace add anthropics/claude-plugins-official` then a line `codex plugin add agent-sdk-dev@claude-plugins-official`, the two commands' output, `next: The user starts a new Codex session to use it.`, `CODEX_PLUGIN_NOTE`.
@@ -786,7 +801,7 @@ Each followed by `SCAN_NOTE`; nothing written.
 - Opted in: answer Install, `USER_OPTION`. Result first line exactly `installed (scope user): codex mcp add <MCP_PINNED>`, then output, `next: The user starts a new Codex session to use it.`, `MCP_NOTE`, `REVIEW_BLOCK`.
   `codex mcp get kirby-e2e` without `iso.sh` shows it, with the pinned package. Cleanup at once, without `iso.sh`: `codex mcp remove kirby-e2e`.
 
-**C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1 ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.
+**C10 English fallback.** Prompt `直接呼叫 kirby 的 install tool 安裝 cloudflare/security-audit-skill（kind skill，folder skills/security-audit），不要傳 dialog 參數。` Answer Cancel. Dialog 1's facts are in English, as in B15, and it ends `What next?` with options `Cancel`, `Read README first`, `Pick another`, `Install`; result ends `ENGLISH_NOTE`. N/A if the model passes `dialog` anyway.
 
 **C11 Built-in installer (observe only).** In a fresh project, prompt `install cloudflare/security-audit-skill` (no mention of kirby). Record whether Codex goes through `mcp__kirby__install` or offers its built-in `skill-installer`; decline the latter. This checks the guide's warning (`docs/guide.md`, Codex section) still holds; neither outcome fails.
 

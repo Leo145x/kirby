@@ -160,7 +160,7 @@ kirby 能自己多做一些事来省掉一个步骤时，就会去做：repo 之
 
 ### 对话框语言
 
-对话框的文字由模型按 skill 规定的格式，用你使用的语言写。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 tool 生成，固定是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字或格式不完整时，对话框显示英文。
+对话框的文字由模型按 skill 规定的格式，用你使用的语言写：两个问题、四个选项，以及 `about` 里一句说明这个工具做什么的话（最多 120 个字符），不重复检查结果。上方的事实（repo、star 数、commit、文件、脚本、已存在的文件夹、安装位置、安装前检查的结果），以及 scope 问题下方的 prompt cache 提醒，由 kirby 生成，从不由模型写。模型只用 `dialog.lang` 选它们的语言：`en`、`zh-TW` 或 `zh-CN`，也就是 README 的三种语言，kirby 对每一行事实都备有这三种语言的写法；没有 `lang` 或是其他值，就用英文。命令、路径、名称、版本和 id 保持原样，方便复制和查询。tool 返回给模型的内容（包括 `check` tool 的 `findings`）保持英文。为什么不让模型翻译事实，见 [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md)。目前 kirby 翻译的是 repo 那行、skill 那行（名称、commit、文件数）、脚本、`exists:` 和 `installs at:`；安装前检查本身的各行和 prompt cache 提醒仍是英文。scope 对话框的选项固定是 `cancel`、`local`、`project`、`user`。没有提供文字、格式不完整或超过长度限制时，对话框和其中的事实都显示英文。
 
 ### 安装与 prompt cache
 
@@ -179,7 +179,7 @@ plugin 的提醒由 tool 放在 scope 那一层对话框。MCP 的提醒交给�
 和 Claude Code 版的差异：
 
 - **搜索和读取文件走 MCP tool。** server 的 `stars`、`public`、`detect` 会运行同一批脚本，`readme` 和 `file` 从 GitHub 读取 README 或某个 commit 的单个文件（模型审查时也从 MCP server 的包读取），`check` 不弹对话框、只运行安装前检查，全都在 Codex 的 sandbox 外运行，所以不会每次都请求联网权限。这六个 tool 声明自己只读取，在 Codex 默认的审批设置下，Codex 会直接运行、不先询问。kirby 的 `install` 运行前，Codex 仍会先问；选「Always allow」会记住。
-- **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实部分保持英文。
+- **对话框是 MCP elicitation。** `install` tool 同样弹出两层对话框，和 Claude Code 版一样，文字由模型用你的语言写，事实的语言由模型用 `dialog.lang` 选、由 kirby 自己的写法呈现（见“对话框语言”）。
 - **没有 `default_source` 设置。** 默认是 `stars`，要搜索公开的或两者都搜，直接在 prompt 里说。
 - **scope：**
 
@@ -210,5 +210,6 @@ Codex 也读得懂 Claude Code 格式的 marketplace。plugin 来自这种 marke
 | `check_plugin.py` | marketplace plugin 的安装前检查：获取 marketplace（已经添加的用 `--commit` 指定它所在的 commit），按 plugin 的来源找到它的文件，再运行扫描和查询。输出 JSON，也含上述的 `review`；不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `check_mcp.py` | MCP server 的安装前检查：`check_mcp.py owner/repo '<mcp_args 的 JSON>'` 找出 repo 写的、命令实际运行的包，下载并解开那个版本（不安装），再运行扫描和查询。输出 JSON，其中 `mcp_args` 是锁定在那个版本的命令，`review` 同上（它的 `sha` 是归档文件的 sha256）。`check_mcp.py --read '<JSON>'` 为 `file` tool 打印这种包里的单个文件。不会安装任何东西。由 mod 和 Codex 的 MCP server 调用 |
 | `lookups.py` | `install_skill.py --check`、`check_plugin.py` 和 `check_mcp.py` 运行的漏洞查询和恶意包查询：读取依赖文件、不安装就算出版本，再向 OSV.dev 和 GitHub 查询。不会单独运行 |
+| `words.py` | kirby 对对话框各行事实的写法，有英文、繁體中文和简体中文，和 mod 的 `hooks/words.ts` 相同。由 Codex MCP server 使用。不会单独运行 |
 
 `detect.py --agent codex` 会先找 Codex 的 marketplace（`.agents/plugins/marketplace.json`）；`install_skill.py --agent codex` 会装到 `.agents/skills/`。

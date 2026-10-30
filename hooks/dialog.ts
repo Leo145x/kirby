@@ -1,8 +1,12 @@
 // The dialogs' wording. The model writes it in the user's language (the tool's `dialog` input, in the
-// format the inhale skill gives); the facts above it and the scope dialog's options stay the tool's
-// own. When the wording is missing or unusable, the dialogs are in English. The model review's result
-// (the tool's `review` input) also reaches the first dialog, as readReview checks it. Pure: no `$`, so
-// the tests can run it directly; the rules match codex/dialog.py.
+// format the inhale skill gives) and picks the language of the facts above it (dialog.lang), which kirby
+// words itself (words.ts, docs/adr/0006); the scope dialog's options stay the tool's own. When the wording
+// is missing or unusable, the dialogs and their facts are in English. The model review's result (the
+// tool's `review` input) also reaches the first dialog, as readReview checks it. Pure: no `$`, so the
+// tests can run it directly; the rules match codex/dialog.py.
+
+import { readLang } from './words'
+import type { Lang } from './words'
 
 export type Kind = 'skill' | 'plugin' | 'mcp'
 export type Scope = 'local' | 'project' | 'user'
@@ -17,6 +21,8 @@ export type Dialog = {
   // In this order: cancel, read the README first, pick another, install.
   options: readonly [string, string, string, string]
   scope: string
+  // The language of the facts, which kirby words.
+  lang: Lang
 }
 
 export function english(): Dialog {
@@ -25,6 +31,7 @@ export function english(): Dialog {
     next: 'What next?',
     options: ['Cancel', 'Read README first', 'Pick another', 'Install'],
     scope: 'Install at which scope?',
+    lang: 'en',
   }
 }
 
@@ -34,10 +41,11 @@ export function nextOptions(d: Dialog, blocked: boolean): string[] {
   return blocked ? d.options.slice(0, 3) : [...d.options]
 }
 
-const MAX = { about: 600, next: 200, option: 40, scope: 600 }
+// In characters (code points, as Python counts them), not UTF-16 units.
+export const MAX = { about: 120, next: 200, option: 40, scope: 600 }
 
 function text(value: unknown, max: number): string | null {
-  return typeof value === 'string' && value.trim() !== '' && value.length <= max ? value.trim() : null
+  return typeof value === 'string' && value.trim() !== '' && [...value].length <= max ? value.trim() : null
 }
 
 // The model's wording, or English and why the wording could not be used.
@@ -56,7 +64,7 @@ export function readDialog(raw: unknown): { dialog: Dialog; problem?: string } {
   if (options.length !== 4 || options.some(o => o === null) || new Set(options).size !== 4) {
     return fallback(`dialog.options must be 4 distinct labels of at most ${MAX.option} characters`)
   }
-  return { dialog: { about, next, options: options as unknown as Dialog['options'], scope } }
+  return { dialog: { about, next, options: options as unknown as Dialog['options'], scope, lang: readLang(d.lang) } }
 }
 
 // What the check says about the model review: whether it was needed (another part of the check found a

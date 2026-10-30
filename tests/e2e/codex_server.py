@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive codex/server.py's install(), check() and file() with a fake peer in place of Codex's dialogs (H1–H14).
+"""Drive codex/server.py's install(), check() and file() with a fake peer in place of Codex's dialogs (H1–H15).
 
     python3 -I tests/e2e/codex_server.py FIXTURE_DIR PROJECT_DIR
 
@@ -23,10 +23,13 @@ sys.path.insert(0, str(ROOT / "codex"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import server  # noqa: E402
+from words import say  # noqa: E402  (server puts the scripts on the path)
 
 REPO, FOLDER = fixture.REPO, fixture.FOLDER
 ENGLISH = ["Cancel", "Read README first", "Pick another", "Install"]
+# The model's wording without a lang, so the facts are in English (H15 picks a language).
 ZH = {"about": "測試用。", "next": "下一步？", "options": ["取消", "先讀 README", "換一個", "安裝"], "scope": "裝在哪個範圍？"}
+USER_ONLY, SKILL_USER_ONLY = say(server.USER_ONLY, "en"), say(server.SKILL_USER_ONLY, "en")
 NO_DIALOG = "\nnote: the dialogs were in English because no dialog was given; pass dialog as the inhale skill describes."
 # A check that found a danger or warn finding asks for a model review; an install without one says so.
 UNREVIEWED = "model review: unchecked (no review result was passed)"
@@ -162,7 +165,7 @@ def main():
     p = Peer("安裝", server.SKILL_USER_OPTION)
     with Held() as held:
         r = server.install(p, {**skill, "dialog": ZH}, None)
-    check("H5 no project -> only user", server.SKILL_USER_ONLY in p.asked[0][0]
+    check("H5 no project -> only user", SKILL_USER_ONLY in p.asked[0][0]
           and p.asked[1] == ("裝在哪個範圍？", ["cancel", server.SKILL_USER_OPTION])
           and r.startswith("installed (scope user): ") and len(held.argv) == 1
           and held.argv[0][-6:] == ["--scope", "user", "--agent", "codex", "--commit", c["sha"]], f"{p.asked}\n      {r}")
@@ -216,6 +219,40 @@ def main():
     check("H8 project scope leaves .gitignore alone",
           (project / ".gitignore").read_text().splitlines().count("/.agents/skills/security-audit/") == 1)
 
+    # H15: dialog.lang: kirby words its own lines (repo, skill, scripts, exists, installs at) in 繁體中文 or 简体中文;
+    # the check's lines stay as they are, and what the tools answer the model stays English. The folder is there from H8.
+    c = preview(project)
+    names = "、".join(c["scripts"][:2])
+    p = Peer("取消")
+    r = server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW"}}, meta)
+    q = p.asked[0][0]
+    check("H15 zh-TW: kirby's lines in 繁體中文, the check's as they are, the result in English",
+          re.match(rf"{re.escape(REPO)} ★\d+ · \d{{4}}-\d\d-\d\d 更新\n", q) is not None
+          and f"\n技能：security-audit · commit {c['commit']} · {c['files']} 個檔案\n"
+              + (f"{len(c['scripts'])} 個腳本，例如 {names}\n" if c["scripts"] else "")
+              + "已存在：.agents/skills/security-audit/（安裝在 local 或 project 會失敗）\n" + "\n".join(c["lines"]) in q
+          and r == "not installed: the user cancelled.\n" + c["note"], f"{q}\n      {r}")
+    p = Peer("取消")
+    server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-CN"}}, None)
+    q = p.asked[0][0]
+    check("H15 zh-CN without a project: 简体中文, installs at in 简体中文",
+          f"\n技能：security-audit · commit {c['commit']} · {c['files']} 个文件\n" in q
+          and "\n安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）\n\n測試用。" in q, q)
+    for lang in ("en", "ja"):
+        p = Peer("取消")
+        server.install(p, {**skill, "dialog": {**ZH, "lang": lang}}, meta)
+        check(f"H15 lang {lang!r} -> English facts",
+              f"\nskill: security-audit · commit {c['commit']} · {c['files']} files\n" in p.asked[0][0], p.asked[0][0])
+    ok, out = server.check(skill, meta)
+    check("H15 check findings stay English", ok and json.loads(out)["findings"][0]
+          == f"skill: security-audit · commit {c['commit']} · {c['files']} files", out[:300])
+    p = Peer("Cancel")
+    r = server.install(p, {**skill, "dialog": {**ZH, "lang": "zh-TW", "about": "測" * 121}}, meta)
+    check("H15 about over 120 characters -> English, facts too, and the note says why",
+          p.asked[0][1] == ENGLISH and f"\nskill: security-audit · commit {c['commit']} · {c['files']} files\n" in p.asked[0][0]
+          and r.endswith("\nnote: the dialogs were in English because dialog.about, when given, must be at most 120 "
+                         "characters; pass dialog as the inhale skill describes."), r)
+
     # H9: a plugin: the pre-install check of its files, the marketplace format, where it installs; the scope
     # dialog's install option, in the server's words, adds the marketplace without a ref, installs, and
     # checks the marketplace's commit after; cancel there runs none, even when dialog 1's options are out
@@ -237,7 +274,7 @@ def main():
     q = p.asked[0][0]
     check("H9 plugin facts: the check's lines, the format, where it installs",
           "\n".join([pc["lines"][0], "marketplace: .claude-plugin/marketplace.json (Claude Code format)", *pc["lines"][1:],
-                     server.USER_ONLY]) in q
+                     USER_ONLY]) in q
           and pc["lines"][1:3] == ["description: Development kit for working with the Claude Agent SDK",
                                    "source: plugins/agent-sdk-dev/ in this repo"], q)
     check("H9 plugin: scope dialog, then the marketplace added without a ref, the install, and its commit checked",
@@ -299,7 +336,7 @@ def main():
         r = server.install(p, {**mcp, "mcp_args": args}, meta)
     unreviewed = [UNREVIEWED] if c["review"]["needed"] else []
     check("H10 mcp facts, scope dialog, then install the pinned command",
-          "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], *unreviewed, server.USER_ONLY]) in p.asked[0][0]
+          "\n".join([f"MCP server: codex mcp add {' '.join(pinned)}", *c["lines"], *unreviewed, USER_ONLY]) in p.asked[0][0]
           and p.asked[1][1] == ["cancel", server.USER_OPTION] and held.argv == [["codex", "mcp", "add", *pinned]]
           and r == f"installed (scope user): codex mcp add {' '.join(pinned)}\n(held)\n"
                    f"next: The user starts a new Codex session to use it.\n{c['note']}"
@@ -324,7 +361,7 @@ def main():
     unchecked = ("unchecked: pattern scan, advisory lookup and malware lookup (the command runs a container image, which "
                  "kirby does not check); not pinned")
     check("H10 a container image is unchecked and not pinned",
-          f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{server.USER_ONLY}" in p.asked[0][0] and not held.argv
+          f"MCP server: codex mcp add {' '.join(docker)}\n{unchecked}\n{USER_ONLY}" in p.asked[0][0] and not held.argv
           and r.startswith("not installed: the user cancelled.\npattern scan: the dialog showed the user that the pattern scan "
                            "and the lookups did not run on this MCP server"), r)
 

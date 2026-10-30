@@ -1,7 +1,8 @@
 // The install step of inhale: one tool that asks the user what to do next and, to install,
 // which scope, then runs the install. Searching and recommending stay in the skill's scripts.
-// The dialogs show the facts the tool found and the model's wording in the user's language (see
-// dialog.ts); what the tool answers is for the model, in English. Beside it, two read-only tools for
+// The dialogs show the facts the tool found, worded by kirby in the language the model picked (words.ts,
+// docs/adr/0006), and the model's wording in the user's language (see dialog.ts); what the tool answers is
+// for the model, in English. Beside it, two read-only tools for
 // the model review (docs/adr/0002, check.ts): `check` runs install's pre-install check without a
 // dialog, and `file` reads one file where the check read it; kirby allows those two without a prompt, and
 // the reviewer agent kirby:reviewer can use only them. install takes the review's result and decides from
@@ -16,6 +17,8 @@ import type { Kind, Scope } from './dialog'
 import { alreadyAdded, findAdded, headOf, installPlugin, notListed } from './plugin'
 import type { Added, Run } from './plugin'
 import { callLine, resultLine } from './rows'
+import { fact, say } from './words'
+import type { Fact } from './words'
 
 type $ = EngineInterface
 type Input = Record<string, unknown>
@@ -31,8 +34,9 @@ const TOOL = {
     "marketplace plugin's name; repo is the marketplace); kind=mcp needs mcp_args, everything that follows " +
     '`claude mcp add --scope <scope>`, e.g. ["github", "--", "npx", "-y", "@modelcontextprotocol/server-github"]. ' +
     'force replaces an existing skill folder of the same name. dialog is the wording of both dialogs in the ' +
-    "user's language, in the format the inhale skill gives; without it they are in English. When the check tool " +
-    "said a review is needed, pass the model review's result as review and the check's read.ref as sha.",
+    "user's language, in the format the inhale skill gives (about at most 120 characters); without it they are in " +
+    'English. dialog.lang (en, zh-TW or zh-CN) is the language kirby words the facts in; any other is English. ' +
+    "When the check tool said a review is needed, pass the model review's result as review and the check's read.ref as sha.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,6 +64,7 @@ const TOOL = {
           next: { type: 'string' },
           options: { type: 'array', items: { type: 'string' } },
           scope: { type: 'string' },
+          lang: { type: 'string', description: 'en, zh-TW or zh-CN; any other value is en' },
         },
       },
     },
@@ -72,7 +77,7 @@ const CHECK = {
   description:
     'Run the pre-install check of what install would install, read-only and without a dialog, as JSON: review ' +
     '(needed, not needed, or not possible), read (what to pass the file tool, with each path) and files (the files ' +
-    "the check covered) when a review is needed, findings (the dialog's facts) and blocked. Takes the same repo, kind " +
+    "the check covered) when a review is needed, findings (the dialog's facts, in English) and blocked. Takes the same repo, kind " +
     'and folder, plugin or mcp_args as install. When review is needed, the inhale skill says how to have the files reviewed.',
   inputSchema: {
     type: 'object',
@@ -122,11 +127,11 @@ async function run($: $, argv: readonly string[]) {
   return { ok: r.exitCode === 0, out: [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n') }
 }
 
-async function repoHeader($: $, repo: string): Promise<string> {
+async function repoHeader($: $, repo: string): Promise<Fact> {
   const r = await run($, ['gh', 'api', `repos/${repo}`, '--jq', '[.stargazers_count, .pushed_at, .archived] | @json'])
   if (!r.ok) throw new Refusal(`gh api repos/${repo} failed: ${r.out}`)
   const [stars, pushed, archived] = JSON.parse(r.out) as [number, string | null, boolean]
-  return `${repo} ★${stars} · pushed ${(pushed ?? '?').slice(0, 10)}${archived ? ' · ARCHIVED' : ''}`
+  return fact(archived ? 'repo_archived' : 'repo', { repo, stars, pushed: (pushed ?? '?').slice(0, 10) })
 }
 
 function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
@@ -138,14 +143,14 @@ function pluginCacheNote(sure: boolean, toolSearchOff: boolean): string {
   )
 }
 
-// The facts about what the install would do, the prompt-cache note for the scope dialog, the
+// The facts about what the install would do (each a line or a fact for words.say), the prompt-cache note for the scope dialog, the
 // pre-install check as the model reads it in every result (so it can explain a finding), and whether
 // the malware lookup blocked it; for a skill or a plugin the commit shown, which is the one installed;
 // for a plugin also its marketplace's name and, if the user already added it, where it is; for an MCP
 // server the command to run, with the package checked pinned to the version checked; and what the model
 // review reads and whether it is needed, the check's own.
 type Plan = {
-  lines: string; cache: string; scan: string; review: ReviewOf; commit?: string; blocked?: boolean; marketplace?: string
+  facts: Fact[]; cache: string; scan: string; review: ReviewOf; commit?: string; blocked?: boolean; marketplace?: string
   added?: Added | null; mcpArgs?: string[]
 }
 
@@ -161,15 +166,11 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
       name: string; commit: string; sha: string; files: number; scripts: string[]; exists: boolean
       lines: string[]; note: string; blocked: boolean; review: ReviewOf
     }
-    const lines = [`skill: ${c.name} · commit ${c.commit} · ${c.files} files`]
-    if (c.scripts.length) lines.push(`scripts: ${c.scripts.length}, e.g. ${c.scripts.slice(0, 2).join(', ')}`)
-    if (c.exists) {
-      lines.push(`exists: .claude/skills/${c.name}/ (installing at local or project ${input.force === true ? 'replaces it' : 'fails'})`)
-    }
-    lines.push(...c.lines)
-    return {
-      lines: lines.join('\n'), cache: '', scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true,
-    }
+    const facts: Fact[] = [fact('skill', { name: c.name, commit: c.commit, files: c.files })]
+    if (c.scripts.length) facts.push(fact('scripts', { count: c.scripts.length, names: c.scripts.slice(0, 2) }))
+    if (c.exists) facts.push(fact(input.force === true ? 'exists_replaces' : 'exists_fails', { path: `.claude/skills/${c.name}/` }))
+    facts.push(...c.lines)
+    return { facts, cache: '', scan: c.note, review: c.review, commit: c.sha, blocked: c.blocked === true }
   }
   if (kind === 'plugin') {
     const name = String(input.plugin ?? '')
@@ -202,7 +203,7 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
     const toolSearchOff = (await $.env.get('ENABLE_TOOL_SEARCH')) === 'false'
     const cache = c.mcp_servers === false ? '' : pluginCacheNote(c.mcp_servers === true, toolSearchOff)
     return {
-      lines: [c.lines[0], ...about, ...c.lines.slice(1)].join('\n'), cache, scan: [c.note, ...about].join('\n'), review: c.review,
+      facts: [c.lines[0], ...about, ...c.lines.slice(1)], cache, scan: [c.note, ...about].join('\n'), review: c.review,
       commit: c.sha, blocked: c.blocked === true, marketplace: added?.name ?? c.marketplace, added,
     }
   }
@@ -216,7 +217,7 @@ async function preview($: $, kind: Kind, input: Input): Promise<Plan> {
   if (!r.ok) throw new Refusal(r.out)
   const c = JSON.parse(r.out) as { mcp_args: string[]; lines: string[]; note: string; blocked: boolean; review: ReviewOf }
   return {
-    lines: [`MCP server: claude mcp add --scope <scope> ${c.mcp_args.join(' ')}`, ...c.lines].join('\n'), cache: '', scan: c.note,
+    facts: [`MCP server: claude mcp add --scope <scope> ${c.mcp_args.join(' ')}`, ...c.lines], cache: '', scan: c.note,
     review: c.review, blocked: c.blocked === true, mcpArgs: c.mcp_args,
   }
 }
@@ -249,7 +250,8 @@ async function check($: $, input: Input): Promise<string> {
   if ('problem' in t) return `not checked: ${t.problem}`
   try {
     const plan = await preview($, t.kind, input)
-    return checkResult(plan.lines.split('\n'), plan.review, plan.blocked === true)
+    // The model reads the facts in English, whatever language the dialog shows them in.
+    return checkResult(plan.facts.map(f => say(f, 'en')), plan.review, plan.blocked === true)
   } catch (err) {
     if (err instanceof Refusal) return `not checked: ${err.message}`
     throw err
@@ -273,7 +275,7 @@ async function install($: $, input: Input): Promise<string> {
   // Tells the model why its wording was not used, so the next call can fix it.
   const note = problem ? `\nnote: the dialogs were in English because ${problem}; pass dialog as the inhale skill describes.` : ''
 
-  let header: string
+  let header: Fact
   let plan: Plan
   try {
     header = await repoHeader($, repo)
@@ -293,8 +295,8 @@ async function install($: $, input: Input): Promise<string> {
   // Cancel comes first so a stray Enter already queued when the dialog opens cancels.
   const about = d.about ? `\n\n${d.about}` : ''
   const blocked = plan.blocked === true
-  const facts = [plan.lines, ...reviewed.lines].join('\n')
-  const next = await ask($, `${header}\n${facts}${about}\n\n${d.next}`, nextOptions(d, blocked))
+  const facts = [header, ...plan.facts, ...reviewed.lines].map(f => say(f, d.lang)).join('\n')
+  const next = await ask($, `${facts}${about}\n\n${d.next}`, nextOptions(d, blocked))
   $.ui.log(`install ${repo} (${kind}): next step ${JSON.stringify(next)}${problem ? ` (English: ${problem})` : ''}`, { to: 'debug' })
   if (next === readme) {
     return `not installed: the user wants to read the README first. Summarise it for them (gh api repos/${repo}/readme -H 'Accept: application/vnd.github.raw') and end your turn. Call this tool again only after they reply that they still want it.${tail}`

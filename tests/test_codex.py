@@ -8,8 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex"))
 
-from dialog import CANCEL, REVIEW_MAX, SCOPES, english, next_options, read_dialog, read_review  # noqa: E402
+from dialog import CANCEL, MAX, REVIEW_MAX, SCOPES, english, next_options, read_dialog, read_review  # noqa: E402
 import server  # noqa: E402
+from words import WORDS, fact, read_lang, say  # noqa: E402  (server puts the scripts on the path)
+
+# Where user is the only scope, as the dialog says it with no lang.
+USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
+SKILL_USER_ONLY = "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"
 
 GOOD = {
     "about": "把 archify 裝成 skill。",
@@ -23,7 +28,19 @@ class Dialog(unittest.TestCase):
     def test_the_models_wording_is_used_when_it_is_complete(self):
         d, problem = read_dialog(GOOD)
         self.assertIsNone(problem)
-        self.assertEqual(d, GOOD)
+        self.assertEqual(d, {**GOOD, "lang": "en"})
+
+    def test_lang_picks_the_language_of_the_facts_and_anything_else_is_english_and_not_a_problem(self):
+        self.assertEqual(read_dialog({**GOOD, "lang": "zh-TW"}), ({**GOOD, "lang": "zh-TW"}, None))
+        self.assertEqual(read_dialog({**GOOD, "lang": "zh-CN"})[0]["lang"], "zh-CN")
+        for lang in ("ja", "zh-Hant", 7):
+            self.assertEqual(read_dialog({**GOOD, "lang": lang}), ({**GOOD, "lang": "en"}, None))
+        self.assertEqual(english()["lang"], "en")
+
+    def test_about_is_at_most_120_characters_counted_as_characters(self):
+        self.assertIsNone(read_dialog({**GOOD, "about": "𠀀" * 120})[1])
+        self.assertEqual(read_dialog({**GOOD, "lang": "zh-TW", "about": "x" * 121}),
+                         (english(), "dialog.about, when given, must be at most 120 characters"))
 
     def test_the_scope_options_are_the_tools_own(self):
         # Extra keys from an older skill, such as scopes, are ignored.
@@ -39,7 +56,7 @@ class Dialog(unittest.TestCase):
             {**GOOD, "scope": "  "},
             {**GOOD, "options": ["取消", "先讀 README", "安裝"]},
             {**GOOD, "options": ["取消", "取消", "換一個", "安裝"]},
-            {**GOOD, "about": "x" * 601},
+            {**GOOD, "about": "x" * 121},
         ]
         for raw in bad:
             d, problem = read_dialog(raw)
@@ -50,6 +67,68 @@ class Dialog(unittest.TestCase):
         d, _ = read_dialog(GOOD)
         self.assertEqual(next_options(d, blocked=False), ["取消", "先讀 README", "換一個", "安裝"])
         self.assertEqual(next_options(d, blocked=True), ["取消", "先讀 README", "換一個"])
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class Words(unittest.TestCase):
+    """kirby's own wording of a fact line, in the language the model picked (docs/adr/0006). The same cases are
+    in tests/dialog.test.ts, so both sides give the same lines."""
+
+    ZH_TW = [
+        (fact("repo", repo="o/r", stars=52770, pushed="2026-09-14"), "o/r ★52770 · 2026-09-14 更新"),
+        (fact("repo_archived", repo="o/r", stars=3, pushed="?"), "o/r ★3 · ? 更新 · 已封存"),
+        (fact("skill", name="security-audit", commit="b673708", files=23), "技能：security-audit · commit b673708 · 23 個檔案"),
+        (fact("scripts", count=6, names=["run.sh", "setup.py"]), "6 個腳本，例如 run.sh、setup.py"),
+        (fact("exists_fails", path=".claude/skills/s/"), "已存在：.claude/skills/s/（安裝在 local 或 project 會失敗）"),
+        (fact("exists_replaces", path=".agents/skills/s/"), "已存在：.agents/skills/s/（安裝在 local 或 project 會取代它）"),
+        (fact("installs_at_user"), "安裝位置：user（~/.codex/config.toml，所有專案）"),
+        (fact("installs_at_user_skill"), "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）"),
+        ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+    ]
+    ZH_CN = [
+        (fact("repo", repo="o/r", stars=52770, pushed="2026-09-14"), "o/r ★52770 · 2026-09-14 更新"),
+        (fact("repo_archived", repo="o/r", stars=3, pushed="?"), "o/r ★3 · ? 更新 · 已归档"),
+        (fact("skill", name="security-audit", commit="b673708", files=23), "技能：security-audit · commit b673708 · 23 个文件"),
+        (fact("scripts", count=6, names=["run.sh", "setup.py"]), "6 个脚本，例如 run.sh、setup.py"),
+        (fact("exists_fails", path=".claude/skills/s/"), "已存在：.claude/skills/s/（安装在 local 或 project 会失败）"),
+        (fact("exists_replaces", path=".agents/skills/s/"), "已存在：.agents/skills/s/（安装在 local 或 project 会替换它）"),
+        (fact("installs_at_user"), "安装位置：user（~/.codex/config.toml，所有项目）"),
+        (fact("installs_at_user_skill"), "安装位置：user（~/.agents/skills/；Codex 没有说这个会话在哪个项目）"),
+        ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+    ]
+    EN = [
+        (fact("repo", repo="o/r", stars=52770, pushed="2026-09-14"), "o/r ★52770 · pushed 2026-09-14"),
+        (fact("repo_archived", repo="o/r", stars=3, pushed="?"), "o/r ★3 · pushed ? · ARCHIVED"),
+        (fact("skill", name="security-audit", commit="b673708", files=23), "skill: security-audit · commit b673708 · 23 files"),
+        (fact("scripts", count=6, names=["run.sh", "setup.py"]), "scripts: 6, e.g. run.sh, setup.py"),
+        (fact("exists_fails", path=".claude/skills/s/"), "exists: .claude/skills/s/ (installing at local or project fails)"),
+        (fact("exists_replaces", path=".agents/skills/s/"), "exists: .agents/skills/s/ (installing at local or project replaces it)"),
+        (fact("installs_at_user"), "installs at: user (~/.codex/config.toml, every project)"),
+        (fact("installs_at_user_skill"), "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"),
+        ("check: nothing found (2 files)", "check: nothing found (2 files)"),
+    ]
+
+    def test_kirby_words_each_fact_line_in_the_language_picked(self):
+        for lang, cases in (("zh-TW", self.ZH_TW), ("zh-CN", self.ZH_CN), ("en", self.EN)):
+            for f, line in cases:
+                self.assertEqual(say(f, lang), line)
+
+    def test_a_value_is_put_in_as_it_is_even_one_that_looks_like_a_placeholder(self):
+        self.assertEqual(say(fact("skill", name="{commit}", commit="b673708", files=1), "en"),
+                         "skill: {commit} · commit b673708 · 1 files")
+
+    def test_the_language_is_en_zh_tw_or_zh_cn_and_anything_else_is_en(self):
+        for lang in ("en", "zh-TW", "zh-CN"):
+            self.assertEqual(read_lang(lang), lang)
+        for lang in (None, "zh-tw", "ja", "zh", 1, ["en"]):
+            self.assertEqual(read_lang(lang), "en")
+
+    def test_both_sides_carry_the_same_wording(self):
+        ts = (ROOT / "hooks" / "words.ts").read_text()
+        table = ts.split("// words:start\nconst WORDS = ", 1)[1].split("\n// words:end", 1)[0]
+        self.assertEqual(json.loads(table), WORDS)
 
 
 SHA = "a" * 40
@@ -236,7 +315,7 @@ class OneScope(unittest.TestCase):
     def test_the_dialog_shows_the_check_and_the_pinned_command_installs(self):
         peer, ran, r = self.install("安裝", server.USER_OPTION)
         self.assertEqual(self.scripts, [("check_mcp.py", "--", "o/r", json.dumps(self.ARGS))])
-        self.assertIn("\n".join(["MCP server: codex mcp add probe -- npx -y probe@1.0.0", *self.CHECK["lines"], server.USER_ONLY]),
+        self.assertIn("\n".join(["MCP server: codex mcp add probe -- npx -y probe@1.0.0", *self.CHECK["lines"], USER_ONLY]),
                       peer.asked[0][0])
         self.assertEqual(peer.asked[1], (GOOD["scope"], [CANCEL, server.USER_OPTION]))
         self.assertEqual(ran, [["codex", "mcp", "add", "probe", "--", "npx", "-y", "probe@1.0.0"]])
@@ -300,6 +379,86 @@ class Blocked(unittest.TestCase):
         self.assertEqual(peer.asked[0][1], GOOD["options"])
 
 
+class Language(unittest.TestCase):
+    """A skill's first dialog shows kirby's lines in the language the model picked (dialog.lang), and the
+    pre-install check's own lines as they are; what the tools answer the model stays English. The same cases
+    are in tests/register.test.ts."""
+
+    CHECK = {
+        "name": "s", "commit": "aaaaaaa", "sha": SHA, "files": 2, "scripts": ["run.sh", "setup.py", "x.sh"], "exists": True,
+        "lines": ["check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)"],
+        "note": "pattern scan: the dialog showed the user no pattern-scan findings", "blocked": False,
+        "review": {**NEEDED, "needed": False},
+    }
+
+    def call(self, lang, *, project=None, force=False, tool="install"):
+        run, script = server.run, server.script
+        server.run = lambda argv, cwd=None: (True, '[52770, "2026-09-14T08:00:00Z", false]')
+        server.script = lambda name, *args, cwd=None: (True, json.dumps(self.CHECK))
+        meta = {"x-codex-turn-metadata": {"workspaces": {project: {}}}} if project else None
+        a = {"repo": "o/r", "kind": "skill", "folder": "s", "force": force, "dialog": {**GOOD, "lang": lang}}
+        try:
+            peer = OneScope.Peer("取消")
+            r = server.check(a, meta) if tool == "check" else server.install(peer, a, meta)
+        finally:
+            server.run, server.script = run, script
+        return peer, r
+
+    def test_with_zh_tw_kirbys_lines_are_in_traditional_chinese(self):
+        peer, r = self.call("zh-TW")
+        self.assertEqual(peer.asked[0][0], "\n".join([
+            "o/r ★52770 · 2026-09-14 更新",
+            "技能：s · commit aaaaaaa · 2 個檔案",
+            "3 個腳本，例如 run.sh、setup.py",
+            *self.CHECK["lines"],
+            "安裝位置：user（~/.agents/skills/；Codex 沒有說這個工作階段在哪個專案）",
+        ]) + f"\n\n{GOOD['about']}\n\n{GOOD['next']}")
+        self.assertEqual(r, f"not installed: the user cancelled.\n{self.CHECK['note']}")
+
+    def test_with_zh_cn_kirbys_lines_are_in_simplified_chinese(self):
+        with tempfile.TemporaryDirectory() as project:
+            peer, _ = self.call("zh-CN", project=project)
+        self.assertTrue(peer.asked[0][0].startswith("\n".join([
+            "o/r ★52770 · 2026-09-14 更新",
+            "技能：s · commit aaaaaaa · 2 个文件",
+            "3 个脚本，例如 run.sh、setup.py",
+            "已存在：.agents/skills/s/（安装在 local 或 project 会失败）",
+            *self.CHECK["lines"],
+        ]) + "\n\n"), peer.asked[0][0])
+
+    def test_with_en_a_missing_lang_or_any_other_it_is_english_as_before(self):
+        english_lines = "\n".join([
+            "o/r ★52770 · pushed 2026-09-14",
+            "skill: s · commit aaaaaaa · 2 files",
+            "scripts: 3, e.g. run.sh, setup.py",
+            "exists: .agents/skills/s/ (installing at local or project replaces it)",
+            *self.CHECK["lines"],
+        ]) + "\n\n"
+        for lang in ("en", None, "ja"):
+            with tempfile.TemporaryDirectory() as project:
+                peer, _ = self.call(lang, project=project, force=True)
+            self.assertTrue(peer.asked[0][0].startswith(english_lines), peer.asked[0][0])
+
+    def test_the_install_tool_takes_dialog_lang(self):
+        install = next(t for t in server.TOOLS if t["name"] == "install")
+        self.assertEqual(sorted(install["inputSchema"]["properties"]["dialog"]["properties"]),
+                         ["about", "lang", "next", "options", "scope"])
+        self.assertIn("dialog.lang (en, zh-TW or zh-CN)", install["description"])
+
+    def test_both_inhale_skills_ask_for_lang_and_the_about_limit_the_tool_takes(self):
+        for skill in ("skills/inhale/SKILL.md", "codex/skills/inhale/SKILL.md"):
+            text = (ROOT / skill).read_text()
+            self.assertIn(f"`about` {MAX['about']}", text, skill)
+            self.assertIn('"lang": "<en, zh-TW or zh-CN', text, skill)
+
+    def test_the_check_tools_findings_stay_english(self):
+        _, (_, out) = self.call("zh-TW", tool="check")
+        self.assertEqual(json.loads(out)["findings"], [
+            "skill: s · commit aaaaaaa · 2 files", "scripts: 3, e.g. run.sh, setup.py", *self.CHECK["lines"],
+            "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)",
+        ])
+
+
 class ModelReview(unittest.TestCase):
     """check → the model review, when the check asks for one → install with the sha checked and the review's
     result (docs/adr/0002). install decides from its own check whether a review was needed."""
@@ -332,7 +491,7 @@ class ModelReview(unittest.TestCase):
         self.assertEqual(json.loads(out), {
             "review": "needed", "read": {"repo": "o/r", "ref": SHA}, "files": ["s/SKILL.md", "s/run.sh"],
             "findings": ["skill: s · commit aaaaaaa · 2 files", "scripts: 1, e.g. run.sh", *self.CHECK["lines"],
-                         server.SKILL_USER_ONLY],
+                         SKILL_USER_ONLY],
             "blocked": False})
 
     def test_check_says_when_no_review_is_needed_or_possible(self):
@@ -353,7 +512,7 @@ class ModelReview(unittest.TestCase):
 
     def test_the_reviews_findings_follow_the_check_in_the_dialog_and_in_every_result(self):
         peer, r = self.call({**self.SKILL, "sha": SHA, "review": {"findings": [self.FINDING]}}, "取消")
-        self.assertIn("\n".join([*self.CHECK["lines"], self.LINE, server.SKILL_USER_ONLY]), peer.asked[0][0])
+        self.assertIn("\n".join([*self.CHECK["lines"], self.LINE, SKILL_USER_ONLY]), peer.asked[0][0])
         self.assertEqual(peer.asked[0][1], GOOD["options"])
         self.assertEqual(r, "not installed: the user cancelled.\npattern scan: the dialog showed the user these pattern-scan "
                             f"findings\nlookups: none\nreview: the dialog showed the user these model review lines:\n  {self.LINE}")
@@ -395,7 +554,7 @@ class ModelReview(unittest.TestCase):
         _, (_, out) = self.call(a, check=check, tool="check")
         self.assertEqual(json.loads(out)["read"], {"package": package["package"], "ref": "e" * 64})
         peer, _ = self.call({**a, "sha": "e" * 64, "review": {"findings": []}}, "取消", check=check)
-        self.assertIn(f"{OneScope.CHECK['lines'][-1]}\nmodel review: nothing found (as reported by the model)\n{server.USER_ONLY}",
+        self.assertIn(f"{OneScope.CHECK['lines'][-1]}\nmodel review: nothing found (as reported by the model)\n{USER_ONLY}",
                       peer.asked[0][0])
 
 
@@ -447,7 +606,7 @@ class Plugin(unittest.TestCase):
         peer, ran, scripts, r = self.install("安裝", server.USER_OPTION, listed=[[], [self.added()]], heads=[self.SHA])
         self.assertEqual(scripts, [("check_plugin.py", "--agent", "codex", "--", "o/mk", "p")])
         self.assertIn("\n".join([self.CHECK["lines"][0], "marketplace: .claude-plugin/marketplace.json (Claude Code format)",
-                                 *self.CHECK["lines"][1:], server.USER_ONLY]), peer.asked[0][0])
+                                 *self.CHECK["lines"][1:], USER_ONLY]), peer.asked[0][0])
         # No --ref, so `codex plugin marketplace upgrade` keeps working (docs/adr/0003).
         self.assertEqual(ran, [["codex", "plugin", "marketplace", "add", "o/mk"], ["codex", "plugin", "add", "p@mk"]])
         self.assertTrue(r.startswith("installed (scope user): codex plugin marketplace add o/mk\ncodex plugin add p@mk\n"))

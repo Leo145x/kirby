@@ -34,7 +34,7 @@ kirby does two things, one after the other.
 ### Installing
 
 - **Asks before installing**: nothing is installed until you pick Install in a dialog, where you can also read the README first or pick another. Then you choose the scope: `local`, `project` or `user`.
-- **Speaks your language**: the dialogs are written in the language you write in.
+- **Speaks your language**: the dialogs are written in the language you write in. kirby words the facts in them itself, in English, 繁體中文 or 简体中文; the model only picks the language.
 - **Keeps your prompt cache**: in Claude Code, installing a skill, plugin or MCP server does not cost you the prompt cache (tested). The one exception, a plugin that brings an MCP server and is loaded with `/reload-plugins` while tool search is off, is flagged in the dialog, and Claude Code itself warns before that reload.
 - **Works in Claude Code and Codex**.
 

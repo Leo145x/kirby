@@ -34,7 +34,7 @@ kirby 做兩件事，一前一後。
 ### 安裝
 
 - **安裝前先問你**：要在對話框選「安裝」才會安裝，也可以先看 README 或換一個。接著選 scope：`local`、`project` 或 `user`。
-- **用你的語言**：對話框用你使用的語言寫。
+- **用你的語言**：對話框用你使用的語言寫。其中的事實由 kirby 自己寫，有英文、繁體中文和简体中文；模型只選語言。
 - **不影響 prompt cache**：在 Claude Code 裡，安裝 skill、plugin 或 MCP server 都不會讓 prompt cache 失效（實測）。唯一的例外是帶有 MCP server 的 plugin，在 tool search 關閉時用 `/reload-plugins` 載入；這種情況對話框會註明，Claude Code 在 reload 前也會先警告。
 - **支援 Claude Code 和 Codex**。
 

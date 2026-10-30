@@ -160,7 +160,7 @@ Whatever the scope, a plugin's marketplace is recorded in your user settings.
 
 ### Dialog language
 
-The model writes the dialogs' wording in the language you write in, in the format the skill gives. The facts above it (repo, stars, commit, files, scripts, an existing folder, the pre-install check) and the prompt-cache note below the scope question come from the tool, in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing or incomplete, the dialogs are in English.
+The model writes the dialogs' wording in the language you write in, in the format the skill gives: the questions, the four options, and in `about` one sentence (at most 120 characters) on what the tool does, which does not repeat the findings. The facts above it (repo, stars, commit, files, scripts, an existing folder, where it installs, the pre-install check) and the prompt-cache note below the scope question come from kirby, never from the model. The model only picks their language with `dialog.lang`: `en`, `zh-TW` or `zh-CN`, the languages of the READMEs, for which kirby carries its own wording of each fact line; a missing `lang` or any other value gets English. Commands, paths, names, versions and ids stay as they are, so they can be copied and looked up. What the tools return to the model, the `check` tool's `findings` among them, stays in English. [ADR 0006](adr/0006-dialog-facts-worded-by-kirby.md) says why the model does not translate the facts. For now kirby words the repo line, a skill's line (name, commit, file count), its scripts, `exists:` and `installs at:`; the pre-install check's own lines and the prompt-cache note are still in English. The scope dialog's options are always `cancel`, `local`, `project` and `user`. If the wording is missing, incomplete or over a limit, the dialogs and their facts are in English.
 
 ### Installs and the prompt cache
 
@@ -179,7 +179,7 @@ The same repo is a Codex plugin. Codex reads `.codex-plugin/plugin.json`, which 
 What differs from Claude Code:
 
 - **Searches and reads go through MCP tools.** The server's `stars`, `public` and `detect` tools run the same scripts, its `readme` and `file` tools read a README or one file at a commit from GitHub (or, for the model review, from an MCP server's package), and its `check` tool runs the pre-install check without a dialog, all outside Codex's sandbox, so they do not ask for network access each time. These six tools declare that they only read, and with Codex's default approval settings Codex runs them without asking. It still asks before kirby's `install` runs; "Always allow" remembers the answer.
-- **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. As in Claude Code, the model writes their wording in your language, and the facts stay in English.
+- **The dialogs are MCP elicitations.** The `install` tool shows the same two dialogs. As in Claude Code, the model writes their wording in your language and picks the language of the facts with `dialog.lang`, which kirby words itself (see Dialog language).
 - **No `default_source` setting.** The default is `stars`; say "public" or "both" in the prompt.
 - **Scopes:**
 
@@ -210,5 +210,6 @@ In `skills/inhale/scripts/`. The first three are read-only and run without askin
 | `check_plugin.py` | The pre-install check of a marketplace plugin: fetches the marketplace (at `--commit` for one already added), follows the plugin's source, and runs the scan and the lookups on its files. Prints JSON, with `review` as above; installs nothing. Called by the mod and the Codex MCP server |
 | `check_mcp.py` | The pre-install check of an MCP server: `check_mcp.py owner/repo '<mcp_args as JSON>'` finds which package the repo names and the command runs, downloads and unpacks that version without installing it, and runs the scan and the lookups on it. Prints JSON, with the command pinned to that version as `mcp_args` and `review` as above (its `sha` is the archive's sha256). `check_mcp.py --read '<JSON>'` prints one file of such a package for the `file` tool. Installs nothing. Called by the mod and the Codex MCP server |
 | `lookups.py` | The advisory and malware lookups `install_skill.py --check`, `check_plugin.py` and `check_mcp.py` run: reads the dependency files, resolves versions without installing, and asks OSV.dev and GitHub. Not run on its own |
+| `words.py` | kirby's wording of the dialog's fact lines in English, 繁體中文 and 简体中文, the same as the mod's `hooks/words.ts`. Used by the Codex MCP server. Not run on its own |
 
 `detect.py --agent codex` looks for Codex marketplaces (`.agents/plugins/marketplace.json`) first; `install_skill.py --agent codex` installs into `.agents/skills/`.
