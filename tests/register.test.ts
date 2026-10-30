@@ -73,6 +73,106 @@ test('a marketplace list that fails is one unchecked line, and the check goes ah
   ])
 })
 
+// A skill's first dialog shows kirby's lines in the language the model picked (dialog.lang), and the pre-install
+// check's own lines as they are; what the tools answer the model stays English. The same cases are in
+// tests/test_codex.py's Language.
+const SKILL_CHECK = {
+  name: 's', commit: 'aaaaaaa', sha: 'a'.repeat(40), files: 2, scripts: ['run.sh', 'setup.py', 'x.sh'], exists: true,
+  lines: ['check: nothing found (2 files, no npm or Python dependency files, advisory and malware lookups)'],
+  note: 'pattern scan: the dialog showed the user no pattern-scan findings', blocked: false, review: { needed: false, files: [] },
+}
+const WORDING = {
+  about: '把 archify 裝成 skill。', next: '下一步？', options: ['取消', '先讀 README', '換一個', '安裝'], scope: '裝在哪個範圍？',
+}
+
+// The install or check tool of a skill, with gh and install_skill.py answered and every dialog answered 取消;
+// asked collects the dialogs' questions.
+function skillTool($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1]) {
+  const asked: string[] = []
+  on('ui.log', () => ({ value: undefined }))
+  on('process.run', (_, e) => {
+    const stdout = e.argv[0] === 'gh' ? '[52770,"2026-09-14T08:00:00Z",false]' : JSON.stringify(SKILL_CHECK)
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    const q = (e as { questions: { question: string }[] }).questions[0]?.question ?? ''
+    asked.push(q)
+    return { result: { questions: (e as { questions: unknown[] }).questions, answers: { [q]: '取消' } } } as never
+  })
+  const call = async (input: Record<string, unknown>, tool = 'mcp__kirby__install') => {
+    const r = await $.tool.call({ tool, repo: 'o/r', kind: 'skill', folder: 's', ...input } as never)
+    return String((r as { result?: unknown }).result)
+  }
+  return { asked, call }
+}
+
+async function skill($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1],
+  input: Record<string, unknown>, tool = 'mcp__kirby__install') {
+  const { asked, call } = skillTool($, on)
+  return { asked, result: await call(input, tool) }
+}
+
+test("with zh-TW kirby's lines are in 繁體中文", async ($, on) => {
+  const { asked, result } = await skill($, on, { dialog: { ...WORDING, lang: 'zh-TW' } })
+  expect(asked).toEqual([[
+    'o/r ★52770 · 2026-09-14 更新',
+    '技能：s · commit aaaaaaa · 2 個檔案',
+    '3 個腳本，例如 run.sh、setup.py',
+    '已存在：.claude/skills/s/（安裝在 local 或 project 會失敗）',
+    ...SKILL_CHECK.lines,
+  ].join('\n') + `\n\n${WORDING.about}\n\n${WORDING.next}`])
+  expect(result).toBe(`not installed: the user cancelled.\n${SKILL_CHECK.note}`)
+})
+
+test("with zh-CN kirby's lines are in 简体中文", async ($, on) => {
+  const { asked } = await skill($, on, { force: true, dialog: { ...WORDING, lang: 'zh-CN' } })
+  expect(asked[0]?.startsWith([
+    'o/r ★52770 · 2026-09-14 更新',
+    '技能：s · commit aaaaaaa · 2 个文件',
+    '3 个脚本，例如 run.sh、setup.py',
+    '已存在：.claude/skills/s/（安装在 local 或 project 会替换它）',
+    ...SKILL_CHECK.lines,
+  ].join('\n') + '\n\n')).toBe(true)
+})
+
+test('with en, a missing lang or any other, it is English as before', async ($, on) => {
+  const english = [
+    'o/r ★52770 · pushed 2026-09-14',
+    'skill: s · commit aaaaaaa · 2 files',
+    'scripts: 3, e.g. run.sh, setup.py',
+    'exists: .claude/skills/s/ (installing at local or project fails)',
+    ...SKILL_CHECK.lines,
+  ].join('\n') + '\n\n'
+  const { asked, call } = skillTool($, on)
+  for (const dialog of [{ ...WORDING, lang: 'en' }, WORDING, { ...WORDING, lang: 'ja' }]) {
+    await call({ dialog })
+    expect(asked.at(-1)?.startsWith(english)).toBe(true)
+  }
+  expect(asked.length).toBe(3)
+})
+
+test("the check tool's findings stay English", async ($, on) => {
+  const { result } = await skill($, on, {}, 'mcp__kirby__check')
+  expect((JSON.parse(result) as { findings: string[] }).findings).toEqual([
+    'skill: s · commit aaaaaaa · 2 files', 'scripts: 3, e.g. run.sh, setup.py',
+    'exists: .claude/skills/s/ (installing at local or project fails)', ...SKILL_CHECK.lines,
+  ])
+})
+
+test('the install tool takes dialog.lang', async ($, on) => {
+  const tools: { name: string; inputSchema: { properties: Record<string, { properties?: Record<string, unknown> }> } }[] = []
+  on('tool.register', (_, e) => {
+    tools.push(e as never)
+    return { value: { tool: `mcp__kirby__${e.name}` } }
+  })
+  on('agent.register', (_, e) => ({ value: { agent: `kirby:${e.name}` } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const install = tools.find(t => t.name === 'install')
+  expect(Object.keys(install?.inputSchema.properties.dialog?.properties ?? {}).sort()).toEqual(['about', 'lang', 'next', 'options', 'scope'])
+  expect((install as { description?: string } | undefined)?.description).toContain('dialog.lang (en, zh-TW or zh-CN)')
+})
+
 test("a deny rule of the user's or the organization's still stops check and file", async ($, on) => {
   on('tool.check', () => ({ decision: 'deny', reason: 'denied by a rule' }))
 

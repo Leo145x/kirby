@@ -1,17 +1,25 @@
 """The Codex dialogs' wording. The model writes it in the user's language (the install tool's `dialog`
-input, in the format the inhale skill gives); the facts above it and the scope dialog's options stay
-the server's own. When the wording is missing or unusable, the dialogs are in English. The model
-review's result (the install tool's `review` input) also reaches the first dialog, as read_review
+input, in the format the inhale skill gives) and picks the language of the facts above it (dialog.lang),
+which kirby words itself (skills/inhale/scripts/words.py, docs/adr/0006); the scope dialog's options stay
+the server's own. When the wording is missing or unusable, the dialogs and their facts are in English. The
+model review's result (the install tool's `review` input) also reaches the first dialog, as read_review
 checks it. Pure, so the tests can run it directly; the rules match hooks/dialog.ts.
 """
 import re
+import sys
 import unicodedata
+from pathlib import Path
+
+# The wording lives beside the scripts, which can word their facts with it too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills" / "inhale" / "scripts"))
+from words import read_lang  # noqa: E402
 
 SCOPES = ("local", "project", "user")
 # The scope dialog's options, the same in every language.
 CANCEL = "cancel"
 
-MAX = {"about": 600, "next": 200, "option": 40, "scope": 600}
+# In characters (code points), as hooks/dialog.ts counts them too.
+MAX = {"about": 120, "next": 200, "option": 40, "scope": 600}
 # The model review's limits (docs/adr/0002), in characters.
 REVIEW_MAX = {"reason": 120, "findings": 5}
 REVIEW_SHAPE = 'review must be {"findings": [...]} or {"could_not_run": "<reason>"}'
@@ -25,6 +33,8 @@ def english():
         # In this order: cancel, read the README first, pick another, install.
         "options": ["Cancel", "Read README first", "Pick another", "Install"],
         "scope": "Install at which scope?",
+        # The language of the facts, which kirby words.
+        "lang": "en",
     }
 
 
@@ -58,7 +68,7 @@ def read_dialog(raw):
     options = [_text(o, MAX["option"]) for o in given] if isinstance(given, list) else []
     if len(options) != 4 or None in options or len(set(options)) != 4:
         return fallback(f"dialog.options must be 4 distinct labels of at most {MAX['option']} characters")
-    return {"about": about, "next": nxt, "options": options, "scope": scope}, None
+    return {"about": about, "next": nxt, "options": options, "scope": scope, "lang": read_lang(raw.get("lang"))}, None
 
 
 def clean(text):

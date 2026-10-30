@@ -5,7 +5,8 @@ Codex starts it from the plugin root, outside the sandbox, so the searches reach
 an approval prompt each time. `install` asks the user through MCP elicitation, first the next
 step and then the scope, and installs only after both. Where `user` is the only scope (plugins and
 MCP servers), the first dialog says where it installs and the scope dialog's install option says it
-again in the server's words. The dialogs show the facts the server found and the model's wording in
+again in the server's words. The dialogs show the facts the server found, worded by kirby in the
+language the model picked (skills/inhale/scripts/words.py, docs/adr/0006), and the model's wording in
 the user's language (see dialog.py); what the tools answer is for the model, in English.
 
 `check` runs install's pre-install check without a dialog, so that when it found a danger or warn
@@ -26,6 +27,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "inhale" / "script
 sys.path.insert(0, str(SCRIPTS))
 # A marketplace source on GitHub, as `codex plugin marketplace list` gives it (owner/repo is added as an https URL).
 from detect import GITHUB_URL  # noqa: E402
+from words import fact, say  # noqa: E402
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -94,8 +96,8 @@ TOOLS = [
         "name": "check",
         "description": "Run the pre-install check of what install would install, without a dialog, as JSON: review "
                        "(needed, not needed, or not possible), read (what to pass the file tool, with each path) and "
-                       "files (the files the check covered) when a review is needed, findings (the dialog's facts) and "
-                       "blocked. Takes the same repo, kind and folder, plugin or mcp_args as install. When review is "
+                       "files (the files the check covered) when a review is needed, findings (the dialog's facts, in "
+                       "English) and blocked. Takes the same repo, kind and folder, plugin or mcp_args as install. When review is "
                        "needed, the inhale skill says how to have the files reviewed.",
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"},
@@ -115,8 +117,10 @@ TOOLS = [
                        "everything that follows `codex mcp add`, e.g. [\"github\", \"--\", \"npx\", \"-y\", "
                        "\"@modelcontextprotocol/server-github\"]. force replaces an existing skill folder of the same "
                        "name. dialog is the wording of both dialogs in the user's language, in the format the "
-                       "inhale skill gives; without it they are in English. When the check tool said a review is "
-                       "needed, pass the model review's result as review and the check's read.ref as sha.",
+                       "inhale skill gives (about at most 120 characters); without it they are in English. "
+                       "dialog.lang (en, zh-TW or zh-CN) is the language kirby words the facts in; any other is "
+                       "English. When the check tool said a review is needed, pass the model review's result as "
+                       "review and the check's read.ref as sha.",
         "inputSchema": {"type": "object", "properties": {
             "repo": {"type": "string"},
             "kind": {"type": "string", "enum": ["skill", "plugin", "mcp"]},
@@ -136,6 +140,7 @@ TOOLS = [
                 "next": {"type": "string"},
                 "options": STRINGS,
                 "scope": {"type": "string"},
+                "lang": {"type": "string", "description": "en, zh-TW or zh-CN; any other value is en"},
             }},
         }, "required": ["repo", "kind"]},
         "annotations": INSTALLS,
@@ -144,8 +149,8 @@ TOOLS = [
 
 # Where user is the only scope, the first dialog says where it goes, and the scope dialog's install option
 # says it again in the server's own words: a mislabelled first dialog cannot install without the user seeing it.
-USER_ONLY = "installs at: user (~/.codex/config.toml, every project)"
-SKILL_USER_ONLY = "installs at: user (~/.agents/skills/; Codex did not say which project this session is in)"
+USER_ONLY = fact("installs_at_user")
+SKILL_USER_ONLY = fact("installs_at_user_skill")
 USER_OPTION = "install at user (~/.codex/config.toml, every project)"
 SKILL_USER_OPTION = "install at user (~/.agents/skills/)"
 
@@ -311,7 +316,7 @@ def repo_header(repo):
     if not ok:
         raise Refusal(f"gh api repos/{repo} failed: {out}")
     count, pushed, archived = json.loads(out)
-    return f"{repo} ★{count} · pushed {(pushed or '?')[:10]}" + (" · ARCHIVED" if archived else "")
+    return fact("repo_archived" if archived else "repo", repo=repo, stars=count, pushed=(pushed or "?")[:10])
 
 
 def added_marketplace(repo):
@@ -352,9 +357,9 @@ def not_listed(why):
 
 
 def preview(kind, a, project):
-    """What the install would do: the facts for the dialog (lines, then where it installs), the scopes on
-    offer, what the model review reads and whether it is needed (review, the check's own), and anything
-    the command needs."""
+    """What the install would do: the facts for the dialog (lines, then where it installs, each a line or a
+    fact for words.say), the scopes on offer, what the model review reads and whether it is needed (review,
+    the check's own), and anything the command needs."""
     repo = a["repo"]
     if kind == "skill":
         folder = a.get("folder")
@@ -365,12 +370,12 @@ def preview(kind, a, project):
         if not ok:
             raise Refusal(out)
         c = json.loads(out)
-        lines = [f"skill: {c['name']} · commit {c['commit']} · {c['files']} files"]
+        lines = [fact("skill", name=c["name"], commit=c["commit"], files=c["files"])]
         if c["scripts"]:
-            lines.append(f"scripts: {len(c['scripts'])}, e.g. {', '.join(c['scripts'][:2])}")
+            lines.append(fact("scripts", count=len(c["scripts"]), names=c["scripts"][:2]))
         if project and c["exists"]:
-            result = "replaces it" if a.get("force") is True else "fails"
-            lines.append(f"exists: .agents/skills/{c['name']}/ (installing at local or project {result})")
+            exists = "exists_replaces" if a.get("force") is True else "exists_fails"
+            lines.append(fact(exists, path=f".agents/skills/{c['name']}/"))
         lines += c["lines"]
         # The commit shown is the one installed.
         return {"lines": lines, "where": [] if project else [SKILL_USER_ONLY], "scopes": SCOPES if project else ("user",),
@@ -461,7 +466,8 @@ def check(a, meta):
         out["files"] = r["files"][:FILES_SHOWN]
         if len(r["files"]) > FILES_SHOWN:
             out["more_files"] = len(r["files"]) - FILES_SHOWN
-    out.update(findings=[*plan["lines"], *plan["where"]], blocked=plan["blocked"])
+    # The model reads the facts in English, whatever language the dialog shows them in.
+    out.update(findings=[say(f, "en") for f in [*plan["lines"], *plan["where"]]], blocked=plan["blocked"])
     return True, json.dumps(out, ensure_ascii=False)
 
 
@@ -494,8 +500,8 @@ def install(peer, a, meta):
 
     # Cancel comes first so a stray Enter already queued when the dialog opens cancels.
     about = f"\n\n{d['about']}" if d["about"] else ""
-    nxt = peer.ask(f"{header}\n" + "\n".join([*plan["lines"], *reviewed, *plan["where"]]) + f"{about}\n\n{d['next']}",
-                   next_options(d, plan.get("blocked", False)))
+    facts = [say(f, d["lang"]) for f in [header, *plan["lines"], *reviewed, *plan["where"]]]
+    nxt = peer.ask("\n".join(facts) + f"{about}\n\n{d['next']}", next_options(d, plan.get("blocked", False)))
     log(f"install {repo} ({kind}): next step {json.dumps(nxt, ensure_ascii=False)}" + (f" (English: {problem})" if problem else ""))
     if nxt == readme_:
         return ("not installed: the user wants to read the README first. Summarise it for them (the readme tool) "
